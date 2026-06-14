@@ -1,0 +1,14 @@
+{
+  "name": "mystremio-shell",
+  "private": true,
+  "version": "2.1.0",
+  "description": "MyStremio — native Windows shell (WebView2 + libmpv)",
+  "scripts": {
+    "prepare": "powershell -ExecutionPolicy Bypass -File scripts/prepare-runtime.ps1",
+    "sync-assets": "powershell -ExecutionPolicy Bypass -File scripts/sync-custom-assets.ps1",
+    "shortcut": "powershell -ExecutionPolicy Bypass -File scripts/create-desktop-shortcut.ps1",
+    "build": "cargo build --release --target x86_64-pc-windows-msvc",
+    "start": "powershell -ExecutionPolicy Bypass -File run.ps1 -SkipBuild",
+    "dev": "powershell -ExecutionPolicy Bypass -File run.ps1"
+  }
+}

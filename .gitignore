@@ -1,0 +1,45 @@
+# Build artifacts
+stremio-shell/stremio-shell-ng-main/target/
+stremio-shell/stremio-shell-ng-main/libmpv-2.dll
+stremio-shell/stremio-shell-ng-main/dist/
+
+# Release installers (upload via GitHub Releases)
+release/*.exe
+release/*.zip
+
+# Root runtime spillover from local builds
+/*.exe
+/*.dll
+/plugins/
+/themes/
+
+# Legacy release names
+StremioCustom*
+MyStremioSetup-*.exe
+MyStremio-v*-win64.zip
+
+# Runtime / local dev
+*.WebView2/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.lnk
+.vscode/
+.idea/
+
+# Archives
+*.zip
+
+# Secrets
+.env
+*.pem
+
+# User data must never be committed
+**/stremio-custom-settings.json
+**/mystremio-settings.json
+**/stremio-custom-autoskip.json
+**/mystremio-autoskip.json
+**/*api_key*
+**/*apiKey*
