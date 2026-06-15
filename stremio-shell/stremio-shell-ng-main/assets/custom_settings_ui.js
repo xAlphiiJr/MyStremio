@@ -2009,6 +2009,7 @@ function createPanelToggleEntry(id, title, description, storageKey, classes, onC
     } catch (_) {}
     toggle.classList.toggle('checked', enabled);
     onChange?.(enabled);
+    persistUserPreferences?.();
   });
 
   content.appendChild(toggle);

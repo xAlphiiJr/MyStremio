@@ -1,37 +1,37 @@
 ﻿[
   {
-    " key\: \enable_torrent_accordions\,
- \type\: \toggle\,
- \label\: \Enable torrent accordions\,
- \description\: \Group torrent stream providers into collapsible sections.\,
- \defaultValue\: true
- },
- {
- \key\: \enable_ratings_aggregator\,
- \type\: \toggle\,
- \label\: \Show ratings panel\,
- \description\: \Show merged ratings cards from Ratings Aggregator streams.\,
- \defaultValue\: true
- },
- {
- \key\: \enable_imdb_ratings\,
- \type\: \toggle\,
- \label\: \Show IMDb episode ratings\,
- \description\: \Show IMDb episode/series rating cards when available.\,
- \defaultValue\: true
- },
- {
- \key\: \enable_watchhub\,
- \type\: \toggle\,
- \label\: \Show WatchHub panel\,
- \description\: \Show provider availability panel from WatchHub/Guidebox streams.\,
- \defaultValue\: true
- },
- {
- \key\: \enable_aftercredits\,
- \type\: \toggle\,
- \label\: \Show AfterCredits panel\,
- \description\: \Show AfterCredits hints panel in stream details.\,
- \defaultValue\: true
- }
+    "key": "enable_torrent_accordions",
+    "type": "toggle",
+    "label": "Enable torrent accordions",
+    "description": "Group torrent stream providers into collapsible sections.",
+    "defaultValue": true
+  },
+  {
+    "key": "enable_ratings_aggregator",
+    "type": "toggle",
+    "label": "Show ratings panel",
+    "description": "Show merged ratings cards from Ratings Aggregator streams.",
+    "defaultValue": true
+  },
+  {
+    "key": "enable_imdb_ratings",
+    "type": "toggle",
+    "label": "Show IMDb episode ratings",
+    "description": "Show IMDb episode/series rating cards when available.",
+    "defaultValue": true
+  },
+  {
+    "key": "enable_watchhub",
+    "type": "toggle",
+    "label": "Show WatchHub panel",
+    "description": "Show provider availability panel from WatchHub/Guidebox streams.",
+    "defaultValue": true
+  },
+  {
+    "key": "enable_aftercredits",
+    "type": "toggle",
+    "label": "Show AfterCredits panel",
+    "description": "Show AfterCredits hints panel in stream details.",
+    "defaultValue": true
+  }
 ]

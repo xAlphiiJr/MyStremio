@@ -102,13 +102,18 @@
 
   function saveFolders(folders) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(folders));
+    window.StremioCustom?.helpers?.persistUserPreferences?.();
   }
 
   function readActiveFolderId() {
     try {
-      return sessionStorage.getItem(ACTIVE_FOLDER_KEY) || null;
+      return sessionStorage.getItem(ACTIVE_FOLDER_KEY) || localStorage.getItem(ACTIVE_FOLDER_KEY) || null;
     } catch {
-      return null;
+      try {
+        return localStorage.getItem(ACTIVE_FOLDER_KEY) || null;
+      } catch {
+        return null;
+      }
     }
   }
 
@@ -118,6 +123,11 @@
       if (id) sessionStorage.setItem(ACTIVE_FOLDER_KEY, id);
       else sessionStorage.removeItem(ACTIVE_FOLDER_KEY);
     } catch (_) {}
+    try {
+      if (id) localStorage.setItem(ACTIVE_FOLDER_KEY, id);
+      else localStorage.removeItem(ACTIVE_FOLDER_KEY);
+    } catch (_) {}
+    window.StremioCustom?.helpers?.persistUserPreferences?.();
   }
 
   function clearStickySelection() {

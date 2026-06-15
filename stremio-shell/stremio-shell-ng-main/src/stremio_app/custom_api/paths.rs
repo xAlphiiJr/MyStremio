@@ -6,6 +6,7 @@ use std::{
 };
 
 const PLUGIN_EXT: &str = ".plugin.js";
+const PLUGIN_SCHEMA_EXT: &str = ".plugin.schema.json";
 const THEME_EXT: &str = ".theme.css";
 
 pub fn app_data_dir() -> PathBuf {
@@ -45,6 +46,7 @@ pub fn ensure_asset_dirs() {
     let _ = fs::create_dir_all(plugins_dir());
     let _ = fs::create_dir_all(themes_dir());
     sync_bundled_assets(&bundled_plugins_dir(), &plugins_dir(), PLUGIN_EXT);
+    sync_bundled_assets(&bundled_plugins_dir(), &plugins_dir(), PLUGIN_SCHEMA_EXT);
     sync_bundled_assets(&bundled_themes_dir(), &themes_dir(), THEME_EXT);
 }
 

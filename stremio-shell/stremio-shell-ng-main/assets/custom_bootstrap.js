@@ -138,6 +138,7 @@
       language: getLanguagePreferences(),
       preload: getPreloadPreference(),
       discordPresence: getDiscordPresencePreferences(),
+      library: getLibraryPreferences(),
       onboarding: {
         tmdbNoticeShown: localStorage.getItem(TMDB_NOTICE_KEY) === 'true',
         defaultsApplied: localStorage.getItem(DEFAULTS_APPLIED_KEY) === 'true',
@@ -159,6 +160,10 @@
     enabled: 'stremio-custom-discord-rp-enabled',
     showPaused: 'stremio-custom-discord-rp-show-paused',
     showMenu: 'stremio-custom-discord-rp-show-menu',
+  };
+  const LIBRARY_KEYS = {
+    folders: 'stremio-custom-library-folders',
+    activeFolder: 'stremio-custom-library-active-folder',
   };
   const LANGUAGE_KEYS = {
     favAudio: 'stremio-custom-fav-audio',
@@ -338,6 +343,33 @@
     }
   }
 
+  function getLibraryPreferences() {
+    let foldersRaw = '[]';
+    try {
+      foldersRaw = localStorage.getItem(LIBRARY_KEYS.folders) || '[]';
+    } catch (_) {}
+    return {
+      foldersRaw,
+      activeFolderId: localStorage.getItem(LIBRARY_KEYS.activeFolder) || '',
+    };
+  }
+
+  function applyLibraryPreferences(prefs) {
+    if (!prefs || typeof prefs !== 'object') return;
+    if (typeof prefs.foldersRaw === 'string') {
+      const normalized = prefs.foldersRaw.trim();
+      if (normalized && normalized !== '[]') {
+        localStorage.setItem(LIBRARY_KEYS.folders, normalized);
+      } else if (localStorage.getItem(LIBRARY_KEYS.folders) == null) {
+        localStorage.setItem(LIBRARY_KEYS.folders, '[]');
+      }
+    }
+    if (typeof prefs.activeFolderId === 'string') {
+      if (prefs.activeFolderId) localStorage.setItem(LIBRARY_KEYS.activeFolder, prefs.activeFolderId);
+      else localStorage.removeItem(LIBRARY_KEYS.activeFolder);
+    }
+  }
+
   function removeHorizontalNavPluginFromEnabled() {
     const enabled = getEnabledPlugins();
     const next = enabled.filter((pluginRef) => !String(pluginRef || '').includes('horizontal-navigation'));
@@ -483,6 +515,7 @@
       const diskLanguage = preferences?.language;
       const diskPreload = preferences?.preload;
       const diskDiscordPresence = preferences?.discordPresence;
+      const diskLibrary = preferences?.library;
       const diskOnboarding = preferences?.onboarding;
       const hasLocalDiscordPrefs =
         localStorage.getItem(DISCORD_KEYS.enabled) != null ||
@@ -513,6 +546,9 @@
       if (!hasLocalDiscordPrefs && diskDiscordPresence && typeof diskDiscordPresence === 'object') {
         applyDiscordPresencePreferences(diskDiscordPresence);
       }
+      if (diskLibrary && typeof diskLibrary === 'object') {
+        applyLibraryPreferences(diskLibrary);
+      }
       if (diskOnboarding && typeof diskOnboarding === 'object') {
         if (diskOnboarding.tmdbNoticeShown === true) localStorage.setItem(TMDB_NOTICE_KEY, 'true');
         if (diskOnboarding.defaultsApplied === true) localStorage.setItem(DEFAULTS_APPLIED_KEY, 'true');
@@ -528,6 +564,7 @@
         language: getLanguagePreferences(),
         preload: getPreloadPreference(),
         discordPresence: getDiscordPresencePreferences(),
+        library: getLibraryPreferences(),
         onboarding: {
           tmdbNoticeShown: localStorage.getItem(TMDB_NOTICE_KEY) === 'true',
           defaultsApplied: localStorage.getItem(DEFAULTS_APPLIED_KEY) === 'true',

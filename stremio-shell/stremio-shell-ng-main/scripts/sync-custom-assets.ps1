@@ -155,6 +155,34 @@ function Ensure-StreamUiSchema {
     }
 }
 
+function Patch-StreamUiPlugin {
+    param([string]$PluginsDir)
+
+    if (-not (Test-Path $PluginsDir)) { return }
+    $pluginPath = Join-Path $PluginsDir "player\stream-ui.plugin.js"
+    if (-not (Test-Path $pluginPath)) { return }
+
+    try {
+        $raw = Get-Content $pluginPath -Raw -Encoding UTF8
+        if (-not $raw) { return }
+        $patched = $raw
+        $patched = $patched.Replace(
+            "acc.className = GROUP + (open ? ' open' : '');",
+            "acc.className = GROUP + ' open';"
+        )
+        $patched = $patched.Replace(
+            'aria-expanded="${open ? ''true'' : ''false''}"',
+            'aria-expanded="true"'
+        )
+        if ($patched -ne $raw) {
+            Set-Content -Path $pluginPath -Value $patched -Encoding UTF8
+            Write-Host "Patched Stream UI plugin to keep accordions expanded by default."
+        }
+    } catch {
+        Write-Warning ("Could not patch Stream UI plugin in " + $PluginsDir + ": " + $_)
+    }
+}
+
 if (-not $PluginSource -or -not (Test-Path $PluginSource)) {
     $fallback = Resolve-FallbackSource -Kind "plugins" -ReleaseDir $ReleaseDir
     if ($fallback) {
@@ -178,6 +206,7 @@ foreach ($target in $PluginTargets) {
     if ($SkipAppData -and $target -like "$env:APPDATA*") { continue }
     Copy-TreeIfExists -Source $PluginSource -Destination $target
     Ensure-StreamUiSchema -PluginsDir $target
+    Patch-StreamUiPlugin -PluginsDir $target
     if ($target -eq (Join-Path $ReleaseDir "plugins")) {
         Sanitize-PluginConfigs -PluginsDir $target
         Patch-ContextMenuFixPlugin -PluginsDir $target

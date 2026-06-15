@@ -329,6 +329,10 @@ fn default_preferences() -> Value {
             "showPaused": true,
             "showMenu": true
         },
+        "library": {
+            "foldersRaw": "[]",
+            "activeFolderId": ""
+        },
         "language": {
             "favAudio": [],
             "activeAudio": "",
@@ -402,6 +406,21 @@ fn normalize_preferences(value: Value) -> Value {
                 "showMenu": true
             })
         });
+    let library = value
+        .get("library")
+        .and_then(|v| v.as_object())
+        .map(|state| {
+            json!({
+                "foldersRaw": state.get("foldersRaw").and_then(|v| v.as_str()).unwrap_or("[]"),
+                "activeFolderId": state.get("activeFolderId").and_then(|v| v.as_str()).unwrap_or("")
+            })
+        })
+        .unwrap_or_else(|| {
+            json!({
+                "foldersRaw": "[]",
+                "activeFolderId": ""
+            })
+        });
     let language = value
         .get("language")
         .and_then(|v| v.as_object())
@@ -444,6 +463,7 @@ fn normalize_preferences(value: Value) -> Value {
         "metadataAddon": metadata_addon,
         "preload": preload,
         "discordPresence": discord_presence,
+        "library": library,
         "language": language,
         "onboarding": onboarding
     })
