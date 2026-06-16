@@ -43,3 +43,7 @@ Thumbs.db
 **/mystremio-autoskip.json
 **/*api_key*
 **/*apiKey*
+
+# Reproducible build assets must be versioned in-repo
+!assets-bundle/
+!assets-bundle/**
