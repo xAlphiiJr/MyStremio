@@ -212,27 +212,6 @@
             }
         }
 
-        async recoverMistakenConfig() {
-            const api = this.getSettingsApi();
-            if (!api?.getPluginConfig) return;
-
-            const current = normalizeString(await this.readSetting(SETTING_KEYS.TMDB_API_KEY));
-            if (current) return;
-
-            const mistaken = await api.getPluginConfig('tmdbApiKey');
-            if (!mistaken || typeof mistaken !== 'object') return;
-
-            for (const [key, value] of Object.entries(mistaken)) {
-                const candidate = normalizeString(
-                    value !== null && value !== undefined && value !== '' ? value : key
-                );
-                if (/^[a-f0-9]{16,}$/i.test(candidate)) {
-                    await this.writeSetting(SETTING_KEYS.TMDB_API_KEY, candidate);
-                    return;
-                }
-            }
-        }
-
         async migrateLegacyConfig() {
             try {
                 if (localStorage.getItem(MIGRATION_DONE_KEY) === '1') return;
@@ -251,12 +230,8 @@
                 }
             }
 
-            await this.recoverMistakenConfig();
-
             const legacy = this.loadLegacyConfig();
             const migrations = [
-                [SETTING_KEYS.TMDB_API_KEY, legacy.tmdbApiKey],
-                [SETTING_KEYS.RPDB_API_KEY, legacy.rpdbApiKey],
                 [SETTING_KEYS.ENHANCED_CAST, legacy.enhancedCast],
                 [SETTING_KEYS.SIMILAR_TITLES, legacy.similarTitles],
                 [SETTING_KEYS.SHOW_COLLECTION, legacy.showCollection],

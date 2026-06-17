@@ -147,19 +147,6 @@ pub fn get_plugin_setting(plugin_base_name: &str, key: &str) -> Value {
 pub fn save_plugin_setting(plugin_base_name: &str, key: &str, value: Value) -> Value {
     let path = plugin_config_path(plugin_base_name);
     let mut config = read_json_object(&path);
-    if plugin_base_name == "data-enrichment"
-        && key == "tmdbApiKey"
-        && value_as_trimmed_str(&value).is_empty()
-    {
-        if let Some(_existing) = config
-            .get("tmdbApiKey")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            return config;
-        }
-    }
     if let Value::Object(ref mut map) = config {
         map.insert(key.to_string(), value);
     }
@@ -234,6 +221,15 @@ pub fn load_registered_schemas() -> RegisteredSchemas {
 }
 
 fn repair_data_enrichment_config(config: Value, path: &Path) -> Value {
+    if config
+        .get("tmdbApiKey")
+        .and_then(|v| v.as_str())
+        .is_some()
+    {
+        // Respect explicit user choice, including an intentionally empty key.
+        return config;
+    }
+
     if let Some(existing) = config
         .get("tmdbApiKey")
         .and_then(|v| v.as_str())
@@ -272,14 +268,6 @@ fn repair_data_enrichment_config(config: Value, path: &Path) -> Value {
     }
 
     config
-}
-
-fn value_as_trimmed_str(value: &Value) -> String {
-    value
-        .as_str()
-        .map(str::trim)
-        .unwrap_or_default()
-        .to_string()
 }
 
 fn looks_like_api_key(value: &str) -> bool {

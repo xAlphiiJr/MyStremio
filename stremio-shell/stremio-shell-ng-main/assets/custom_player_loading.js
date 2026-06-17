@@ -162,7 +162,7 @@
   function startWatcher() {
     syncPlayerLoadingState();
     if (window.__stremioCustomPlayerLoadingTimer) return;
-    window.__stremioCustomPlayerLoadingTimer = window.setInterval(syncPlayerLoadingState, 250);
+    window.__stremioCustomPlayerLoadingTimer = window.setInterval(syncPlayerLoadingState, 450);
   }
 
   function stopWatcher() {

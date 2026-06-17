@@ -26,6 +26,8 @@ const {
   setEnabledPlugins,
   getCurrentTheme,
   setCurrentTheme,
+  getLibraryPreferences,
+  applyLibraryPreferences,
   queryFirstMatching,
   isPluginEnabled,
   removeLegacyQuickSettingsSection,
@@ -58,12 +60,14 @@ function isCustomSettingsComplete() {
     Boolean(document.getElementById('stremio-custom-autoskip')) &&
     Boolean(document.getElementById('stremio-custom-fav-audio-quick')) &&
     Boolean(document.getElementById('stremio-custom-fav-subs-quick')) &&
+    Boolean(document.getElementById(LIBRARY_BACKUP_CATEGORY_ID)) &&
     Boolean(document.getElementById(DISCORD_CATEGORY_ID))
   );
 }
 
 const SECTION_ID = 'stremio-custom';
 const PRELOAD_CATEGORY_ID = 'stremio-custom-preload-category';
+const LIBRARY_BACKUP_CATEGORY_ID = 'stremio-custom-library-backup-category';
 const DISCORD_CATEGORY_ID = 'stremio-custom-discord-category';
 const THEMES_CATEGORY_ID = 'stremio-custom-themes';
 const THEMES_FOLDER_ID = 'stremio-custom-theme-list';
@@ -79,7 +83,7 @@ const PLUGIN_CATEGORY_ORDER = [
 ];
 const CUSTOM_NAV_SECTIONS = [{ id: SECTION_ID, label: 'MyStremio' }];
 const SETTINGS_STYLE_ID = 'stremio-custom-settings-style';
-const SETTINGS_UI_VERSION = '41';
+const SETTINGS_UI_VERSION = '42';
 const DISCORD_FOLDER_ID = 'stremio-custom-discord-folder';
 
 function favoriteSelectPlaceholder() {
@@ -226,6 +230,8 @@ function wireNativeDropdown(dropdown, folderId, isInitiallyOpen) {
   });
 }
 const CLEAR_STREAM_CACHE_BTN_ID = 'stremio-custom-clear-stream-cache-btn';
+const EXPORT_LIBRARY_BTN_ID = 'stremio-custom-export-library-btn';
+const IMPORT_LIBRARY_BTN_ID = 'stremio-custom-import-library-btn';
 const PRELOAD_SECS_KEY = 'stremio-custom-preload-secs';
 
 let injectionInProgress = false;
@@ -1224,7 +1230,6 @@ function createPluginSettingField(pluginBaseName, field, classes, config) {
     const persistInput = async () => {
       const next = input.value;
       if (next === lastPersisted) return;
-      if (!next.trim() && lastPersisted.trim()) return;
       await savePluginSetting(pluginBaseName, field.key, next);
       lastPersisted = next;
     };
@@ -2183,10 +2188,188 @@ function createPreloadOption(classes) {
   return option;
 }
 
+function normalizeLibraryFolders(foldersRaw) {
+  let parsed = [];
+  try {
+    const value = typeof foldersRaw === 'string' ? JSON.parse(foldersRaw) : foldersRaw;
+    parsed = Array.isArray(value) ? value : [];
+  } catch (_) {
+    parsed = [];
+  }
+
+  return parsed
+    .map((folder) => {
+      const id = String(folder?.id || '').trim();
+      const name = String(folder?.name || '').trim();
+      if (!id || !name) return null;
+      const items = Array.isArray(folder?.items)
+        ? folder.items.map((item) => String(item || '').trim()).filter(Boolean)
+        : [];
+      return { id, name, items };
+    })
+    .filter(Boolean);
+}
+
+function buildLibraryBackupPayload() {
+  const library = getLibraryPreferences?.() || {
+    foldersRaw: localStorage.getItem('stremio-custom-library-folders') || '[]',
+    activeFolderId: localStorage.getItem('stremio-custom-library-active-folder') || '',
+  };
+  const folders = normalizeLibraryFolders(library.foldersRaw);
+  const activeFolderId = folders.some((folder) => folder.id === library.activeFolderId)
+    ? library.activeFolderId
+    : '';
+  return {
+    type: 'mystremio-library-backup',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    library: {
+      foldersRaw: JSON.stringify(folders),
+      activeFolderId,
+    },
+  };
+}
+
+function parseImportedLibraryPayload(rawText) {
+  const parsed = JSON.parse(rawText);
+  if (!parsed || typeof parsed !== 'object') throw new Error('Invalid JSON backup');
+  const source = parsed.library && typeof parsed.library === 'object' ? parsed.library : parsed;
+  const folders = normalizeLibraryFolders(source.foldersRaw ?? source.folders ?? source);
+  if (!folders.length && parsed.type !== 'mystremio-library-backup') {
+    throw new Error('No library data found');
+  }
+  const activeFolderId = folders.some((folder) => folder.id === source.activeFolderId)
+    ? source.activeFolderId
+    : '';
+  return {
+    foldersRaw: JSON.stringify(folders),
+    activeFolderId,
+  };
+}
+
+function createLibraryBackupOption(classes) {
+  const option = document.createElement('div');
+  if (classes.option) {
+    option.className = `${classes.option} stremio-custom-full-width-option stremio-custom-preload-option`;
+  }
+  option.id = 'stremio-custom-library-backup-option';
+
+  const heading = document.createElement('div');
+  if (classes.optionHeading) heading.className = classes.optionHeading;
+
+  const copy = document.createElement('div');
+  copy.className = 'stremio-custom-preload-copy';
+
+  const label = document.createElement('div');
+  if (classes.optionLabel) label.className = classes.optionLabel;
+  label.textContent = 'Library backup';
+  copy.appendChild(label);
+
+  const description = document.createElement('div');
+  description.className = 'stremio-custom-preload-description';
+  description.textContent =
+    'Export and import your custom library folders as JSON for reliable migration across devices.';
+  copy.appendChild(description);
+  heading.appendChild(copy);
+
+  const content = document.createElement('div');
+  if (classes.optionContent) content.className = classes.optionContent;
+
+  const controls = document.createElement('div');
+  controls.className = 'stremio-custom-preload-controls';
+
+  const actions = document.createElement('div');
+  actions.className = 'stremio-custom-preload-actions';
+
+  const exportBtn = document.createElement('button');
+  exportBtn.type = 'button';
+  exportBtn.id = EXPORT_LIBRARY_BTN_ID;
+  exportBtn.className = 'stremio-custom-clear-stream-cache-btn';
+  exportBtn.textContent = 'Export library JSON';
+  exportBtn.addEventListener('click', () => {
+    try {
+      const payload = buildLibraryBackupPayload();
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      link.href = url;
+      link.download = `mystremio-library-${stamp}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      exportBtn.textContent = 'Exported';
+      window.setTimeout(() => {
+        exportBtn.textContent = 'Export library JSON';
+      }, 1400);
+    } catch (_) {
+      exportBtn.textContent = 'Export failed';
+      window.setTimeout(() => {
+        exportBtn.textContent = 'Export library JSON';
+      }, 1600);
+    }
+  });
+
+  const importBtn = document.createElement('button');
+  importBtn.type = 'button';
+  importBtn.id = IMPORT_LIBRARY_BTN_ID;
+  importBtn.className = 'stremio-custom-clear-stream-cache-btn';
+  importBtn.textContent = 'Import library JSON';
+  importBtn.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      importBtn.disabled = true;
+      importBtn.textContent = 'Importing…';
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const parsed = parseImportedLibraryPayload(String(reader.result || ''));
+          applyLibraryPreferences?.(parsed);
+          persistUserPreferences?.();
+          window.dispatchEvent(new CustomEvent('stremio-custom-library-imported'));
+          importBtn.textContent = 'Imported';
+        } catch (_) {
+          importBtn.textContent = 'Import failed';
+        } finally {
+          window.setTimeout(() => {
+            importBtn.textContent = 'Import library JSON';
+            importBtn.disabled = false;
+          }, 1800);
+        }
+      };
+      reader.onerror = () => {
+        importBtn.textContent = 'Import failed';
+        window.setTimeout(() => {
+          importBtn.textContent = 'Import library JSON';
+          importBtn.disabled = false;
+        }, 1800);
+      };
+      reader.readAsText(file);
+    });
+    input.click();
+  });
+
+  const hint = document.createElement('div');
+  hint.className = 'stremio-custom-stream-cache-hint';
+  hint.textContent = 'Import overwrites current custom folders. Export first to keep a rollback copy.';
+
+  actions.append(exportBtn, importBtn, hint);
+  controls.append(actions);
+  content.appendChild(controls);
+  option.append(heading, content);
+  return option;
+}
+
 async function buildSettingsSection(pluginApi) {
   if (
     document.getElementById(SECTION_ID) &&
     document.getElementById(PRELOAD_CATEGORY_ID) &&
+    document.getElementById(LIBRARY_BACKUP_CATEGORY_ID) &&
     document.getElementById(CLEAR_STREAM_CACHE_BTN_ID)
   ) {
     return true;
@@ -2311,9 +2494,12 @@ async function buildSettingsSection(pluginApi) {
   const preloadCategory = createCategory(PRELOAD_CATEGORY_ID, 'Preload', classes, true);
   preloadCategory.appendChild(createPreloadOption(classes));
 
+  const libraryBackupCategory = createCategory(LIBRARY_BACKUP_CATEGORY_ID, 'Library', classes, true);
+  libraryBackupCategory.appendChild(createLibraryBackupOption(classes));
+
   const discordCategory = createDiscordPresenceCategory(classes);
 
-  section.append(themesCategory, pluginsCategory, preloadCategory, discordCategory);
+  section.append(themesCategory, pluginsCategory, preloadCategory, libraryBackupCategory, discordCategory);
 
   const shortcutsSection = findShortcutsSection(sectionsContainer);
   if (shortcutsSection) {
@@ -2353,6 +2539,7 @@ async function checkSettings(pluginApi) {
     if (
       !document.getElementById(SECTION_ID) ||
       !document.getElementById(PRELOAD_CATEGORY_ID) ||
+      !document.getElementById(LIBRARY_BACKUP_CATEGORY_ID) ||
       !document.getElementById(CLEAR_STREAM_CACHE_BTN_ID)
     ) {
       const success = await buildSettingsSection(pluginApi);
@@ -2403,6 +2590,7 @@ function startSettingsWatcher(pluginApi) {
     if (
       !document.getElementById(SECTION_ID) ||
       !document.getElementById(PRELOAD_CATEGORY_ID) ||
+      !document.getElementById(LIBRARY_BACKUP_CATEGORY_ID) ||
       !document.getElementById(CLEAR_STREAM_CACHE_BTN_ID) ||
       !isCustomSettingsComplete()
     ) {

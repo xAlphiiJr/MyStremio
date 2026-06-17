@@ -70,7 +70,7 @@ function Sanitize-PluginConfigs {
             $json = $raw | ConvertFrom-Json
             $changed = $false
 
-            foreach ($key in @('tidb_api_key', 'tmdb_api_key', 'rpdb_api_key', 'api_key', 'apiKey')) {
+            foreach ($key in @('tidb_api_key', 'tidbApiKey', 'tmdb_api_key', 'tmdbApiKey', 'rpdb_api_key', 'rpdbApiKey', 'api_key', 'apiKey')) {
                 if ($json.PSObject.Properties.Name -contains $key -and $json.$key) {
                     $json.$key = ''
                     $changed = $true
@@ -84,6 +84,39 @@ function Sanitize-PluginConfigs {
         } catch {
             Write-Warning "Could not sanitize $($_.FullName): $_"
         }
+    }
+}
+
+function Assert-NoPluginConfigSecrets {
+    param([string]$PluginsDir)
+
+    if (-not (Test-Path $PluginsDir)) { return }
+
+    $secretKeys = @('tidb_api_key', 'tidbApiKey', 'tmdb_api_key', 'tmdbApiKey', 'rpdb_api_key', 'rpdbApiKey', 'api_key', 'apiKey')
+    $findings = New-Object System.Collections.Generic.List[string]
+
+    Get-ChildItem $PluginsDir -Recurse -Filter "*.plugin.json" | ForEach-Object {
+        try {
+            $raw = Get-Content $_.FullName -Raw -Encoding UTF8
+            if ([string]::IsNullOrWhiteSpace($raw)) { return }
+            $json = $raw | ConvertFrom-Json
+            foreach ($key in $secretKeys) {
+                if ($json.PSObject.Properties.Name -contains $key) {
+                    $value = [string]$json.$key
+                    if (-not [string]::IsNullOrWhiteSpace($value)) {
+                        $relative = $_.FullName.Replace([System.IO.Path]::GetFullPath($PluginsDir), '').TrimStart('\', '/')
+                        $findings.Add("$relative::$key")
+                    }
+                }
+            }
+        } catch {
+            throw "Could not parse plugin config for secret validation: $($_.FullName) :: $_"
+        }
+    }
+
+    if ($findings.Count -gt 0) {
+        $lines = ($findings | Sort-Object | ForEach-Object { " - $_" }) -join "`n"
+        throw "Build blocked: non-empty API keys detected in plugin configs.`n$lines`nAll keys must be empty in repo assets."
     }
 }
 
@@ -352,6 +385,8 @@ if (-not $PluginSource -or -not (Test-Path $PluginSource)) {
 if (-not $ThemeSource -or -not (Test-Path $ThemeSource)) {
     throw "Theme source not found. Set -SourceRoot to a project folder containing 'themes'. Current: $ThemeSource"
 }
+
+Assert-NoPluginConfigSecrets -PluginsDir $PluginSource
 
 foreach ($target in $PluginTargets) {
     Copy-TreeIfExists -Source $PluginSource -Destination $target

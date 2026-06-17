@@ -1,7 +1,7 @@
 {
   "name": "mystremio-shell",
   "private": true,
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "MyStremio — native Windows shell (WebView2 + libmpv)",
   "scripts": {
     "prepare": "powershell -ExecutionPolicy Bypass -File scripts/prepare-runtime.ps1",

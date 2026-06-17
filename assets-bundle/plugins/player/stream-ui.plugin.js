@@ -162,7 +162,11 @@
     return box ? resolveTorrentAddonName(el, box) : getDirectAddonTitle(el);
   }
 
-  const EXCLUDE_ADDON_RE = /watch\s*hub|guidebox|after\s*credits?|ratings?\s*aggregator|aggregator|imdb\s*ratings?|cast\s*search/i;
+  const WATCHHUB_ADDON_RE = /watch\s*hub|guidebox/i;
+  const WATCHHUB_MODE_RE = /\b(sub(?:scription)?|buy|rent|free|abo|kauf(?:en)?|miete(?:n)?|kostenlos)\b/i;
+  const WATCHHUB_PROVIDER_RE =
+    /\b(netflix|amazon|prime|disney|hbo|max|hulu|apple|itunes|paramount|peacock|sky|youtube|google\s*play|rakuten|microsoft|videoland|viaplay|joyn|crunchyroll|wow)\b/i;
+  const EXCLUDE_ADDON_RE = /after\s*credits?|ratings?\s*aggregator|aggregator|imdb\s*ratings?|cast\s*search/i;
   const KNOWN_TORRENT_ADDON_RE = /aio\s*streams?(?:\s*nightly)?|store\s*\|?\s*(?:rd|tb)|storerd|storetb|torz|stremthru|torrentio|torrents?\s*db|torrent|comet|mediafusion|debrid|peerflix|sootio|nuvio|knaben|jackett|prowlarr/i;
 
   function isExcludedAddon(name) {
@@ -227,9 +231,20 @@
     return label || 'Unknown';
   }
 
+  function isWatchHubStream(el) {
+    const name = `${getDirectAddonTitle(el)} ${getAddonName(el)}`.trim();
+    if (WATCHHUB_ADDON_RE.test(name)) return true;
+    const text = getStreamText(el) || '';
+    if (!WATCHHUB_MODE_RE.test(text)) return false;
+    if (/👤|💾|⚙️|🧲|x26[45]|web[- ]?dl|bluray|torrent/i.test(text)) return false;
+    if (WATCHHUB_PROVIDER_RE.test(text)) return true;
+    return /\b\d+(?:[.,]\d{1,2})?\s*(€|\$|£)\b/.test(text);
+  }
+
   function shouldGroupAsTorrent(el, box) {
     if (el.classList.contains('sui-hidden-stream')) return false;
     const name = getDirectAddonTitle(el);
+    if (WATCHHUB_ADDON_RE.test(name || '') || isWatchHubStream(el)) return false;
     if (!name || isExcludedAddon(name)) return false;
     if (KNOWN_TORRENT_ADDON_RE.test(name)) return true;
     return isTorrentStream(el, box);
@@ -237,6 +252,8 @@
 
   function isTorrentGroup(name, streams, box) {
     if (!name || isExcludedAddon(name)) return false;
+    if (WATCHHUB_ADDON_RE.test(name)) return false;
+    if (streams.some((el) => isWatchHubStream(el))) return false;
     if (KNOWN_TORRENT_ADDON_RE.test(name)) return streams.length >= 1;
     if (streams.length < 2) return false;
     return streams.some((el) => isTorrentStream(el, box));
@@ -254,6 +271,7 @@
     for (let i = 0; i < links.length; i++) {
       const el = links[i];
       const name = getDirectAddonTitle(el);
+      if (WATCHHUB_ADDON_RE.test(name || '') || isWatchHubStream(el)) continue;
       if (!name || isExcludedAddon(name)) continue;
       const key = `torrent:${name}`;
       if (!map.has(key)) {
@@ -391,6 +409,28 @@
   box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 10px 32px rgba(0,0,0,.22);
   backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%)
 }
+#sui-watchhub-root .sui-watchhub-header{
+  display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;
+  padding:0 0 2px;
+}
+#sui-watchhub-root .sui-watchhub-meta{flex:1;min-width:0}
+#sui-watchhub-root .sui-watchhub-badge{
+  flex:none;min-width:1.6rem;padding:4px 10px;border-radius:999px;text-align:center;
+  font-size:10px;font-weight:700;color:rgba(255,255,255,.65);
+  background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);
+}
+#sui-watchhub-root .sui-watchhub-caret{
+  flex:none;font-size:10px;color:rgba(255,255,255,.35);transition:transform .25s,color .2s;
+}
+#sui-watchhub-root.open .sui-watchhub-caret{
+  transform:rotate(180deg);color:rgba(255,255,255,.55);
+}
+#sui-watchhub-root .sui-watchhub-body{
+  overflow:hidden;max-height:0;opacity:0;pointer-events:none;transition:max-height .35s ease,opacity .2s;
+}
+#sui-watchhub-root.open .sui-watchhub-body{
+  max-height:6000px;opacity:1;pointer-events:auto;margin-top:8px;
+}
 #sui-aftercredits-root{
   padding:14px 14px 12px;border-radius:16px;
   background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);
@@ -501,9 +541,18 @@
       }
     }
 
+    function collectWatchHubGroups() {
+      return [];
+    }
+
     function collectAllGroups(box) {
-      if (!state.torrent) return [];
-      return collectTorrentGroups(box).map((g) => ({ ...g, type: 'torrent', icon: '▶' }));
+      const groups = [];
+      if (state.torrent) {
+        groups.push(...collectTorrentGroups(box).map((g) => ({ ...g, type: 'torrent', icon: '▶' })));
+      }
+      groups.push(...collectWatchHubGroups(box));
+      groups.sort((a, b) => (a.firstIdx ?? 0) - (b.firstIdx ?? 0));
+      return groups;
     }
 
     function sig(box) {
@@ -1121,6 +1170,7 @@
   const watchhub = (() => {
     const ROOT = 'sui-watchhub-root';
     const HIDE = 'sui-hidden-stream';
+    const OPEN_KEY = 'sui-watchhub-open';
     const WH_RE = /watch\s*hub|guidebox/i;
     const TYPE_RE = /^(subscription|buy|rent|free|ads|stream|flatrate|purchase)$/i;
     const CDN = 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg';
@@ -1159,6 +1209,20 @@
     let obs = null;
     let timer = null;
     const hidden = new Set();
+
+    function isOpen() {
+      try {
+        return sessionStorage.getItem(OPEN_KEY) === 'true';
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function setOpen(open) {
+      try {
+        sessionStorage.setItem(OPEN_KEY, open ? 'true' : 'false');
+      } catch (_) {}
+    }
 
     function normType(raw) {
       const t = String(raw || '').trim().toLowerCase();
@@ -1233,7 +1297,7 @@
 
     function collect(box) {
       const items = [];
-      for (const el of getStreamLinks(box).filter((l) => WH_RE.test(getAddonName(l)))) {
+      for (const el of getStreamLinks(box).filter((l) => isWatchHubStream(l))) {
         items.push(...parseStream(el));
       }
       const seen = new Set();
@@ -1283,7 +1347,7 @@
     }
 
     function build(box) {
-      const whStreams = getStreamLinks(box).filter((l) => WH_RE.test(getAddonName(l)));
+      const whStreams = getStreamLinks(box).filter((l) => isWatchHubStream(l));
       if (!whStreams.length) {
         teardown(true);
         return;
@@ -1302,10 +1366,37 @@
       hideAll(whStreams);
       const root = document.createElement('div');
       root.id = ROOT;
+      root.classList.toggle('open', isOpen());
       root.innerHTML = `
-<div class="sui-panel-hdr"><div class="sui-panel-icon">▶</div><div><div class="sui-panel-title">Verfügbar bei</div><div class="sui-panel-sub">${providers.length} Streaming-Dienst${providers.length === 1 ? '' : 'e'}</div></div></div>
-<div class="sui-wh-list">${providers.map(row).join('')}</div>`;
+<div class="sui-watchhub-header" role="button" tabindex="0" aria-expanded="${isOpen() ? 'true' : 'false'}">
+  <div class="sui-panel-icon">▶</div>
+  <div class="sui-watchhub-meta">
+    <div class="sui-panel-title">Verfügbar bei</div>
+    <div class="sui-panel-sub">${providers.length} Streaming-Dienst${providers.length === 1 ? '' : 'e'}</div>
+  </div>
+  <span class="sui-watchhub-badge">${providers.length}</span>
+  <span class="sui-watchhub-caret">▾</span>
+</div>
+<div class="sui-watchhub-body"><div class="sui-wh-list">${providers.map(row).join('')}</div></div>`;
       box.insertBefore(root, getUiInsertAfterAfterCredits(box));
+      const header = root.querySelector('.sui-watchhub-header');
+      const toggle = () => {
+        const open = !root.classList.contains('open');
+        root.classList.toggle('open', open);
+        if (header) header.setAttribute('aria-expanded', String(open));
+        setOpen(open);
+      };
+      header?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggle();
+      });
+      header?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggle();
+        }
+      });
       root.addEventListener('click', (e) => {
         const r = e.target.closest('[data-sui-wh]');
         if (!r) return;
@@ -1316,7 +1407,7 @@
       });
       if (!obs) {
         obs = new MutationObserver(() => {
-          const current = getStreamLinks(box).filter((l) => WH_RE.test(getAddonName(l)));
+          const current = getStreamLinks(box).filter((l) => isWatchHubStream(l));
           if (collect(box).map((p) => `${p.name}:${p.type}`).join('|') !== lastSig) {
             if (timer) clearTimeout(timer);
             timer = setTimeout(() => build(box), 400);

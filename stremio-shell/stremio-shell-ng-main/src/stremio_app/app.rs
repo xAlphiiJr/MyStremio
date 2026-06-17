@@ -57,7 +57,7 @@ pub struct MainWindow {
         OnMinMaxInfo: [Self::on_min_max(SELF, EVT_DATA)],
         OnWindowMinimize: [Self::transmit_window_state_change],
         OnWindowMaximize: [Self::on_window_state_changed],
-        OnWindowFocus: [Self::transmit_window_state_change],
+        OnWindowFocus: [Self::on_window_focus],
         OnResizeEnd: [Self::save_window_settings],
     )]
     pub window: nwg::Window,
@@ -474,6 +474,10 @@ impl MainWindow {
         self.save_window_settings();
         self.transmit_window_state_change();
     }
+    fn on_window_focus(&self) {
+        self.transmit_window_state_change();
+        self.transmit_window_visibility_change();
+    }
     fn save_window_settings(&self) {
         if self
             .saved_window_style
@@ -492,12 +496,15 @@ impl MainWindow {
     fn on_toggle_fullscreen_notice(&self) {
         if let Some(hwnd) = self.window.handle.hwnd() {
             if let Ok(mut saved_style) = self.saved_window_style.try_borrow_mut() {
-                let target = self
-                    .requested_fullscreen
-                    .lock()
-                    .unwrap()
-                    .take()
-                    .unwrap_or(!saved_style.full_screen);
+                let requested = self.requested_fullscreen.lock().unwrap().take();
+                let current = saved_style.full_screen;
+                // Some WEBVIEW2 fullscreen-change events arrive with stale value; if that happens
+                // we flip relative to current state so one click still exits/enters fullscreen.
+                let target = match requested {
+                    Some(value) if value == current => !current,
+                    Some(value) => value,
+                    None => !current,
+                };
                 saved_style.set_full_screen(hwnd, target);
                 self.tray.tray_topmost.set_enabled(!saved_style.full_screen);
                 self.tray

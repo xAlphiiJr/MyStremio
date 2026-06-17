@@ -80,9 +80,9 @@ fn copy_tree(source: &Path, target: &Path, extension: &str) {
             .is_some_and(|name| name.ends_with(extension))
         {
             let destination = target.join(entry.file_name());
-            if !destination.exists() {
-                let _ = fs::copy(&path, &destination);
-            }
+            // Keep executable assets in AppData updated on each launch.
+            // Sensitive user values live in *.plugin.json and are not part of this sync.
+            let _ = fs::copy(&path, &destination);
         }
     }
 }

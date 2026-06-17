@@ -124,11 +124,19 @@ impl WindowStyle {
         }
     }
     pub fn set_full_screen(&mut self, hwnd: HWND, full_screen: bool) {
-        if self.full_screen == full_screen {
-            return;
-        }
+        let current_style = unsafe { GetWindowLongA(hwnd, GWL_STYLE) };
+        let current_ex_style = unsafe { GetWindowLongA(hwnd, GWL_EXSTYLE) };
+        let has_caption = (current_style as u32 & WS_CAPTION) == WS_CAPTION;
+        let has_frame = (current_style as u32 & WS_THICKFRAME) == WS_THICKFRAME;
+        let currently_fullscreen = !has_caption && !has_frame;
 
         if !full_screen {
+            if self.style == 0 {
+                self.style = current_style | WS_CAPTION as i32 | WS_THICKFRAME as i32;
+            }
+            if self.ex_style == 0 {
+                self.ex_style = current_ex_style;
+            }
             let topmost = if self.ex_style as u32 & WS_EX_TOPMOST == WS_EX_TOPMOST {
                 HWND_TOPMOST
             } else {
@@ -141,6 +149,9 @@ impl WindowStyle {
             self.show_window_at(hwnd, topmost);
             self.full_screen = false;
         } else {
+            if self.full_screen && currently_fullscreen {
+                return;
+            }
             unsafe {
                 let mut rect = mem::zeroed();
                 GetWindowRect(hwnd, &mut rect);

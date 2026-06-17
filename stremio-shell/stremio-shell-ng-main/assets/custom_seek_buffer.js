@@ -6,7 +6,7 @@
 
   const STYLE_ID = 'stremio-custom-seek-buffer-styles';
 
-  let rafId = null;
+  let loopTimer = null;
   let mpvHookInstalled = false;
   let cacheAheadSec = 0;
   let mpvCurrentTime = 0;
@@ -101,6 +101,21 @@
         transform: translate(-50%, -84%) !important;
         display: none;
         white-space: nowrap;
+      }
+
+      .stremio-custom-preload-segment {
+        position: absolute !important;
+        top: 50% !important;
+        left: 0 !important;
+        height: var(--track-size, 0.45rem) !important;
+        border-radius: 999px !important;
+        transform: translateY(-50%) !important;
+        display: none !important;
+        pointer-events: none !important;
+        background-color: rgba(255, 255, 255, 0.48) !important;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12) !important;
+        transition: width 0.12s linear !important;
+        z-index: 3 !important;
       }
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -245,8 +260,14 @@
     slider.addEventListener('pointerleave', hide);
   }
 
-  function getTrackBefore(slider) {
-    return slider?.querySelector('[class*="track-before"]') || null;
+  function getPreloadSegment(slider) {
+    if (!slider) return null;
+    let segment = slider.querySelector('.stremio-custom-preload-segment');
+    if (segment) return segment;
+    segment = document.createElement('div');
+    segment.className = 'stremio-custom-preload-segment';
+    slider.appendChild(segment);
+    return segment;
   }
 
   function getConfiguredPreloadMax() {
@@ -294,18 +315,23 @@
       api?.getCacheAheadSec?.() || 0,
       estimatedAheadSec || 0
     );
+    const streamRatio = window.StremioCustomStreamCache?.getCachedRatio?.() || 0;
+    const ratioAhead =
+      Number.isFinite(streamRatio) && streamRatio > 0 && Number.isFinite(duration) && duration > 0
+        ? Math.max(0, streamRatio * duration - current)
+        : 0;
 
-    return { current, duration, ahead };
+    return { current, duration, ahead: Math.max(ahead, ratioAhead) };
   }
 
   function updateBufferBar() {
     const slider = getSeekSlider();
-    const trackBefore = getTrackBefore(slider);
-    if (!slider || !trackBefore) return;
+    const preloadSegment = getPreloadSegment(slider);
+    if (!slider || !preloadSegment) return;
 
     const { current, duration, ahead } = getPlaybackSnapshot();
     if (!duration || !Number.isFinite(duration) || duration <= 0) {
-      trackBefore.style.display = 'none';
+      preloadSegment.style.display = 'none';
       return;
     }
 
@@ -313,14 +339,14 @@
     const widthRatio = Math.max(0, Math.min(1 - startRatio, ahead / duration));
     const visible = widthRatio > 0.001 || ahead > 0.25;
 
-    trackBefore.style.marginLeft = `calc(100% * ${startRatio})`;
-    trackBefore.style.width = visible ? `calc(100% * ${widthRatio})` : '0px';
-    trackBefore.style.display = visible ? 'block' : 'none';
+    preloadSegment.style.left = `calc(100% * ${startRatio})`;
+    preloadSegment.style.width = visible ? `calc(100% * ${widthRatio})` : '0px';
+    preloadSegment.style.display = visible ? 'block' : 'none';
   }
 
   function stopLoop() {
-    if (rafId) cancelAnimationFrame(rafId);
-    rafId = null;
+    if (loopTimer) window.clearInterval(loopTimer);
+    loopTimer = null;
     cacheAheadSec = 0;
     estimatedAheadSec = 0;
   }
@@ -333,13 +359,13 @@
     hookMpvMessages();
     bindHoverPreview(getSeekSlider());
     updateBufferBar();
-    rafId = requestAnimationFrame(tick);
   }
 
   function start() {
     injectStyles();
     hookMpvMessages();
-    if (!rafId) tick();
+    tick();
+    if (!loopTimer) loopTimer = window.setInterval(tick, 200);
   }
 
   injectStyles();

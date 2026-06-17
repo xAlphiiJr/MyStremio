@@ -6,9 +6,11 @@
 
   const RATIO_KEY = 'stremio-custom-board-scroll-ratio';
   const ANCHOR_KEY = 'stremio-custom-board-scroll-anchor';
+  const SELECTED_ANCHOR_KEY = 'stremio-custom-board-selected-anchor';
 
   let savedScrollRatio = 0;
   let savedAnchorKey = '';
+  let savedSelectedAnchorKey = '';
   let lastHash = location.hash;
   let restoreUntil = 0;
   let userOverrodeRestore = false;
@@ -61,6 +63,7 @@
     try {
       sessionStorage.setItem(RATIO_KEY, String(savedScrollRatio));
       sessionStorage.setItem(ANCHOR_KEY, savedAnchorKey || '');
+      sessionStorage.setItem(SELECTED_ANCHOR_KEY, savedSelectedAnchorKey || '');
     } catch (_) {}
   }
 
@@ -71,6 +74,7 @@
         savedScrollRatio = Math.max(0, Math.min(1, ratio));
       }
       savedAnchorKey = sessionStorage.getItem(ANCHOR_KEY) || '';
+      savedSelectedAnchorKey = sessionStorage.getItem(SELECTED_ANCHOR_KEY) || '';
     } catch (_) {}
   }
 
@@ -90,11 +94,13 @@
   }
 
   function restoreByAnchor(el) {
-    if (!el || !savedAnchorKey || userOverrodeRestore) return false;
+    if (!el || userOverrodeRestore) return false;
+    const preferred = savedSelectedAnchorKey || savedAnchorKey;
+    if (!preferred) return false;
     const items = el.querySelectorAll('[class*="meta-item"]');
     for (const item of items) {
-      if (getItemAnchorKey(item) === savedAnchorKey) {
-        item.scrollIntoView({ block: 'start', behavior: 'instant' in window ? 'instant' : 'auto' });
+      if (getItemAnchorKey(item) === preferred) {
+        item.scrollIntoView({ block: 'center', behavior: 'instant' in window ? 'instant' : 'auto' });
         return true;
       }
     }
@@ -138,7 +144,7 @@
 
   function scheduleRestore() {
     userOverrodeRestore = false;
-    if (savedScrollRatio < 0.02 && !savedAnchorKey) {
+    if (savedScrollRatio < 0.02 && !savedAnchorKey && !savedSelectedAnchorKey) {
       window.__stremioCustomScrollRestoreActive = false;
       return;
     }
@@ -206,6 +212,10 @@
       if (!isBoardRoute()) return;
       const metaItem = event.target?.closest?.('[class*="meta-item"]');
       if (metaItem) {
+        savedSelectedAnchorKey = getItemAnchorKey(metaItem);
+        try {
+          sessionStorage.setItem(SELECTED_ANCHOR_KEY, savedSelectedAnchorKey || '');
+        } catch (_) {}
         const el = getBoardScrollEl();
         if (el) persistScroll(el);
       }

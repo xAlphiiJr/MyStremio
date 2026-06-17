@@ -976,8 +976,6 @@
     persistUserPreferences();
   }
 
-  function installNavigationShield() {}
-
   window.StremioCustomAutoskip = {
     ...(window.StremioCustomAutoskip || {}),
     isEnabled(id) {
@@ -1005,6 +1003,8 @@
       ensureAutoskipReady,
       getMetadataAddon,
       setMetadataAddon,
+      getLibraryPreferences,
+      applyLibraryPreferences,
       isNativeSettingsSection,
       getSettingsSectionsContainer,
       getNativeSettingsSections,
@@ -1035,7 +1035,6 @@
   async function bootstrap() {
     hookShellMessages();
     injectPlaybackGuard();
-    installNavigationShield();
     await hydrateUserPreferences();
     await ensureDefaultPluginsEnabled();
     pathsCache = await api.getPaths();
