@@ -23,39 +23,53 @@ It combines UI upgrades, player improvements, plugins/themes, library tools, and
 
 ### 1) Board hero home view
 
-The board offers a modern hero section made by [Fxy6969] (https://github.com/Fxy6969).
+The board offers a modern hero section inspired by [Fxy6969](https://github.com/Fxy6969).
 
-![Board Hero Home](./images/03-board-hero-home.png)
+![Board Hero Home](./images/01-board-hero-home.png)
 
 ### 2) Hover metadata in catalogs
 
 While browsing catalogs, hover cards show key information (plot, genres, cast) without forcing a page change.
 
-![Catalog Hover Metadata](./images/06-catalog-hover-metadata.png)
+![Catalog Hover Metadata](./images/02-catalog-hover-metadata.png)
 
 ### 3) Detail view with metadata and stream sidebar
 
 The detail page combines metadata, cast, similar titles, and an extended stream/provider sidebar in one view.
 
-![Metadata and Stream UI](./images/02-detail-metadata-stream-sidebar.png)
+![Metadata and Stream UI](./images/03-detail-metadata-stream-sidebar.png)
 
 ### 4) Cinebye Addon Manager
 
-[Cinebye] (https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio and optionally disable specific sources (for example Cinemeta).
+[Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio and optionally disable specific sources (for example Cinemeta).
 
-![Cinebye Addon Manager](./images/01-cinebye-addon-manager.png)
+![Cinebye Addon Manager](./images/04-cinebye-addon-manager.png)
 
-### 5) Settings: themes and plugins
+### 5) Favorite subtitle and audio languages
+
+Inside player settings, you can define favorite subtitle and audio languages that act as your preferred language pool.
+This preference layer is used by the quick language actions shown in the next section.
+
+![Favorite Languages for Subtitles and Audio](./images/05-favorite-languages-subtitles-audio.png)
+
+### 6) Quick Select language shortcuts
+
+Quick Select reads your favorites and exposes them as one-click subtitle/audio buttons, so switching language is fast and consistent during playback.
+In short: favorites define what is available, Quick Select is the runtime shortcut layer that applies those preferences immediately.
+
+![Quick Select Language Shortcuts](./images/06-quick-select-language-shortcuts.png)
+
+### 7) Settings: themes and plugins
 
 Themes and plugins can be managed directly from settings, including quick access to the themes/plugins folders.
 
-![Themes and Plugins Settings](./images/05-settings-themes-plugins.png)
+![Themes and Plugins Settings](./images/07-settings-themes-plugins.png)
 
-### 6) Settings: preload, library backup, Discord
+### 8) Settings: preload, library backup, Discord
 
 Inside **Settings -> MyStremio**, you get central controls for buffer/preload, library export/import, and Discord Rich Presence.
 
-![Preload Library Discord Settings](./images/04-settings-preload-library-discord.png)
+![Preload Library Discord Settings](./images/08-settings-preload-library-discord.png)
 
 
 
@@ -148,7 +162,7 @@ Optional for a clean GitHub-ready package:
 MyStremio is based on the following independent communtiy projects:
 
 - [REVENGE977/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced)
-- [Fxy6969/Stremio-Glass-Theme] (https://github.com/Fxy6969/Stremio-Glass-Theme)
+- [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme)
 - [Bo0ii/StreamGo](https://github.com/Bo0ii/StreamGo)
 
 These projects were important inspiration, and I used many of their features for my own custom build.
