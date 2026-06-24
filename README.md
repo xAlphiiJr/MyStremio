@@ -23,7 +23,7 @@ It combines UI upgrades, player improvements, plugins/themes, library tools, and
 
 ### 1) Board hero home view
 
-The board offers a modern hero section inspired by [Fxy6969](https://github.com/Fxy6969).
+The board offers a modern hero section created by [Fxy6969](https://github.com/Fxy6969).
 
 ![Board Hero Home](./images/01-board-hero-home.png)
 
