@@ -10,18 +10,6 @@ Current release: **2.2.0**
 
 ## Features
 
-### TheIntroDB timestamp submission
-
-Contribute segment timestamps to TheIntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
-
-<!-- Screenshot: tidb-contribute -->
-
-### Seek buttons
-
-Configurable skip-back and skip-forward controls in the player bar — useful for quick rewinds or jumping ahead without scrubbing.
-
-<!-- Screenshot: seek-buttons -->
-
 ### Board hero home view
 
 The board includes a native hero section with rotating featured titles.
@@ -71,6 +59,34 @@ Themes and plugins can be managed directly from settings, including quick access
 Inside **Settings → MyStremio**, you get central controls for buffer/preload, library export/import, and Discord Rich Presence.
 
 ![Preload Library Discord Settings](./images/08-settings-preload-library-discord.png)
+
+### TheIntroDB timestamp submission
+
+Contribute segment timestamps to TheIntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
+
+<!-- Screenshot: tidb-contribute -->
+
+### Seek buttons
+
+Configurable skip-back and skip-forward controls in the player bar — useful for quick rewinds or jumping ahead without scrubbing.
+
+<!-- Screenshot: seek-buttons -->
+
+---
+
+## Patch notes
+
+### 2.2.0
+
+- **Board hero banner (native React)** — Featured titles are rendered directly in the board route. This required shipping a **bundled local Web UI** instead of the public Stremio website, and moving **Settings → MyStremio** into native React (autoskip, favorite languages, plugin toggles, Discord, API keys) for a stable settings experience without DOM injection.
+- **Stream buffering and player loading** — Reworked playback startup and buffering: configurable preload, a cleaner loading state that keeps title artwork visible, and a more stable hand-off when a stream starts loading.
+- **TheIntroDB timestamp submission** — Submit intro, outro, recap, and preview timestamps to [TheIntroDB](https://theintrodb.org/) from the player (mark start/end, pick segment type, submit with your API key).
+- **Seek buttons** — Skip backward and forward from the player control bar with a configurable interval (Settings → MyStremio → Plugins).
+- **Plugin and player adjustments** — Updates to stream UI, TheIntroDB skip logic, continue-watching covers, metadata hover panels, and data enrichment mount targeting.
+- **Player shell assets** — Updated player loading overlay, glass-style controls, playback API integration, and seek-buffer handling.
+- **Custom board scrollbar** — Always-visible scrollbar on the board and other main catalog views, alongside mouse-wheel scrolling.
+- **Scroll behavior in panels and menus** — Metadata hover panels and library context menus close when you scroll.
+- **Navigation during tab switches** — The horizontal navigation bar stays in place while routes load, without jumping or briefly disappearing.
 
 ---
 
@@ -147,22 +163,6 @@ The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle
 - Settings, addon data, and library structure are stored locally in `%APPDATA%\MyStremio\`.
 - Cinebye login uses your Stremio session at runtime — no credentials are stored in the repository.
 - Discord Rich Presence only sends data when enabled and connected.
-
----
-
-## Patch notes
-
-### 2.2.0
-
-- **Board hero banner (native React)** — Featured titles are rendered directly in the board route. This required shipping a **bundled local Web UI** instead of the public Stremio website, and moving **Settings → MyStremio** into native React (autoskip, favorite languages, plugin toggles, Discord, API keys) for a stable settings experience without DOM injection.
-- **Stream buffering and player loading** — Reworked playback startup and buffering: configurable preload, a cleaner loading state that keeps title artwork visible, and a more stable hand-off when a stream starts loading.
-- **TheIntroDB timestamp submission** — Submit intro, outro, recap, and preview timestamps to [TheIntroDB](https://theintrodb.org/) from the player (mark start/end, pick segment type, submit with your API key).
-- **Seek buttons** — Skip backward and forward from the player control bar with a configurable interval (Settings → MyStremio → Plugins).
-- **Plugin and player adjustments** — Updates to stream UI, TheIntroDB skip logic, continue-watching covers, metadata hover panels, and data enrichment mount targeting.
-- **Player shell assets** — Updated player loading overlay, glass-style controls, playback API integration, and seek-buffer handling.
-- **Custom board scrollbar** — Always-visible scrollbar on the board and other main catalog views, alongside mouse-wheel scrolling.
-- **Scroll behavior in panels and menus** — Metadata hover panels and library context menus close when you scroll.
-- **Navigation during tab switches** — The horizontal navigation bar stays in place while routes load, without jumping or briefly disappearing.
 
 ---
 
