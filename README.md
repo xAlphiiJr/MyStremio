@@ -46,7 +46,7 @@ Current release: **2.2.0**
 
 ### 🏠 Board hero home view
 
-The board includes a native hero section with rotating featured titles.
+The board includes a native hero section with rotating featured titles. Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme)
 
    ![Board Hero Home](./images/01-board-hero.png)
 
