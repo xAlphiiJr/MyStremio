@@ -5,6 +5,12 @@ It combines UI upgrades, player improvements, plugins/themes and library tools i
 Current release: **2.2.0**
 
 > **Disclaimer:** MyStremio is an independent community project and is not affiliated with official Stremio.
+---
+
+## 📌 Table of Contents
+- [📌 Table of Contents](#-table-of-contents)
+- [❓ What is Stremio Enhanced?](#-Features)
+
 
 ---
 
