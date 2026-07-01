@@ -52,7 +52,7 @@ In short: favorites define what is available, Quick Select is the runtime shortc
 
 Themes and plugins can be managed directly from settings, including quick access to the themes/plugins folders.
 
-![Themes and Plugins Settings](./images/07-settings-themes-plugins.png)
+![Themes and Plugins Settings](./images/07-01-settings-themes-plugins.png)
 
 ### Settings: preload, library backup, Discord
 
