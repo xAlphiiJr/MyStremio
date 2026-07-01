@@ -58,7 +58,7 @@ Themes and plugins can be managed directly from settings, including quick access
 
 Inside **Settings → MyStremio**, you get central controls for buffer/preload, library export/import, and Discord Rich Presence.
 
-![Preload Library Discord Settings](./images/08-settings-preload-library-discord.png)
+![Preload Library Discord Settings](./images/08-01-settings-preload-library-discord.png)
 
 ### TheIntroDB timestamp submission
 
