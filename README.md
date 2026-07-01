@@ -13,6 +13,25 @@ Current release: **2.2.0**
 - [🛠️ Patch Notes](#-Patch-Notes)
 
 
+
+### How MyStremio differs from official Stremio
+
+    -Built-in UI and navigation enhancements (including a Glass Theme and a custom settings area)
+
+    Improved player tooling (hover timestamp, TheIntroDB/auto-skip options, controllable preload behavior)
+
+    Better stream organization and metadata presentation (enrichment panels and cleaner stream UI behavior)
+
+    Integrated Cinebye management (manage addons, optional Cinemeta disable)
+
+    Custom library groups with JSON import/export
+
+    Additional power-user options such as plugin/theme toggles and Discord Rich Presence
+
+    Packaged as a ready-to-use single installer
+
+
+
 ---
 
 ## ✨ Features
