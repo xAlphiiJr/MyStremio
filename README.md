@@ -8,9 +8,20 @@ Current release: **2.2.0**
 ---
 
 ## 📌 Table of Contents
+
 - [📌 Table of Contents](#-table-of-contents)
-- [✨ Features](#-Features)
-- [🛠️ Patch Notes](#-Patch-Notes)
+- [🚀 Features](#-features)
+- [🛠️ Patch Notes](#️-patch-notes)
+- [💾 Installation](#-installation)
+- [📂 Install paths](#-install-paths)
+- [📋 Requirements](#-requirements)
+- [🗑️ Uninstall](#️-uninstall)
+- [🎬 First-time setup](#-first-time-setup)
+- [🎨 Themes and plugins (manual files)](#-themes-and-plugins-manual-files)
+- [🧑‍💻 Build from source (developers)](#-build-from-source-developers)
+- [🔒 Privacy and local data](#-privacy-and-local-data)
+- [🙏 Credits](#-credits)
+- [💬 Feedback](#-feedback)
 
 ---
 
@@ -31,7 +42,7 @@ Current release: **2.2.0**
 
 ---
 
-## ✨ Features
+## 🚀 Features
 
 ### Board hero home view
 
@@ -113,7 +124,7 @@ Configurable skip-back and skip-forward controls in the player bar — useful fo
 
 ---
 
-## Installation
+## 💾 Installation
 
 1. Download the latest installer from this repository's **Releases** page.
 2. Run `MyStremioSetup-v2.2.0_x64.exe` (or the latest version).
@@ -125,25 +136,26 @@ Configurable skip-back and skip-forward controls in the player bar — useful fo
    - Protocol handlers (`stremio://`, `magnet:`, optional `.torrent`)
 4. Launch MyStremio from the Start menu or desktop shortcut.
 
-### Install paths
+
+### 📂 Install paths
 
 - App: `%LOCALAPPDATA%\Programs\MyStremio\`
 - User data (settings/addons): `%APPDATA%\MyStremio\`
 
-### Requirements
+### 📋 Requirements
 
 - Windows 10/11 (64-bit)
 - Internet connection (addons, metadata sources, streaming)
 - Optional API keys for plugins (for example TMDB, TheIntroDB)
 
-### Uninstall
+### 🗑️ Uninstall
 
 Use **Windows Apps & Features** or the Start menu uninstaller.
 Optionally delete `%APPDATA%\MyStremio\` to remove all local user data.
 
 ---
 
-## First-time setup
+## 🎬 First-time setup
 
 1. Install and launch MyStremio.
 2. Sign in with your Stremio account.
@@ -156,7 +168,7 @@ Optionally delete `%APPDATA%\MyStremio\` to remove all local user data.
 
 ---
 
-## Themes and plugins (manual files)
+## 🎨 Themes and plugins (manual files)
 
 1. Open **Settings → MyStremio**.
 2. Click **Open themes/plugins folder**.
@@ -165,7 +177,7 @@ Optionally delete `%APPDATA%\MyStremio\` to remove all local user data.
 
 ---
 
-## Build from source (developers)
+## 🧑‍💻 Build from source (developers)
 
 Requires Rust (MSVC), Visual Studio Build Tools, Inno Setup 6, Node.js with pnpm (optional, for Web UI rebuild), and an installed Stremio Desktop runtime (for `libmpv-2.dll`).
 
@@ -179,8 +191,7 @@ Output: `release\MyStremioSetup-v2.2.0_x64.exe`
 The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle. To rebuild the Web UI from source, clone [stremio-web](https://github.com/Stremio/stremio-web) into `.tmp/stremio-web`, apply MyStremio patches, then run the build script again.
 
 ---
-
-## Privacy and local data
+## 🔒 Privacy and local data
 
 - No API keys or personal settings are prefilled in the installer.
 - Settings, addon data, and library structure are stored locally in `%APPDATA%\MyStremio\`.
@@ -189,7 +200,7 @@ The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle
 
 ---
 
-## Credits
+## 🙏 Credits
 
 MyStremio is based on the following independent community projects:
 
@@ -202,7 +213,7 @@ These projects were important inspiration, and I used many of their features for
 
 ---
 
-## Feedback
+## 💬 Feedback
 
 This started as a fun personal project and is improved iteratively.
 If you find reproducible bugs or have ideas, please share feedback or open an issue.
