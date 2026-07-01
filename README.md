@@ -44,19 +44,19 @@ Current release: **2.2.0**
 
 ## 🚀 Features
 
-### Board hero home view
+### 🏠 Board hero home view
 
 The board includes a native hero section with rotating featured titles.
 
 ![Board Hero Home](./images/01-board-hero.png)
 
-### Hover metadata in catalogs
+### 🖱️ Hover metadata in catalogs
 
 While browsing catalogs, hover cards show key information (plot, genres, cast) without forcing a page change.
 
 ![Catalog Hover Metadata](./images/02-catalog-hover.png)
 
-### Detail view with metadata and stream sidebar
+### 📖 Detail view with metadata and stream sidebar
 
 The detail page combines metadata, cast, similar titles, and an extended stream/provider sidebar in one view.
 
