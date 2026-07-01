@@ -26,7 +26,7 @@ While browsing catalogs, hover cards show key information (plot, genres, cast) w
 
 The detail page combines metadata, cast, similar titles, and an extended stream/provider sidebar in one view.
 
-![Metadata and Stream UI](./images/03-detail-metadata-stream-sidebar)
+![Metadata and Stream UI](./images/03-detail-metadata-stream-sidebar.png)
 
 ### Cinebye Addon Manager
 
