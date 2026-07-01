@@ -20,7 +20,7 @@ The board includes a native hero section with rotating featured titles.
 
 While browsing catalogs, hover cards show key information (plot, genres, cast) without forcing a page change.
 
-![Catalog Hover Metadata](./images/02-catalog-hover-metadata.png)
+![Catalog Hover Metadata](./images/02-catalog-hover)
 
 ### Detail view with metadata and stream sidebar
 
@@ -39,7 +39,7 @@ The detail page combines metadata, cast, similar titles, and an extended stream/
 Inside player settings, you can define favorite subtitle and audio languages that act as your preferred language pool.
 This preference layer is used by the quick language actions shown in the next section.
 
-![Favorite Languages for Subtitles and Audio](./images/05-favorite-languages-subtitles-audio.png)
+![Favorite Languages for Subtitles and Audio](./images/05-favorite-languages-subtitles)
 
 ### Quick Select language shortcuts
 
@@ -64,7 +64,7 @@ Inside **Settings → MyStremio**, you get central controls for buffer/preload, 
 
 Contribute segment timestamps to TheIntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
 
-<!-- Screenshot: tidb-contribute -->
+![TheIntroDB panel](./images/10-tidb-timestamp)<!-- Screenshot: tidb-contribute -->
 
 ### Seek buttons
 
