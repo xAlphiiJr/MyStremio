@@ -56,52 +56,52 @@ While browsing catalogs, hover cards show key information (plot, genres, cast) w
 
    ![Catalog Hover Metadata](./images/02-catalog-hover.png)
 
-### 📖 Detail view with metadata and stream sidebar
+###📖 Detail view with metadata and stream sidebar
 
 The Data Enrichment Plugin (if TMDB API KEY is set) offers an enhanced detail page with cast and similar titles, 
 The StreamUI pluign offers a clean and modern sidebar with folders to pick streams from. (The plugin works for the follwing addons: Most torrent addons, [WatchHub](https://stremio-addons.net/addons/watchhub), [Ratings Aggregator](https://stremio-addons.net/addons/ratings-aggregator), [IMDb Ratings](https://stremio-addons.net/addons/imdb-ratings), [AfterCredits](https://aftercredits.almosteffective.com/configure.html))
 
 ![Metadata and Stream UI](./images/03-detail-metadata-stream-sidebar.png)
 
-### 🎞️ Cinebye Addon Manager
+###🎞️ Cinebye Addon Manager
 
 [Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio and optionally disable specific sources (for example Cinemeta).
 
 ![Cinebye Addon Manager](./images/04-cinebye-addon-manager.png)
 
-### 🌐 Favorite subtitle and audio languages
+###🌐 Favorite subtitle and audio languages
 
 Inside player settings, you can define favorite subtitle and audio languages that act as your preferred language pool.
 This preference layer is used by the quick language actions shown in the next section.
 
 ![Favorite Languages for Subtitles and Audio](./images/05-favorite-languages-subtitles.png)
 
-### ⚡ Quick Select language shortcuts
+###⚡ Quick Select language shortcuts
 
 Quick Select reads your favorites and exposes them as one-click subtitle/audio buttons, so switching language is fast and consistent during playback.
 In short: favorites define what is available, Quick Select is the runtime shortcut layer that applies those preferences immediately.
 
 ![Quick Select Language Shortcuts](./images/06-quick-settings.png)
 
-### ⚙️ Settings: themes and plugins
+###⚙️ Settings: themes and plugins
 
 Themes and plugins can be managed directly from settings, including quick access to the themes/plugins folders.
 
 ![Themes and Plugins Settings](./images/07-01-settings-themes-plugins.png)
 
-### ⚙️ Settings: preload, library backup, Discord
+###⚙️ Settings: preload, library backup, Discord
 
 Inside **Settings → MyStremio**, you get central controls for buffer/preload, library export/import, and Discord Rich Presence.
 
 ![Preload Library Discord Settings](./images/08-01-settings-preload-library-discord.png)
 
-### ⏱️ TheIntroDB timestamp submission
+###⏱️ TheIntroDB timestamp submission
 
 Contribute segment timestamps to TheIntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
 
 ![TheIntroDB panel](./images/10-tidb-timestamp.png)<!-- Screenshot: tidb-contribute -->
 
-### ⏩ Seek buttons
+###⏩ Seek buttons
 
 Configurable skip-back and skip-forward controls in the player bar — useful for quick rewinds or jumping ahead without scrubbing.
 
@@ -109,7 +109,7 @@ Configurable skip-back and skip-forward controls in the player bar — useful fo
 
 ---
 
-## 🛠️ Patch Notes
+##🛠️ Patch Notes
 
 ### 2.2.0
 
@@ -125,7 +125,7 @@ Configurable skip-back and skip-forward controls in the player bar — useful fo
 
 ---
 
-## 💾 Installation
+##💾 Installation
 
 1. Download the latest installer from this repository's **Releases** page.
 2. Run `MyStremioSetup-v2.2.0_x64.exe` (or the latest version).
@@ -138,25 +138,25 @@ Configurable skip-back and skip-forward controls in the player bar — useful fo
 4. Launch MyStremio from the Start menu or desktop shortcut.
 
 
-### 📂 Install paths
+###📂 Install paths
 
 - App: `%LOCALAPPDATA%\Programs\MyStremio\`
 - User data (settings/addons): `%APPDATA%\MyStremio\`
 
-### 📋 Requirements
+###📋 Requirements
 
 - Windows 10/11 (64-bit)
 - Internet connection (addons, metadata sources, streaming)
 - Optional API keys for plugins (for example TMDB, TheIntroDB)
 
-### 🗑️ Uninstall
+###🗑️ Uninstall
 
 Use **Windows Apps & Features** or the Start menu uninstaller.
 Optionally delete `%APPDATA%\MyStremio\` to remove all local user data.
 
 ---
 
-## 🎬 First-time setup
+##🎬 First-time setup
 
 1. Install and launch MyStremio.
 2. Sign in with your Stremio account.
@@ -169,7 +169,7 @@ Optionally delete `%APPDATA%\MyStremio\` to remove all local user data.
 
 ---
 
-## 🎨 Themes and plugins (manual files)
+##🎨 Themes and plugins (manual files)
 
 1. Open **Settings → MyStremio**.
 2. Click **Open themes/plugins folder**.
@@ -178,7 +178,7 @@ Optionally delete `%APPDATA%\MyStremio\` to remove all local user data.
 
 ---
 
-## 🧑‍💻 Build from source (developers)
+##🧑‍💻 Build from source (developers)
 
 Requires Rust (MSVC), Visual Studio Build Tools, Inno Setup 6, Node.js with pnpm (optional, for Web UI rebuild), and an installed Stremio Desktop runtime (for `libmpv-2.dll`).
 
@@ -192,7 +192,7 @@ Output: `release\MyStremioSetup-v2.2.0_x64.exe`
 The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle. To rebuild the Web UI from source, clone [stremio-web](https://github.com/Stremio/stremio-web) into `.tmp/stremio-web`, apply MyStremio patches, then run the build script again.
 
 ---
-## 🔒 Privacy and local data
+##🔒 Privacy and local data
 
 - No API keys or personal settings are prefilled in the installer.
 - Settings, addon data, and library structure are stored locally in `%APPDATA%\MyStremio\`.
@@ -201,7 +201,7 @@ The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle
 
 ---
 
-## 🙏 Credits
+##🙏 Credits
 
 MyStremio is based on the following independent community projects:
 
@@ -214,7 +214,7 @@ These projects were important inspiration, and I used many of their features for
 
 ---
 
-## 💬 Feedback
+##💬 Feedback
 
 This started as a fun personal project and is improved iteratively.
 If you find reproducible bugs or have ideas, please share feedback or open an issue.
