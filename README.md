@@ -49,14 +49,14 @@ Current release: **2.2.0**
 The board includes a hero section with rotating titles. The Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme) and just slightly optimized by me.
 
    <p align="center">
-  <img src="./images/01-board-hero.png" alt="Board Hero Home" />
+  <img src="./images/01-board-hero.png" alt="Board Hero Home" width="1000"/>
 </p>
 
 ### 🖱️ Hover metadata in catalogs
 
    While browsing catalogs, hover cards show key information (plot, genres, cast) without forcing a page change.
    <p align="center">
-  <img src="./images/02-catalog-hover.png" alt="Catalog Hover Metadata" />
+  <img src="./images/02-catalog-hover.png" alt="Catalog Hover Metadata" width="1000"/>
 </p>
 
 
