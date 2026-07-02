@@ -117,7 +117,7 @@ Inside **Settings → MyStremio**, you get central controls for buffer/preload, 
 Contribute segment timestamps to TheIntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
 
   <p align="center">
-  <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB panel" width="1000"/>
+  <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB panel" />
 </p>
 
 ### ⏩ Seek buttons
