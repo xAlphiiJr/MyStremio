@@ -48,7 +48,9 @@ Current release: **2.2.0**
 
 The board includes a hero section with rotating titles. The Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme) and just slightly optimized by me.
 
-   ![Board Hero Home](./images/01-board-hero.png)
+   <p align="center">
+  <img src="./images/01-board-hero.png" alt="Board Hero Home" />
+</p>
 
 ### 🖱️ Hover metadata in catalogs
 
@@ -76,7 +78,10 @@ The StreamUI pluign offers a clean and modern sidebar with folders to pick strea
 Inside player settings, you can define favorite subtitle and audio languages that act as your preferred language pool.
 This preference layer is used by the quick language actions shown in the next section.
 
-![Favorite Languages for Subtitles and Audio](./images/05-favorite-languages-subtitles.png)
+   <p align="center">
+  <img src="./images/05-favorite-languages-subtitles.png" alt="Favorite Languages for Subtitles and Audio" />
+</p>
+   ![Favorite Languages for Subtitles and Audio]()
 
 ### ⚡ Quick Select language shortcuts
 
