@@ -83,7 +83,7 @@ Inside player settings, you can define favorite subtitle and audio languages tha
 This preference layer is used by the quick language actions shown in the next section.
 
    <p align="center">
-  <img src="./images/05-favorite-languages-subtitles.png" alt="Favorite Languages for Subtitles and Audio" width="1000"/>
+  <img src="./images/05-favorite-languages-subtitles.png" alt="Favorite Languages for Subtitles and Audio" />
 </p>
    ![Favorite Languages for Subtitles and Audio]()
 
@@ -93,7 +93,7 @@ Quick Select reads your favorites and exposes them as one-click subtitle/audio b
 In short: favorites define what is available, Quick Select is the runtime shortcut layer that applies those preferences immediately.
 
    <p align="center">
-  <img src="./images/06-quick-settings.png" alt="Quick Select Language Shortcuts" width="1000"/>
+  <img src="./images/06-quick-settings.png" alt="Quick Select Language Shortcuts" />
 </p>
 
 ### ⚙️ Settings: themes and plugins
@@ -101,7 +101,7 @@ In short: favorites define what is available, Quick Select is the runtime shortc
 Themes and plugins can be managed directly from settings, including quick access to the themes/plugins folders.
 
    <p align="center">
-  <img src="./images/07-01-settings-themes-plugins.png" alt="Themes and Plugins Settings" width="1000"/>
+  <img src="./images/07-01-settings-themes-plugins.png" alt="Themes and Plugins Settings" />
 </p>
 
 ### ⚙️ Settings: preload, library backup, Discord
@@ -109,7 +109,7 @@ Themes and plugins can be managed directly from settings, including quick access
 Inside **Settings → MyStremio**, you get central controls for buffer/preload, library export/import, and Discord Rich Presence.
 
   <p align="center">
-  <img src="./images/08-01-settings-preload-library-discord.png" alt="Preload Library Discord Settings" width="1000"/>
+  <img src="./images/08-01-settings-preload-library-discord.png" alt="Preload Library Discord Settings" w/>
 </p>
 
 ### ⏱️ TheIntroDB timestamp submission
@@ -125,8 +125,8 @@ Contribute segment timestamps to TheIntroDB while watching. Open the contribute 
 Configurable skip-back and skip-forward controls in the player bar — useful for quick rewinds or jumping ahead without scrubbing.
 
  <p align="center">
-  <img src="./images/09-seek-buttons.png" alt="Seek buttons in Player" width="48%" />
-  <img src="./images/09-01-seek-buttons-controls.png" alt="Seek button controls" width="48%" />
+  <img src="./images/09-seek-buttons.png" alt="Seek buttons in Player" />
+  <img src="./images/09-01-seek-buttons-controls.png" alt="Seek button controls" />
 </p>
 
 ---
