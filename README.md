@@ -59,7 +59,7 @@ While browsing catalogs, hover cards show key information (plot, genres, cast) w
 ### 📖 Detail view with metadata and stream sidebar
 
 The Data Enrichment Plugin (if TMDB API KEY is set) offers an enhanced detail page with cast and similar titles, 
-The StreamUI pluign offers a clean and modern sidebar with folders to pick streams from. (The plugin works for the follwing plugins:[WatchHub](https://stremio-addons.net/addons/watchhub), [Ratings Aggregator](https://stremio-addons.net/addons/ratings-aggregator), [IMDb Ratings]([https://stremio-addons.net/addons/watchhub](https://stremio-addons.net/addons/imdb-ratings), [AfterCredits]([https://stremio-addons.net/addons/watchhub](https://aftercredits.almosteffective.com/configure.html))
+The StreamUI pluign offers a clean and modern sidebar with folders to pick streams from. (The plugin works for the follwing plugins:[WatchHub](https://stremio-addons.net/addons/watchhub), [Ratings Aggregator](https://stremio-addons.net/addons/ratings-aggregator), [IMDb Ratings](https://stremio-addons.net/addons/imdb-ratings), [AfterCredits](https://aftercredits.almosteffective.com/configure.html))
 
 ![Metadata and Stream UI](./images/03-detail-metadata-stream-sidebar.png)
 
