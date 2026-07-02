@@ -51,4 +51,15 @@ if (Test-Path $WebUiOut) {
 New-Item -ItemType Directory -Path $WebUiOut -Force | Out-Null
 Copy-Item -Path (Join-Path $WebUiBuild "*") -Destination $WebUiOut -Recurse -Force
 
+$mainJs = Get-ChildItem -Path $WebUiOut -Recurse -Filter main.js | Select-Object -First 1
+if ($mainJs) {
+    $fixScript = Join-Path $ScriptRoot "fix-webui-language-mojibake.py"
+    if (Test-Path $fixScript) {
+        python $fixScript $mainJs.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Language mojibake repair failed with exit code $LASTEXITCODE"
+        }
+    }
+}
+
 Write-Host "Local web UI copied to $WebUiOut"
