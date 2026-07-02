@@ -58,7 +58,7 @@ The board includes a hero section with rotating titles. The Theme is made by [Fx
    <p align="center">
   <img src="./images/02-catalog-hover.png" alt="Catalog Hover Metadata" />
 </p>
-   ![Catalog Hover Metadata](./images/02-catalog-hover.png)
+
 
 ### 📖 Detail view with metadata and stream sidebar
 
@@ -88,13 +88,17 @@ This preference layer is used by the quick language actions shown in the next se
 Quick Select reads your favorites and exposes them as one-click subtitle/audio buttons, so switching language is fast and consistent during playback.
 In short: favorites define what is available, Quick Select is the runtime shortcut layer that applies those preferences immediately.
 
-![Quick Select Language Shortcuts](./images/06-quick-settings.png)
+   <p align="center">
+  <img src="./images/06-quick-settings.png" alt="Quick Select Language Shortcuts" />
+</p>
 
 ### ⚙️ Settings: themes and plugins
 
 Themes and plugins can be managed directly from settings, including quick access to the themes/plugins folders.
 
-![Themes and Plugins Settings](./images/07-01-settings-themes-plugins.png)
+   <p align="center">
+  <img src="./images/07-01-settings-themes-plugins.png" alt="hemes and Plugins Settings" />
+</p>
 
 ### ⚙️ Settings: preload, library backup, Discord
 
