@@ -177,7 +177,6 @@ Configurable skip-back and skip-forward controls in the player bar — useful fo
 ### Known Issues
 
 - **First stream playback:** On the first stream start after launching the app, the video may remain frozen on the first frame. One click into the seek bar fixes the issue.
-- **Windows display scaling:** UI scaling issues may occur when Windows display scaling is set to anything other than **100%**.
 - **Cast Search Addon:** The Cast Search Addon is not compatible with the StreamUI plugin as the cast members load the same way as video streams which messes with correct grouping.
 - **Formatter:** Flags don't display correctly.
 
