@@ -14,8 +14,13 @@ use std::thread;
 use url::Url;
 use urlencoding::decode;
 use webview2::Controller;
+use webview2_sys::ICoreWebView2Controller3;
+use winapi::shared::minwindef::FALSE;
 use winapi::shared::windef::HWND;
-use winapi::um::winuser::{GetClientRect, VK_F7, WM_APPCOMMAND, WM_SETFOCUS};
+use winapi::um::winuser::{
+    GetClientRect, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST, VK_F7,
+    WM_APPCOMMAND, WM_SETFOCUS,
+};
 
 const APPCOMMAND_MEDIA_NEXTTRACK: u32 = 11;
 const APPCOMMAND_MEDIA_PREVIOUSTRACK: u32 = 12;
@@ -24,6 +29,51 @@ const APPCOMMAND_MEDIA_PLAY: u32 = 46;
 const APPCOMMAND_MEDIA_PAUSE: u32 = 47;
 
 use super::constants::{WARNING_URL, WHITELISTED_HOSTS};
+
+/// Display height (physical pixels) that maps to 100% UI scale.
+const UI_SCALE_BASELINE_HEIGHT: f64 = 1080.0;
+/// Never render below the 100% design.
+const UI_SCALE_MIN: f64 = 1.0;
+/// Upper bound to avoid absurd scaling on very high-resolution panels (e.g. 8K).
+const UI_SCALE_MAX: f64 = 4.0;
+
+/// Derive the WebView rasterization scale from the display resolution instead of
+/// the Windows display-scaling setting.
+///
+/// The UI is designed for a 1080p baseline (= 100%). Pinning the scale to 1.0
+/// keeps the app independent of the Windows scaling slider, but makes the UI tiny
+/// on high-resolution panels (a 4K screen has 4x the pixels on the same area).
+/// Scaling proportionally to the monitor height restores a consistent physical
+/// size while still ignoring the user's Windows slider: because the process is
+/// DPI-aware, `GetMonitorInfo` reports the true physical resolution regardless of
+/// that slider.
+///
+/// # Arguments
+/// * `hwnd` - Window handle used to pick the monitor the window currently sits on.
+///
+/// # Returns
+/// A scale factor clamped to `[UI_SCALE_MIN, UI_SCALE_MAX]`. Falls back to
+/// `UI_SCALE_MIN` (100%) if the monitor size cannot be determined.
+fn resolution_rasterization_scale(hwnd: HWND) -> f64 {
+    let height = unsafe {
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if monitor.is_null() {
+            return UI_SCALE_MIN;
+        }
+        let mut info: MONITORINFO = mem::zeroed();
+        info.cbSize = mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(monitor, &mut info) == 0 {
+            return UI_SCALE_MIN;
+        }
+        f64::from(info.rcMonitor.bottom - info.rcMonitor.top)
+    };
+
+    if height <= 0.0 {
+        return UI_SCALE_MIN;
+    }
+
+    (height / UI_SCALE_BASELINE_HEIGHT).clamp(UI_SCALE_MIN, UI_SCALE_MAX)
+}
 
 #[derive(Default)]
 pub struct WebView {
@@ -137,6 +187,26 @@ impl PartialUi for WebView {
                                 .ok();
                         } else {
                             eprintln!("failed to get interface to controller2");
+                        }
+
+                        // Decouple the UI scale from the Windows display-scaling
+                        // slider. By default the WebView follows the OS DPI
+                        // (125/150/200%) and scales up. We instead derive the scale
+                        // from the display resolution (1080p = 100% baseline) so the
+                        // app keeps a consistent physical size: 1.0 on 1080p, ~1.33 on
+                        // 1440p, 2.0 on 4K. Disabling monitor-scale detection stops the
+                        // WebView from re-applying the OS scale on DPI changes.
+                        if let Some(controller3) = controller
+                            .as_inner()
+                            .get_interface::<dyn ICoreWebView2Controller3>()
+                        {
+                            let scale = resolution_rasterization_scale(hwnd);
+                            unsafe {
+                                let _ = controller3.put_should_detect_monitor_scale_changes(FALSE);
+                                let _ = controller3.put_rasterization_scale(scale);
+                            }
+                        } else {
+                            eprintln!("failed to get interface to controller3 (DPI scale pin unavailable)");
                         }
                     let webview = controller
                             .get_webview()
