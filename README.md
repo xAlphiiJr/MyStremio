@@ -156,7 +156,7 @@ Configurable skip-back and skip-forward controls in the player bar — useful fo
 - **Dynamic Hero crash fix** — Null guards for missing hero titles (`year` / `preloadHeroImages`) so an empty hero cache no longer crashes React.
 - **WebView2 cache handling** — Browsing cache is refreshed on version/Web UI changes without wiping the full profile; service worker registration is blocked in the desktop shell to avoid stale bundles.
 - **Settings persistence** — Login, plugins, volume, autoskip, Discord, preload, language, library, and onboarding flags are restored from `%APPDATA%\MyStremio\mystremio-settings.json` before `main.js` loads, so restarts and updates no longer reset user configuration.
-- **Stream buffering and player loading** — Reworked playback startup and buffering: configurable preload, a cleaner loading state that keeps title artwork visible, and a more stable hand-off when a stream starts loading.
+- **Stream buffering and player loading** — Reworked playback startup and buffering: configurable preload, and a more stable hand-off when a stream starts loading.
 - **TheIntroDB timestamp submission** — Submit intro, outro, recap, and preview timestamps to [TheIntroDB](https://theintrodb.org/) from the player (mark start/end, pick segment type, submit with your API key).
 - **Seek buttons** — Skip backward and forward from the player control bar with a configurable interval (Settings → MyStremio → Plugins).
 - **In-app updater** — Checks GitHub Releases for `MyStremioSetup-v*_x64.exe`, verifies `SHA256SUMS.txt`, and installs updates via the existing Stremio update banner (still in testing).
@@ -171,7 +171,6 @@ Configurable skip-back and skip-forward controls in the player bar — useful fo
 - **Plugin live updates** — Partially added live updates when plugins are toggled.
 - **Artifacts** — Fixed artifacts appearing in the subtitle settings and shortcuts section.
 - **StreamUI** — Added Usenet grouping to StreamUI plugin (still in testing). Fixed UI language.
-- **WASM MIME** — Correct `application/wasm` content type for the local Web UI server.
 
 ---
 
