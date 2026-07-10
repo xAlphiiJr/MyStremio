@@ -129,7 +129,7 @@ Contribute segment timestamps to TheIntroDB while watching. Open the contribute 
 
 ### ⏩ Seek buttons plugin
 
-Configurable skip-back and skip-forward controls in the player bar — useful for quick rewinds or jumping ahead without scrubbing. The skip interval can be changed in the settings: MyStremio -> Plugins -> Player -> Seek Buttons.
+Configurable skip-back and skip-forward controls in the player bar — useful for quick rewinds or jumping ahead without scrubbing. The skip interval can be changed in the settings: MyStremio → Plugins → Player → Seek Buttons.
 
 ### 🔆 Brightness slider
 
