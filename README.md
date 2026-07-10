@@ -135,10 +135,14 @@ Configurable skip-back and skip-forward controls in the player bar — useful fo
 
 Built in brightness slider to dim the video while watching without the need to change monitor/screen/tv settings.
 
+### ⏳ Hover Timestamps
+
+Built in timestamps when hovering the seek bar in the player.
+
 ---
 ### 💡 Planned Features
 
-- **IntroDB integration:** I plan on implementing both TheIntroDB and IntroDB together to get maximum coverage.
+- **IntroDB integration:** I plan on implementing both TheIntroDB and IntroDB together to achieve maximum coverage.
 - **PiP:** I'm working on a picture in picture video mode
 - **Seek Bar Thumbnail:** I want to add a thumbnail when hovering over the seek bar in the player.
 
