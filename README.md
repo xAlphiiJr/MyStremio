@@ -217,18 +217,18 @@ Optionally delete `%APPDATA%\MyStremio\` to remove all local user data.
 2. Sign in with your Stremio account.
 3. Open **Settings → MyStremio** and configure optional items:
    - Preload/buffer
-   - Themes/plugins
+   - Plugins
    - Discord Rich Presence
    - Plugin API keys (TheIntroDB for timestamp submission)
 4. Create library folders and use JSON import/export when needed.
 
 ---
 
-## 🎨 Themes and plugins (manual files)
+## 🎨 Plugins (manual files)
 
 1. Open **Settings → MyStremio**.
 2. Click **Open themes/plugins folder**.
-3. Place your theme/plugin files in that folder.
+3. Place your tplugin files in that folder.
 4. Toggle the switch and press CTRL+R to reload the app.
 
 ---
@@ -249,9 +249,8 @@ The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle
 ---
 ## 🔒 Privacy and local data
 
-- No API keys or personal settings are prefilled in the installer.
-- Settings, addon data, and library structure are stored locally in `%APPDATA%\MyStremio\`.
-- Cinebye login uses your Stremio session at runtime — no credentials are stored in the repository.
+- API keys, personal setting sand library structure are stored locally in `%APPDATA%\MyStremio\`.
+- Cinebye login uses your Stremio session at runtime.
 - Discord Rich Presence only sends data when enabled and connected.
 
 ---
