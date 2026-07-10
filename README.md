@@ -127,14 +127,13 @@ Contribute segment timestamps to TheIntroDB while watching. Open the contribute 
   <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB panel" />
 </p>
 
-### ⏩ Seek buttons
+### ⏩ Seek buttons plugin
 
-Configurable skip-back and skip-forward controls in the player bar — useful for quick rewinds or jumping ahead without scrubbing.
+Configurable skip-back and skip-forward controls in the player bar — useful for quick rewinds or jumping ahead without scrubbing. The skip interval can be changed in the settings: MyStremio -> Plugins -> Player -> Seek Buttons.
 
- <p align="center">
-  <img src="./images/09-01-seek-buttons-controls.png" alt="Seek button controls" width="61%"/>
-  <img src="./images/09-seek-buttons.png" alt="Seek buttons in Player" width="60%"/>
-</p>
+### 🔆 Brightness slider
+
+Built in brightness slider to dim the video while watching without the need to change monitor/screen/tv settings.
 
 ---
 ### 💡 Planned Features
