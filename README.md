@@ -77,14 +77,6 @@ The StreamUI plugin offers a clean and modern sidebar with folders to pick strea
   <img src="./images/03-detail-metadata-stream-sidebar.png" alt="Metadata and Stream UI" width="1000"/>
 </p>
 
-### 🎞️ Cinebye Addon Manager
-
-[Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio and optionally disable specific sources (for example Cinemeta).
-
-  <p align="center">
-  <img src="./images/04-cinebye-addon-manager.pngg" alt="Cinebye Addon Manager" width="1000"/>
-</p>
-
 ### 🌐 Favorite subtitle and audio languages
 
 Inside player settings, you can define favorite subtitle and audio languages that act as your preferred language pool.
@@ -126,6 +118,10 @@ Contribute segment timestamps to TheIntroDB while watching. Open the contribute 
   <p align="center">
   <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB panel" />
 </p>
+
+### 🎞️ Cinebye Addon Manager
+
+[Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio and optionally disable specific sources (for example Cinemeta).
 
 ### ⏩ Seek buttons plugin
 
