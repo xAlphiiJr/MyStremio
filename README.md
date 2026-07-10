@@ -93,7 +93,6 @@ This preference layer is used by the quick language actions shown in the next se
    <p align="center">
   <img src="./images/05-favorite-languages-subtitles.png" alt="Favorite Languages for Subtitles and Audio" />
 </p>
-   ![Favorite Languages for Subtitles and Audio]()
 
 ### ⚡ Quick Select language shortcuts
 
