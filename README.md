@@ -188,10 +188,7 @@ Built in timestamps when hovering the seek bar in the player.
 ### 2.2.9
 
 - **Board hero banner (native React)** — Featured titles are rendered directly in the board route. This required shipping a **bundled local Web UI** instead of the public Stremio website, and moving **Settings → MyStremio** into native React (autoskip, favorite languages, plugin toggles, Discord, API keys) for a stable settings experience without DOM injection.
-- **Hero loading** — Banner-area loading state instead of a Breaking Bad fallback flash; remaining fallback paths in the bundled Web UI were patched out.
-- **Startup stability** — Cold-start guard for stale `#/player` routes, opaque fallback background, and safer player loading masks so the UI no longer goes black on the 2nd/3rd launch.
-- **Dynamic Hero crash fix** — Null guards for missing hero titles (`year` / `preloadHeroImages`) so an empty hero cache no longer crashes React.
-- **WebView2 cache handling** — Browsing cache is refreshed on version/Web UI changes without wiping the full profile; service worker registration is blocked in the desktop shell to avoid stale bundles.
+- **Hero loading** — Banner-area loading state instead of a Breaking Bad fallback flash.
 - **Settings persistence** — Login, plugins, volume, autoskip, Discord, preload, language, library, and onboarding flags are restored from `%APPDATA%\MyStremio\mystremio-settings.json` before `main.js` loads, so restarts and updates no longer reset user configuration.
 - **Stream buffering and player loading** — Reworked playback startup and buffering: configurable preload, and a more stable hand-off when a stream starts loading.
 - **TheIntroDB timestamp submission** — Submit intro, outro, recap, and preview timestamps to [TheIntroDB](https://theintrodb.org/) from the player (mark start/end, pick segment type, submit with your API key).
@@ -199,7 +196,7 @@ Built in timestamps when hovering the seek bar in the player.
 - **In-app updater** — Checks GitHub Releases for `MyStremioSetup-v*_x64.exe`, verifies `SHA256SUMS.txt`, and installs updates via the existing Stremio update banner (still in testing).
 - **Player brightness** — Brightness control in the left player bar with MPV tone adjustment, draggable slider, and compact popup UI.
 - **Board scroll** — Fixed rubberbanding on the first scroll after app start; scroll position restore only runs when returning from detail/player within the same session.
-- **Plugin and player adjustments** — Updates to stream UI, TheIntroDB skip logic, continue-watching covers, metadata hover panels, and data enrichment mount targeting.
+- **Plugin and player adjustments** — Updates to Stream UI, TheIntroDB skip logic, continue-watching covers, metadata hover panels, and data enrichment mount targeting.
 - **Player shell assets** — Updated player loading overlay, glass-style controls, playback API integration, and seek-buffer handling.
 - **Custom board scrollbar** — Always-visible scrollbar on the board and other main catalog views, alongside mouse-wheel scrolling.
 - **Scroll behavior in panels and menus** — Plugin dropdown menu, metadata hover panels, and library context menus behavior fixed.
