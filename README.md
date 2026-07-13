@@ -323,7 +323,7 @@ MyStremio is based on the following independent community projects:
 - [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme)
 - [Bo0ii/StreamGo](https://github.com/Bo0ii/StreamGo)
 - [TheIntroDB](https://theintrodb.org/)
-- [IntroDB]((https://introdb.app/)
+- [IntroDB](https://introdb.app/)
 
 These projects were important inspiration, and I used many of their features for my own custom build.
 
