@@ -125,7 +125,7 @@ MyStremio offers some qualitiy of life changes directly built into the player.
 
 #### ⏱️ TheIntroDB/IntroDB timestamp submission
 
-Contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
+Contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone. You have to set your personal API Key in the plugin settings in order to use this feature!
 
 <p align="center">
   <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB Timestamp Submission" width="1000"/>
