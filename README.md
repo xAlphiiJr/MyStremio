@@ -95,6 +95,8 @@ The StreamUI plugin offers a clean and modern sidebar with folders to pick strea
   <img src="./images/03-detail-metadata-stream-sidebar.png" alt="Detail View with Metadata and Stream Sidebar" width="1000"/>
 </p>
 
+---
+
 ### ⚙️ Settings
 MyStremio comes with a few custom settings including Favorite Languages, Plugins and Buffering.
 
@@ -137,6 +139,8 @@ How to define favorites is explained in the section below.
 Inside **player** settings, you can define favorite subtitle and audio languages that act as your preferred language pool.
 This preference layer is used by the quick language actions shown in the previous section.
 
+---
+
 ### 📺 Player
 
 #### ⏩ Seek buttons plugin
@@ -151,6 +155,7 @@ Built in brightness slider to dim the video while watching without the need to c
 
 Built in timestamps when hovering the seek bar in the player.
 
+---
 
 ### 🎞️Addon Manager
 
