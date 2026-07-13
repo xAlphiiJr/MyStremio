@@ -121,21 +121,20 @@ Contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open 
   <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB Timestamp Submission" width="1000"/>
 </p>
 
+#### ⚡ Quick Select
+
+Quick Select reads your favorites and exposes them as one-click subtitle/audio buttons, so switching language is fast and consistent.
+How to define favorites is explained in the section below.
+
+<p align="center">
+  <img src="./images/06-quick-settings.png" alt="Quick Select Language Shortcuts" width="1000"/>
+</p> 
 
 #### 🌐 Favorite subtitle and audio languages
 
 Inside **player** settings, you can define favorite subtitle and audio languages that act as your preferred language pool.
-This preference layer is used by the quick language actions shown in the next section.
+This preference layer is used by the quick language actions shown in the previous section.
 
-
-#### ⚡ Quick Select language shortcuts
-
-Quick Select reads your favorites and exposes them as one-click subtitle/audio buttons, so switching language is fast and consistent.
-In short: favorites define what is available, Quick Select is the runtime shortcut layer that applies those preferences immediately.
-
-<p align="center">
-  <img src="./images/06-quick-settings.png" alt="Quick Select Language Shortcuts" width="1000"/>
-</p>
 
 ### 🎞️ Cinebye Addon Manager
 
