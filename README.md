@@ -22,6 +22,7 @@ Current release: **2.3.0**
   - [📂 Install paths](#-install-paths)
   - [📋 Requirements](#-requirements)
   - [🗑️ Uninstall](#️-uninstall)
+  - [🧑‍💻 Build from source (developers)](#️-build-from-source-(developers))
 - [🔒 Privacy and local data](#-privacy-and-local-data)
 - [🙏 Credits](#-credits)
 - [💬 Feedback](#-feedback)
@@ -226,8 +227,6 @@ Built in timestamps when hovering the seek bar in the player.
 
 Use **Windows Apps & Features** or the Start menu uninstaller.
 Optionally delete `%APPDATA%\MyStremio\` to remove all local user data.
-
----
 
 ### 🧑‍💻 Build from source (developers)
 
