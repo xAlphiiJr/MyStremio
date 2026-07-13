@@ -15,6 +15,7 @@ Current release: **2.3.0**
 - [🚀 Features](#-features)
   - [🪄 UI](#-ui)
   - [⚙️ Settings](#-settings)
+  - [🎞️ Addon Manager](#-addon-manager)
 - [🛠️ Patch Notes](#️-patch-notes)
 - [💾 Installation](#-installation)
   - [📂 Install paths](#-install-paths)
@@ -136,7 +137,7 @@ Inside **player** settings, you can define favorite subtitle and audio languages
 This preference layer is used by the quick language actions shown in the previous section.
 
 
-### 🎞️ Cinebye Addon Manager
+### 🎞️Addon Manager
 
 [Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio and optionally disable specific sources (for example Cinemeta).
 
