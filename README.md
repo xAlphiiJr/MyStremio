@@ -143,7 +143,7 @@ Built in timestamps when hovering the seek bar in the player.
 
 ---
 
-### 🎞️Addon Manager
+### 🎞️ Addon Manager
 
 [Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio and optionally disable specific sources (for example Cinemeta).
 
