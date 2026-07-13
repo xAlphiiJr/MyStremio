@@ -9,9 +9,17 @@
 
   const KEY_HINTS = [
     { pattern: /tidb/i, key: 'tidb_api_key', base: 'tidb' },
+    { pattern: /introdb/i, key: 'introdb_api_key', base: 'tidb' },
     { pattern: /tmdb/i, key: 'tmdbApiKey', base: 'data-enrichment' },
     { pattern: /rpdb/i, key: 'rpdbApiKey', base: 'data-enrichment' },
   ];
+
+  const API_KEY_LINKS = {
+    tidb_api_key: 'https://theintrodb.org/docs',
+    introdb_api_key: 'https://introdb.app/account',
+    tmdbApiKey: 'https://www.themoviedb.org/settings/api',
+    rpdbApiKey: 'https://ratingposterdb.com/',
+  };
 
   function api() {
     return window.StremioCustomAPI || window.StremioEnhancedAPI;
@@ -89,6 +97,37 @@
       .stremio-api-key-clear:hover {
         color: rgba(255, 255, 255, 0.62);
       }
+      .stremio-api-key-link {
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: var(--secondary-accent-color, rgba(120, 180, 255, 0.95));
+        font-size: 0.82rem;
+        line-height: 1.35rem;
+        cursor: pointer;
+        text-decoration: underline;
+        text-underline-offset: 0.15rem;
+        white-space: nowrap;
+        flex-shrink: 0;
+        pointer-events: auto;
+        touch-action: manipulation;
+      }
+      .stremio-api-key-link:hover {
+        opacity: 0.85;
+      }
+      .stremio-api-key-label-row {
+        display: flex !important;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 0.75rem;
+        width: 100%;
+      }
+      .stremio-api-key-label-row [class*="plugin-setting-label"]:not([class*="row"]) {
+        flex: 1;
+        min-width: 0;
+        line-height: 1.35rem;
+        white-space: nowrap;
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -107,8 +146,8 @@
   }
 
   function resolveFieldMeta(input, row) {
-    const base = input.dataset.pluginBase;
-    const key = input.dataset.settingKey;
+    const base = input.dataset.pluginBase || row.dataset.apiKeyBase;
+    const key = input.dataset.settingKey || row.dataset.apiKeySetting;
     if (base && key && isApiKeyField(key)) {
       return { base, key };
     }
@@ -272,6 +311,96 @@
     }, true);
   }
 
+  function findLabelElement(row) {
+    return row.querySelector('[class*="plugin-setting-label"]:not([class*="row"])');
+  }
+
+  function isLabelRowElement(element) {
+    return Boolean(
+      element?.className &&
+        typeof element.className === 'string' &&
+        element.className.includes('plugin-setting-label-row')
+    );
+  }
+
+  function ensureApiKeyLabelRow(row) {
+    const labelEl = findLabelElement(row);
+    if (!labelEl) return null;
+
+    labelEl.textContent = 'API Key';
+
+    let labelRow = labelEl.parentElement;
+    if (!labelRow) return null;
+
+    if (!isLabelRowElement(labelRow)) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'stremio-api-key-label-row';
+      labelEl.parentNode.insertBefore(wrapper, labelEl);
+      wrapper.appendChild(labelEl);
+      labelRow = wrapper;
+    } else {
+      labelRow.classList.add('stremio-api-key-label-row');
+    }
+
+    const nativeLink = row.querySelector('[class*="api-key-link"]');
+    if (nativeLink && nativeLink.parentElement !== labelRow) {
+      labelRow.appendChild(nativeLink);
+    }
+
+    const customLink = row.querySelector('.stremio-api-key-link');
+    if (customLink && customLink.parentElement !== labelRow) {
+      labelRow.appendChild(customLink);
+    }
+
+    return labelRow;
+  }
+
+  function findLabelRow(row) {
+    return ensureApiKeyLabelRow(row) || row.querySelector('[class*="plugin-setting-label-row"]');
+  }
+
+  function hasNativeApiKeyLink(row) {
+    return Boolean(row.querySelector('[class*="api-key-link"]'));
+  }
+
+  /**
+   * Add a "Get API Key" link when the native settings UI did not render one.
+   *
+   * @param {Element} row Plugin setting row.
+   * @param {{ base: string, key: string }} meta Resolved API key field metadata.
+   */
+  function ensureApiKeyLink(row, meta) {
+    const url = API_KEY_LINKS[meta.key];
+    if (!url) return;
+
+    const labelRow = ensureApiKeyLabelRow(row);
+    if (!labelRow) return;
+
+    if (hasNativeApiKeyLink(row) || labelRow.querySelector('.stremio-api-key-link')) {
+      return;
+    }
+
+    const link = document.createElement('button');
+    link.type = 'button';
+    link.className = 'stremio-api-key-link';
+    link.textContent = 'Get API Key';
+    link.setAttribute('aria-label', 'Get API Key');
+    link.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const client = api();
+      if (client?.openExternalUrl) {
+        client.openExternalUrl(url).catch(() => {
+          window.open(url, '_blank', 'noopener,noreferrer');
+        });
+        return;
+      }
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }, true);
+
+    labelRow.appendChild(link);
+  }
+
   function enhanceRow(input) {
     const row = input.closest('[class*="plugin-setting-row-stacked"], [class*="plugin-setting-option"]');
     if (!row) return;
@@ -281,6 +410,8 @@
 
     injectStyles();
     ensureRowStructure(input, row, meta);
+    ensureApiKeyLabelRow(row);
+    ensureApiKeyLink(row, meta);
     bindRowEvents(row);
     syncRowUi(row);
   }

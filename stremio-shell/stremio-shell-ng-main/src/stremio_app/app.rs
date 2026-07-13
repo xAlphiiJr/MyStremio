@@ -19,7 +19,7 @@ use crate::stremio_app::{
     ipc::{RPCRequest, RPCResponse},
     splash::SplashImage,
     stremio_player::Player,
-    stremio_wevbiew::WebView,
+    stremio_wevbiew::{apply_ui_scale, WebView},
     systray::SystemTray,
     updater,
     window_helper::WindowStyle,
@@ -89,6 +89,9 @@ pub struct MainWindow {
     #[nwg_control]
     #[nwg_events(OnNotice: [Self::on_toggle_pip_notice] )]
     pub toggle_pip_notice: nwg::Notice,
+    #[nwg_control]
+    #[nwg_events(OnNotice: [Self::on_apply_ui_scale_notice] )]
+    pub apply_ui_scale_notice: nwg::Notice,
 }
 
 impl MainWindow {
@@ -252,6 +255,14 @@ impl MainWindow {
         let toggle_pip_sender = self.toggle_pip_notice.sender();
         let (pip_response_tx, pip_response_rx) = flume::bounded::<bool>(1);
         custom_api::register_pip_response_sender(pip_response_tx);
+        let (ui_scale_tx, ui_scale_rx) = flume::unbounded::<()>();
+        custom_api::register_ui_scale_apply_sender(ui_scale_tx);
+        let apply_ui_scale_sender = self.apply_ui_scale_notice.sender();
+        thread::spawn(move || {
+            while ui_scale_rx.recv().is_ok() {
+                apply_ui_scale_sender.notice();
+            }
+        });
         let quit_sender = self.quit_notice.sender();
         let hide_splash_sender = self.hide_splash_notice.sender();
         let focus_sender = self.focus_notice.sender();
@@ -524,6 +535,14 @@ impl MainWindow {
             }
         }
         custom_api::complete_pip_toggle(false);
+    }
+    fn on_apply_ui_scale_notice(&self) {
+        if let (Some(hwnd), Some(controller)) = (
+            self.window.handle.hwnd(),
+            self.webview.controller.get(),
+        ) {
+            apply_ui_scale(controller, hwnd);
+        }
     }
     fn on_toggle_topmost(&self) {
         if let Some(hwnd) = self.window.handle.hwnd() {

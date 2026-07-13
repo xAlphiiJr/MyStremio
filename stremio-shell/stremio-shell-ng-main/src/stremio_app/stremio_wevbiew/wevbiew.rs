@@ -14,13 +14,8 @@ use std::thread;
 use url::Url;
 use urlencoding::decode;
 use webview2::Controller;
-use webview2_sys::ICoreWebView2Controller3;
-use winapi::shared::minwindef::FALSE;
 use winapi::shared::windef::HWND;
-use winapi::um::winuser::{
-    GetClientRect, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST, VK_F7,
-    WM_APPCOMMAND, WM_SETFOCUS,
-};
+use winapi::um::winuser::{GetClientRect, VK_F7, WM_APPCOMMAND, WM_SETFOCUS};
 
 const APPCOMMAND_MEDIA_NEXTTRACK: u32 = 11;
 const APPCOMMAND_MEDIA_PREVIOUSTRACK: u32 = 12;
@@ -29,51 +24,7 @@ const APPCOMMAND_MEDIA_PLAY: u32 = 46;
 const APPCOMMAND_MEDIA_PAUSE: u32 = 47;
 
 use super::constants::{WARNING_URL, WHITELISTED_HOSTS};
-
-/// Display height (physical pixels) that maps to 100% UI scale.
-const UI_SCALE_BASELINE_HEIGHT: f64 = 1080.0;
-/// Never render below the 100% design.
-const UI_SCALE_MIN: f64 = 1.0;
-/// Upper bound to avoid absurd scaling on very high-resolution panels (e.g. 8K).
-const UI_SCALE_MAX: f64 = 4.0;
-
-/// Derive the WebView rasterization scale from the display resolution instead of
-/// the Windows display-scaling setting.
-///
-/// The UI is designed for a 1080p baseline (= 100%). Pinning the scale to 1.0
-/// keeps the app independent of the Windows scaling slider, but makes the UI tiny
-/// on high-resolution panels (a 4K screen has 4x the pixels on the same area).
-/// Scaling proportionally to the monitor height restores a consistent physical
-/// size while still ignoring the user's Windows slider: because the process is
-/// DPI-aware, `GetMonitorInfo` reports the true physical resolution regardless of
-/// that slider.
-///
-/// # Arguments
-/// * `hwnd` - Window handle used to pick the monitor the window currently sits on.
-///
-/// # Returns
-/// A scale factor clamped to `[UI_SCALE_MIN, UI_SCALE_MAX]`. Falls back to
-/// `UI_SCALE_MIN` (100%) if the monitor size cannot be determined.
-fn resolution_rasterization_scale(hwnd: HWND) -> f64 {
-    let height = unsafe {
-        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-        if monitor.is_null() {
-            return UI_SCALE_MIN;
-        }
-        let mut info: MONITORINFO = mem::zeroed();
-        info.cbSize = mem::size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(monitor, &mut info) == 0 {
-            return UI_SCALE_MIN;
-        }
-        f64::from(info.rcMonitor.bottom - info.rcMonitor.top)
-    };
-
-    if height <= 0.0 {
-        return UI_SCALE_MIN;
-    }
-
-    (height / UI_SCALE_BASELINE_HEIGHT).clamp(UI_SCALE_MIN, UI_SCALE_MAX)
-}
+use super::ui_scale::apply_ui_scale;
 
 #[derive(Default)]
 pub struct WebView {
@@ -92,9 +43,10 @@ impl WebView {
             unsafe {
                 let mut rect = mem::zeroed();
                 GetClientRect(hwnd, &mut rect);
-                self.controller
-                    .get()
-                    .and_then(|controller| controller.put_bounds(rect).ok());
+                if let Some(controller) = self.controller.get() {
+                    controller.put_bounds(rect).ok();
+                    apply_ui_scale(controller, hwnd);
+                }
             }
         }
     }
@@ -105,6 +57,7 @@ impl WebView {
                 let mut rect = mem::zeroed();
                 GetClientRect(hwnd, &mut rect);
                 controller.put_bounds(rect).ok();
+                apply_ui_scale(controller, hwnd);
             }
         }
     }
@@ -135,8 +88,8 @@ impl PartialUi for WebView {
         let dev_tools = data.dev_tools.clone();
         let webview_flags = concat!(
             "--autoplay-policy=no-user-gesture-required ",
-            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,",
-            "OverlayScrollbar,msOverlayScrollbarWinStyle,msOverlayScrollbarWinStyleAnimation"
+            "--enable-features=OverlayScrollbar ",
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"
         );
         const CINEBYE_AUTO_LOGIN_SCRIPT: &str = r#"
 (function () {
@@ -189,25 +142,6 @@ impl PartialUi for WebView {
                             eprintln!("failed to get interface to controller2");
                         }
 
-                        // Decouple the UI scale from the Windows display-scaling
-                        // slider. By default the WebView follows the OS DPI
-                        // (125/150/200%) and scales up. We instead derive the scale
-                        // from the display resolution (1080p = 100% baseline) so the
-                        // app keeps a consistent physical size: 1.0 on 1080p, ~1.33 on
-                        // 1440p, 2.0 on 4K. Disabling monitor-scale detection stops the
-                        // WebView from re-applying the OS scale on DPI changes.
-                        if let Some(controller3) = controller
-                            .as_inner()
-                            .get_interface::<dyn ICoreWebView2Controller3>()
-                        {
-                            let scale = resolution_rasterization_scale(hwnd);
-                            unsafe {
-                                let _ = controller3.put_should_detect_monitor_scale_changes(FALSE);
-                                let _ = controller3.put_rasterization_scale(scale);
-                            }
-                        } else {
-                            eprintln!("failed to get interface to controller3 (DPI scale pin unavailable)");
-                        }
                     let webview = controller
                             .get_webview()
                             .expect("Cannot obtain webview from controller");
@@ -287,6 +221,16 @@ impl PartialUi for WebView {
                             Ok(())
                         }).expect("Cannot add full screen element changed");
 
+                        let controller_zoom = controller_clone.clone();
+                        webview
+                            .add_navigation_completed(move |_wv, _args| {
+                                if let Some(ctrl) = controller_zoom.get() {
+                                    apply_ui_scale(ctrl, hwnd);
+                                }
+                                Ok(())
+                            })
+                            .expect("Cannot add navigation completed");
+
                         webview.add_content_loading(move |wv, _| {
                             wv.execute_script(format!(
                                     "window.stremio_server_ipc_key='{}'",
@@ -357,7 +301,6 @@ impl PartialUi for WebView {
                                 include_str!("../../../assets/custom_startup_guard.js"),
                                 include_str!("../../../assets/custom_bootstrap.js"),
                                 include_str!("../../../assets/custom_scroll_restore.js"),
-                                include_str!("../../../assets/custom_scrollbar.js"),
                                 include_str!("../../../assets/custom_player_glass.js"),
                                 include_str!("../../../assets/custom_player_loading.js"),
                                 include_str!("../../../assets/custom_liquid_glass_nav.js"),
@@ -366,13 +309,12 @@ impl PartialUi for WebView {
                                 include_str!("../../../assets/custom_continue_watching_play.js"),
                                 include_str!("../../../assets/custom_audio_sync.js"),
                                 include_str!("../../../assets/custom_subtitle_sync.js"),
-                                include_str!("../../../assets/custom_favorite_languages_page.js"),
-                                include_str!("../../../assets/custom_favorite_languages.js"),
                                 include_str!("../../../assets/custom_autoskip.js"),
                                 include_str!("../../../assets/custom_library_folders.js"),
                                 include_str!("../../../assets/custom_cinebye_addons.js"),
                                 include_str!("../../../assets/custom_discord_presence.js"),
                                 include_str!("../../../assets/custom_settings_ui.js"),
+                                include_str!("../../../assets/custom_ui_scale.js"),
                                 include_str!("../../../assets/custom_api_key_settings.js"),
                                 include_str!("../../../assets/custom_playback_bootstrap.js"),
                                 include_str!("../../../assets/custom_stream_cache.js"),
@@ -388,7 +330,7 @@ impl PartialUi for WebView {
                             }
 
                             wv.execute_script(
-                                r#"try{if(window.__stremioCustomDismissStartupOverlays)window.__stremioCustomDismissStartupOverlays();if(document.readyState!=='loading'&&window.runBootstrapOnce)window.runBootstrapOnce();if(window.__stremioCustomPlayerGlassEnsure)window.__stremioCustomPlayerGlassEnsure();if(window.__stremioCustomPlayerLoadingEnsure)window.__stremioCustomPlayerLoadingEnsure();if(window.__stremioCustomHeroLoadingEnsure)window.__stremioCustomHeroLoadingEnsure();if(window.__stremioCustomPlayerTransparencyEnsure)window.__stremioCustomPlayerTransparencyEnsure();if(window.__stremioCustomPlaybackEnsure)window.__stremioCustomPlaybackEnsure();if(window.__stremioCustomVolumePersistEnsure)window.__stremioCustomVolumePersistEnsure();if(window.__stremioDisableHoldSpeedEnsure)window.__stremioDisableHoldSpeedEnsure();if(window.__stremioCustomPlayerBrightnessEnsure)window.__stremioCustomPlayerBrightnessEnsure();if(window.__stremioCustomAudioSyncEnsure)window.__stremioCustomAudioSyncEnsure();if(window.__stremioCustomSubtitleSyncEnsure)window.__stremioCustomSubtitleSyncEnsure();if(window.__stremioCustomLibraryFoldersEnsure)window.__stremioCustomLibraryFoldersEnsure();if(window.__stremioCustomCinebyeAddonsEnsure)window.__stremioCustomCinebyeAddonsEnsure();if(window.__stremioCustomApiKeySettingsEnsure)window.__stremioCustomApiKeySettingsEnsure();if(window.__stremioCustomScrollbarEnsure)window.__stremioCustomScrollbarEnsure();}catch(e){console.error('[StremioCustom] post-inject failed',e);}"#,
+                                r#"try{if(window.__stremioCustomDismissStartupOverlays)window.__stremioCustomDismissStartupOverlays();if(document.readyState!=='loading'&&window.runBootstrapOnce)window.runBootstrapOnce();if(window.__stremioCustomPlayerGlassEnsure)window.__stremioCustomPlayerGlassEnsure();if(window.__stremioCustomPlayerLoadingEnsure)window.__stremioCustomPlayerLoadingEnsure();if(window.__stremioCustomHeroLoadingEnsure)window.__stremioCustomHeroLoadingEnsure();if(window.__stremioCustomPlayerTransparencyEnsure)window.__stremioCustomPlayerTransparencyEnsure();if(window.__stremioCustomPlaybackEnsure)window.__stremioCustomPlaybackEnsure();if(window.__stremioCustomVolumePersistEnsure)window.__stremioCustomVolumePersistEnsure();if(window.__stremioDisableHoldSpeedEnsure)window.__stremioDisableHoldSpeedEnsure();if(window.__stremioCustomPlayerBrightnessEnsure)window.__stremioCustomPlayerBrightnessEnsure();if(window.__stremioCustomAudioSyncEnsure)window.__stremioCustomAudioSyncEnsure();if(window.__stremioCustomSubtitleSyncEnsure)window.__stremioCustomSubtitleSyncEnsure();if(window.__stremioCustomLibraryFoldersEnsure)window.__stremioCustomLibraryFoldersEnsure();if(window.__stremioCustomCinebyeAddonsEnsure)window.__stremioCustomCinebyeAddonsEnsure();if(window.__stremioCustomApiKeySettingsEnsure)window.__stremioCustomApiKeySettingsEnsure();if(window.__stremioCustomApiKeySettingsEnsure)window.__stremioCustomApiKeySettingsEnsure();}catch(e){console.error('[StremioCustom] post-inject failed',e);}"#,
                                 |_| Ok(()),
                             )
                             .ok();

@@ -1,3 +1,4 @@
+mod introdb_proxy;
 mod paths;
 mod storage;
 
@@ -11,15 +12,35 @@ use std::sync::{Mutex, OnceLock};
 use storage::{
     clear_registered_schema, get_plugin_config, get_plugin_setting, get_registered_schema,
     list_plugin_files, list_theme_files, read_asset_metadata, read_plugin_source, read_theme_css,
-    read_autoskip_settings, read_player_volume, read_user_preferences, register_plugin_schema,
-    save_autoskip_settings, save_player_volume, save_plugin_setting, save_user_preferences,
+    read_autoskip_settings, read_player_volume, read_ui_scale_percent, read_user_preferences,
+    register_plugin_schema, save_autoskip_settings, save_player_volume, save_plugin_setting,
+    save_ui_scale_percent, save_user_preferences,
 };
 
 static REGISTERED_SCHEMAS: OnceLock<Mutex<storage::RegisteredSchemas>> = OnceLock::new();
 static PIP_RESPONSE_TX: OnceLock<Mutex<Option<flume::Sender<bool>>>> = OnceLock::new();
+static UI_SCALE_APPLY_TX: OnceLock<Mutex<Option<flume::Sender<()>>>> = OnceLock::new();
 
 pub fn register_pip_response_sender(sender: flume::Sender<bool>) {
     let _ = PIP_RESPONSE_TX.set(Mutex::new(Some(sender)));
+}
+
+pub fn register_ui_scale_apply_sender(sender: flume::Sender<()>) {
+    let _ = UI_SCALE_APPLY_TX.set(Mutex::new(Some(sender)));
+}
+
+pub fn request_ui_scale_apply() {
+    if let Some(lock) = UI_SCALE_APPLY_TX.get() {
+        if let Ok(guard) = lock.lock() {
+            if let Some(sender) = guard.as_ref() {
+                sender.send(()).ok();
+            }
+        }
+    }
+}
+
+pub fn read_ui_scale() -> u32 {
+    read_ui_scale_percent()
 }
 
 pub fn complete_pip_toggle(active: bool) {
@@ -161,6 +182,41 @@ pub fn handle_request(message: &Value) -> Option<String> {
                 Ok(()) => json!(true),
                 Err(error) => return Some(error_response(id, &error)),
             }
+        }
+        "introdb-get-segments" => {
+            let imdb_id = params.get("imdbId").and_then(|v| v.as_str()).unwrap_or("");
+            let season = params.get("season").and_then(|v| v.as_u64()).unwrap_or(0);
+            let episode = params.get("episode").and_then(|v| v.as_u64()).unwrap_or(0);
+            match introdb_proxy::get_segments(imdb_id, season, episode) {
+                Ok(payload) => json!(payload),
+                Err(error) => return Some(error_response(id, &error)),
+            }
+        }
+        "introdb-submit" => {
+            let api_key = params.get("apiKey").and_then(|v| v.as_str()).unwrap_or("");
+            let body = params.get("body").cloned().unwrap_or(Value::Null);
+            match introdb_proxy::submit_segment(api_key, &body) {
+                Ok(payload) => json!(payload),
+                Err(error) => return Some(error_response(id, &error)),
+            }
+        }
+        "get-ui-scale" => json!(read_ui_scale_percent()),
+        "apply-ui-scale" => {
+            request_ui_scale_apply();
+            json!(read_ui_scale_percent())
+        }
+        "set-ui-scale" => {
+            let percent = params
+                .get("percent")
+                .and_then(|v| {
+                    v.as_u64().or_else(|| {
+                        v.as_i64().map(|n| if n < 0 { 0 } else { n as u64 })
+                    })
+                })
+                .unwrap_or(100) as u32;
+            let normalized = save_ui_scale_percent(percent);
+            request_ui_scale_apply();
+            json!(normalized)
         }
         _ => return None,
     };

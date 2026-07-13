@@ -45,9 +45,6 @@ html body {
 
 html {
     overflow: hidden !important;
-    width: 100% !important;
-    height: 100% !important;
-    color-scheme: dark;
 }
 
 
@@ -2503,6 +2500,32 @@ body.ghost-clicking #heroLoadingScreen {
     align-items: start;
 }
 
+.library-container-zM_bj .meta-item-container-Tj0Ib .title-bar-container-1Ba0x {
+    height: auto !important;
+    min-height: 0 !important;
+}
+
+.library-container-zM_bj
+    .meta-item-container-Tj0Ib
+    .title-bar-container-1Ba0x
+    .menu-label-container-ChuX8 {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+}
+
+.library-container-zM_bj
+    .meta-item-container-Tj0Ib
+    .title-bar-container-1Ba0x
+    .title-label-VnEAc {
+    padding: 0.25rem 0.5rem !important;
+    line-height: 1.2 !important;
+}
+
 /* ========================= SIDE DRAWER (EPISODE LIST) GLASS STYLING ========================= */
 
 /* Side drawer main container - glass background */
@@ -3595,29 +3618,12 @@ body.ghost-clicking #heroLoadingScreen {
     font-style: italic;
 }
 
-/* ========================= MYSTREMIO: HERO EDGE + STREMIO SCROLLBARS ========================= */
+/* ========================= MYSTREMIO: HERO EDGE ========================= */
 
 #app [class*="main-nav-bars-container"] {
     margin-left: 0 !important;
     margin-right: 0 !important;
     width: 100% !important;
-}
-
-.hero-slot-szdy9,
-[class*="hero-slot"] {
-    position: relative !important;
-    left: auto !important;
-    right: auto !important;
-    margin-left: -1rem !important;
-    margin-right: -1rem !important;
-    width: calc(100% + 2rem) !important;
-    max-width: none !important;
-    box-sizing: border-box !important;
-    aspect-ratio: auto !important;
-    min-height: 0 !important;
-    height: calc(100vh - var(--mystremio-hero-reserved-below, 22.5rem)) !important;
-    max-height: calc(100vh - var(--mystremio-hero-reserved-below, 22.5rem)) !important;
-    margin-bottom: 0 !important;
 }
 
 [class*="hero-row"] {
@@ -3630,29 +3636,4 @@ body.ghost-clicking #heroLoadingScreen {
 
 [class*="hero-image-"] {
     object-position: center 18% !important;
-}
-
-#app [class*="board-content-container"] > [class*="board-content"],
-#app [class*="discover-content"] [class*="catalog-container"],
-#app [class*="library-content"],
-#app [class*="addons-list-container"],
-#app [class*="calendar-content"] [class*="content"] {
-    overflow-x: hidden !important;
-    overflow-y: auto !important;
-    scrollbar-width: none !important;
-    -ms-overflow-style: none !important;
-}
-
-#app [class*="board-content-container"] > [class*="board-content"] {
-    padding-right: 1rem !important;
-}
-
-#app [class*="board-content-container"] > [class*="board-content"]::-webkit-scrollbar,
-#app [class*="discover-content"] [class*="catalog-container"]::-webkit-scrollbar,
-#app [class*="library-content"]::-webkit-scrollbar,
-#app [class*="addons-list-container"]::-webkit-scrollbar,
-#app [class*="calendar-content"] [class*="content"]::-webkit-scrollbar {
-    width: 0 !important;
-    height: 0 !important;
-    display: none !important;
 }

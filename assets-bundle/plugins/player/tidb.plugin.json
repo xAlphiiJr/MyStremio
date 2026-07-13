@@ -1,3 +1,6 @@
 {
-  "tidb_api_key": ""
+  "use_theintrodb": true,
+  "use_introdb": true,
+  "tidb_api_key": "",
+  "introdb_api_key": ""
 }

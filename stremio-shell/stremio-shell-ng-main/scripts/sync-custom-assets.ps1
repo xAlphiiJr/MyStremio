@@ -70,7 +70,7 @@ function Sanitize-PluginConfigs {
             $json = $raw | ConvertFrom-Json
             $changed = $false
 
-            foreach ($key in @('tidb_api_key', 'tidbApiKey', 'tmdb_api_key', 'tmdbApiKey', 'rpdb_api_key', 'rpdbApiKey', 'api_key', 'apiKey')) {
+            foreach ($key in @('tidb_api_key', 'tidbApiKey', 'introdb_api_key', 'introdbApiKey', 'tmdb_api_key', 'tmdbApiKey', 'rpdb_api_key', 'rpdbApiKey', 'api_key', 'apiKey')) {
                 if ($json.PSObject.Properties.Name -contains $key -and $json.$key) {
                     $json.$key = ''
                     $changed = $true
@@ -92,7 +92,7 @@ function Assert-NoPluginConfigSecrets {
 
     if (-not (Test-Path $PluginsDir)) { return }
 
-    $secretKeys = @('tidb_api_key', 'tidbApiKey', 'tmdb_api_key', 'tmdbApiKey', 'rpdb_api_key', 'rpdbApiKey', 'api_key', 'apiKey')
+    $secretKeys = @('tidb_api_key', 'tidbApiKey', 'introdb_api_key', 'introdbApiKey', 'tmdb_api_key', 'tmdbApiKey', 'rpdb_api_key', 'rpdbApiKey', 'api_key', 'apiKey')
     $findings = New-Object System.Collections.Generic.List[string]
 
     Get-ChildItem $PluginsDir -Recurse -Filter "*.plugin.json" | ForEach-Object {

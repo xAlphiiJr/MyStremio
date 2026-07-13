@@ -1,7 +1,7 @@
 /**
  * @name Meta Hover Panel
  * @description Rich movie/series info panel on poster hover using Cinemeta metadata.
- * @version 2.0.1
+ * @version 2.0.2
  * @author MyStremio
  * @category Metadata
  */

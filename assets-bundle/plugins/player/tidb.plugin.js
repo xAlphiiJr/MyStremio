@@ -1,9 +1,8 @@
 /**
- * @name TheIntroDB
- * @description Skip intros, recaps, credits, and previews in TV shows and movies in Stremio Enhanced using TheIntroDB API
- * @updateUrl https://raw.githubusercontent.com/TheIntroDB/stremio-enhanced-plugin/refs/heads/main/tidb.plugin.js
- * @version 1.3.5
- * @author TheIntroDB
+ * @name Intro Skip
+ * @description Skip intros, recaps, credits, and previews using TheIntroDB and IntroDB APIs
+ * @version 2.1.1
+ * @author MyStremio
  */
 /* jshint esversion: 11, browser: true, devel: true */
 /* global StremioEnhancedAPI */
@@ -11,10 +10,12 @@
 (function() {
 	"use strict";
 
-	const PLUGIN_VERSION = "1.3.5";
+	const PLUGIN_VERSION = "2.1.1";
+	const LOG_PREFIX = "[IntroSkip]";
 	const CONTRIBUTE_TOAST_ID = "tidb-contribute-toast";
 	const PLUGIN_ID = "tidb";
-	const SERVER_URL = "https://api.theintrodb.org/v3";
+	const THEINTRODB_SERVER_URL = "https://api.theintrodb.org/v3";
+	const INTRODB_SERVER_URL = "https://api.introdb.app";
 	const ACTIVE_BTN_ID = "tidb-active-btn";
 	const CONTRIBUTE_BTN_ID = "tidb-contribute-btn";
 	const CONTRIBUTE_PANEL_ID = "tidb-contribute-panel";
@@ -25,9 +26,14 @@
 	const MAX_RETRIES = 3;
 	const RETRY_DELAY = 2000;
 	const TIDB_API_KEY_SETTING = "tidb_api_key";
+	const INTRODB_API_KEY_SETTING = "introdb_api_key";
+	const USE_THEINTRODB_SETTING = "use_theintrodb";
+	const USE_INTRODB_SETTING = "use_introdb";
 	const ANALYTICS_SETTING = "anonymous_usage_reporting";
-	const THEME_SETTING = "tidb_theme";
-	const TIDB_USER_AGENT = "TheIntroDB Stremio Enhanced Plugin";
+	const PLUGIN_USER_AGENT = "MyStremio Intro Skip Plugin";
+	const SUBMIT_TARGET_THEINTRODB = "theintrodb";
+	const SUBMIT_TARGET_INTRODB = "introdb";
+	const SUBMIT_TARGET_BOTH = "both";
 
 	const THEMES = {
 		default: {
@@ -70,11 +76,11 @@
 		}
 	}
 
-	function resolveThemeName(storedTheme) {
+	function resolveThemeName() {
 		if (isLiquidGlassThemeActive()) {
 			return "glass";
 		}
-		return storedTheme || "glass";
+		return "default";
 	}
 
 	const AUTOSKIP_STORAGE_KEYS = {
@@ -253,23 +259,153 @@
 		return Object.fromEntries(SEGMENT_TYPES.map((type) => [type, []]));
 	}
 
-	function normalizeApiKey(value) {
+	/**
+	 * Normalize a TheIntroDB API key (`theintrodb:user_…:…`).
+	 *
+	 * @param {unknown} value Raw setting value.
+	 * @returns {string} Normalized key or empty string.
+	 */
+	function normalizeTheIntroDbApiKey(value) {
 		const raw = typeof value === "string" ? value.trim() : "";
 		if (!raw) return "";
 
-		let unquoted = raw.replace(/^["']|["']$/g, "");
+		const unquoted = raw.replace(/^["']|["']$/g, "");
 		if (/^theintrodb:user_/i.test(unquoted)) {
 			return unquoted;
 		}
 
-		const idbMatch = unquoted.match(/idb_[A-Za-z0-9_-]+/);
-		if (idbMatch) return idbMatch[0];
-
 		return unquoted;
 	}
 
-	function formatApiKeyHint() {
+	/**
+	 * Normalize an IntroDB API key (`idb_…`).
+	 *
+	 * @param {unknown} value Raw setting value.
+	 * @returns {string} Normalized key or empty string.
+	 */
+	function normalizeIntroDbApiKey(value) {
+		const raw = typeof value === "string" ? value.trim() : "";
+		if (!raw) return "";
+
+		const unquoted = raw.replace(/^["']|["']$/g, "");
+		const idbMatch = unquoted.match(/idb_[A-Za-z0-9_-]+/);
+		if (idbMatch) return idbMatch[0];
+
+		return /^idb_/i.test(unquoted) ? unquoted : "";
+	}
+
+	function formatTheIntroDbApiKeyHint() {
 		return "Copy the full key from theintrodb.org Docs/API (theintrodb:user_…:…). Do not paste only the part after the colon.";
+	}
+
+	function formatIntroDbApiKeyHint() {
+		return "Copy your API key from introdb.app (format: idb_…).";
+	}
+
+	/**
+	 * Convert a provider segment object to seconds for the unified player model.
+	 *
+	 * @param {{start_ms?: number|null, end_ms?: number|null, start_sec?: number|null, end_sec?: number|null}|null|undefined} segment
+	 * @returns {{start: number, end: number|null}|null}
+	 */
+	function segmentObjectToSeconds(segment) {
+		if (!segment || typeof segment !== "object") return null;
+
+		let start = null;
+		if (segment.start_sec != null && Number.isFinite(segment.start_sec)) {
+			start = segment.start_sec;
+		} else if (segment.start_ms != null && Number.isFinite(segment.start_ms)) {
+			start = segment.start_ms / 1000;
+		}
+
+		let end = null;
+		if (segment.end_sec != null && Number.isFinite(segment.end_sec)) {
+			end = segment.end_sec;
+		} else if (segment.end_ms != null && Number.isFinite(segment.end_ms)) {
+			end = segment.end_ms / 1000;
+		}
+
+		if (start == null || !Number.isFinite(start)) return null;
+		return { start, end: end != null && Number.isFinite(end) ? end : null };
+	}
+
+	/**
+	 * Average two segment ranges when both providers returned timestamps.
+	 *
+	 * @param {{start: number, end: number|null}} left
+	 * @param {{start: number, end: number|null}} right
+	 * @returns {{start: number, end: number|null}}
+	 */
+	function averageSegmentRanges(left, right) {
+		const start = (left.start + right.start) / 2;
+		let end = null;
+		if (left.end != null && right.end != null) {
+			end = (left.end + right.end) / 2;
+		} else if (left.end != null) {
+			end = left.end;
+		} else if (right.end != null) {
+			end = right.end;
+		}
+		return { start, end };
+	}
+
+	/**
+	 * Merge segment lists from both providers. When both have data, use the average.
+	 *
+	 * @param {Array<{start: number, end: number|null}>} leftSegments
+	 * @param {Array<{start: number, end: number|null}>} rightSegments
+	 * @returns {Array<{start: number, end: number|null}>}
+	 */
+	function mergeSegmentLists(leftSegments, rightSegments) {
+		if (!leftSegments.length && !rightSegments.length) return [];
+		if (!leftSegments.length) return rightSegments.slice();
+		if (!rightSegments.length) return leftSegments.slice();
+		return [averageSegmentRanges(leftSegments[0], rightSegments[0])];
+	}
+
+	/**
+	 * Merge TheIntroDB and IntroDB segment maps into one player-facing map.
+	 *
+	 * @param {Record<string, Array<{start: number, end: number|null}>>} theIntroDbSegments
+	 * @param {Record<string, Array<{start: number, end: number|null}>>} introDbSegments
+	 * @returns {Record<string, Array<{start: number, end: number|null}>>}
+	 */
+	function mergeProviderSegments(theIntroDbSegments, introDbSegments) {
+		const merged = emptySegments();
+		for (const segmentType of SEGMENT_TYPES) {
+			merged[segmentType] = mergeSegmentLists(
+				theIntroDbSegments[segmentType] || [],
+				introDbSegments[segmentType] || []
+			);
+		}
+		return merged;
+	}
+
+	/**
+	 * Map the plugin segment type to IntroDB's submit enum.
+	 *
+	 * @param {string} segmentType Plugin segment type.
+	 * @returns {string|null} IntroDB segment type or null when unsupported.
+	 */
+	function mapSegmentTypeToIntroDb(segmentType) {
+		if (segmentType === "credits") return "outro";
+		if (segmentType === "intro" || segmentType === "recap") return segmentType;
+		return null;
+	}
+
+	/**
+	 * Call the shell-side IntroDB proxy (bypasses browser CORS restrictions).
+	 *
+	 * @param {string} method Custom API method name.
+	 * @param {object} params Request parameters.
+	 * @returns {Promise<*>}
+	 */
+	async function invokeIntroDbProxy(method, params) {
+		const api = window.StremioCustomAPI || window.StremioEnhancedAPI;
+		if (!api || typeof api.invoke !== "function") {
+			throw new Error("IntroDB proxy is unavailable in this shell.");
+		}
+		return api.invoke(method, params);
 	}
 
 	function parseSubmissionResponse(responseJson) {
@@ -285,12 +421,31 @@
 		};
 	}
 
-	function formatSubmissionSuccessMessage(result) {
+	function formatSubmissionSuccessMessage(result, targetLabel) {
 		const pending = result.statuses.filter((status) => String(status).toLowerCase() === "pending").length;
 		if (pending > 0) {
-			return `Submitted (${pending} pending). Check Stats on theintrodb.org — it may take a moment to appear.`;
+			return `Submitted to ${targetLabel} (${pending} pending).`;
 		}
-		return "Timestamp submitted successfully. Check Stats on theintrodb.org for your submissions.";
+		return `Timestamp submitted successfully to ${targetLabel}.`;
+	}
+
+	function formatCombinedSubmissionSuccessMessage(results) {
+		const labels = results.map((entry) => entry.label).join(" and ");
+		const pending = results.reduce((count, entry) => {
+			return count + entry.statuses.filter((status) => String(status).toLowerCase() === "pending").length;
+		}, 0);
+		if (pending > 0) {
+			return `Submitted to ${labels} (${pending} pending).`;
+		}
+		return `Timestamp submitted successfully to ${labels}.`;
+	}
+
+	function parseIntroDbSubmissionResponse(responseJson) {
+		if (!responseJson || responseJson.ok !== true) {
+			return { ok: false, statuses: [] };
+		}
+		const status = responseJson.submission?.status || "pending";
+		return { ok: true, statuses: [status] };
 	}
 
 	function extractImdbId(value) {
@@ -897,7 +1052,7 @@
 		`;
 	}
 
-	class TheIntroDBPlugin {
+	class IntroSkipPlugin {
 		constructor() {
 			this.video = null;
 			this.episodeId = null;
@@ -908,6 +1063,9 @@
 			this.skipButtonTimeout = null;
 			this.overlayObserver = null;
 			this.userApiKey = "";
+			this.introDbApiKey = "";
+			this.useTheIntroDb = true;
+			this.useIntroDb = true;
 			this.analyticsEnabled = true;
 			this.theme = "glass";
 			this.segmentButtonVisibility = Object.fromEntries(SEGMENT_TYPES.map((type) => [type, true]));
@@ -935,6 +1093,7 @@
 			this.contributePanelOpen = false;
 			this.contributeMarkedStartSec = null;
 			this.contributeSelectedSegment = "intro";
+			this.contributeSubmitTarget = SUBMIT_TARGET_THEINTRODB;
 			this.contributeSubmitting = false;
 			this.contributeOutsideHandler = null;
 			this.contributeKeyHandler = null;
@@ -974,7 +1133,7 @@
 			if (this.contributeUiWatcher) return;
 			this.contributeUiWatcher = window.setInterval(() => {
 				if (!this.isOnPlayerRoute()) return;
-				if (!this.userApiKey) return;
+				if (!this.hasAnySubmitApiKey()) return;
 				this.ensureContributeUi();
 			}, 200);
 		}
@@ -997,25 +1156,36 @@
 
 			try {
 				const schema = [{
+						key: USE_THEINTRODB_SETTING,
+						type: "toggle",
+						label: "TheIntroDB",
+						description:
+							"Load intro, recap, credits, and preview segments from TheIntroDB. Disable to ignore this provider entirely.",
+						defaultValue: true
+					},
+					{
 						key: TIDB_API_KEY_SETTING,
 						type: "input",
-						label: "TIDB API Key",
+						label: "API Key",
 						description:
-							"Copy your full API key from theintrodb.org Docs/API (format: theintrodb:user_…:…). Required for timestamp submit.",
+							"Copy your full API key from theintrodb.org Docs/API (format: theintrodb:user_…:…). Required for TheIntroDB submissions.",
 						defaultValue: ""
 					},
 					{
-						key: THEME_SETTING,
-						type: "select",
-						label: "Button Theme",
-						options: [{
-							value: "default",
-							label: "Default"
-						}, {
-							value: "glass",
-							label: "Glass"
-						}],
-						defaultValue: "default"
+						key: USE_INTRODB_SETTING,
+						type: "toggle",
+						label: "IntroDB",
+						description:
+							"Load intro, recap, and credits segments from IntroDB. Disable to ignore this provider entirely.",
+						defaultValue: true
+					},
+					{
+						key: INTRODB_API_KEY_SETTING,
+						type: "input",
+						label: "API Key",
+						description:
+							"Copy your API key from introdb.app (format: idb_…). Required for IntroDB submissions.",
+						defaultValue: ""
 					}
 				];
 
@@ -1038,13 +1208,24 @@
 
 				await api.registerSettings(PLUGIN_ID, schema);
 				window.__tidbSettingsRegistered = true;
+				if (api.onSettingsSaved) {
+					api.onSettingsSaved(PLUGIN_ID, () => {
+						this.loadSettings().then(() => {
+							this.ensureContributeUi();
+							this.updateContributeSubmitTargetVisibility();
+							if (this.isOnPlayerRoute() && this.episodeId) {
+								this.fetchData().catch(() => {});
+							}
+						}).catch(() => {});
+					});
+				}
 			} catch (err) {
 				const message = err && err.message ? String(err.message) : "";
 				if (message.includes("settings schema registered")) {
 					window.__tidbSettingsRegistered = true;
 					return;
 				}
-				console.warn("[TheIntroDB] Failed to register settings:", err);
+				console.warn(`${LOG_PREFIX} Failed to register settings:`, err);
 			}
 		}
 
@@ -1066,8 +1247,11 @@
 			const api = this.getSettingsApi();
 			if (!api) return;
 
-			this.theme = resolveThemeName(await this.getSetting(THEME_SETTING));
-			this.userApiKey = normalizeApiKey(await this.getSetting(TIDB_API_KEY_SETTING));
+			this.theme = resolveThemeName();
+			this.useTheIntroDb = normalizeToggleValue(await this.getSetting(USE_THEINTRODB_SETTING));
+			this.useIntroDb = normalizeToggleValue(await this.getSetting(USE_INTRODB_SETTING));
+			this.userApiKey = normalizeTheIntroDbApiKey(await this.getSetting(TIDB_API_KEY_SETTING));
+			this.introDbApiKey = normalizeIntroDbApiKey(await this.getSetting(INTRODB_API_KEY_SETTING));
 			this.analyticsEnabled = normalizeToggleValue(await this.getSetting(ANALYTICS_SETTING));
 			if (this.analyticsEnabled) initAnalyticsOnce();
 
@@ -1148,7 +1332,7 @@
 			this._autoSkippedKeys.add(skipKey);
 			this.removeActiveButton();
 			this.displayedSegmentType = null;
-			console.log(`[TheIntroDB] Auto-skipped ${seg.type}: targetTime=${seg.end}`);
+			console.log(`${LOG_PREFIX} Auto-skipped ${seg.type}: targetTime=${seg.end}`);
 			this.track("auto_skip", {
 				segment: seg.type
 			});
@@ -1234,9 +1418,67 @@
 			}
 		}
 
+		hasTheIntroDbApiKey() {
+			return Boolean(this.userApiKey);
+		}
+
+		hasIntroDbApiKey() {
+			return Boolean(this.introDbApiKey);
+		}
+
+		isTheIntroDbServiceEnabled() {
+			return this.useTheIntroDb !== false;
+		}
+
+		isIntroDbServiceEnabled() {
+			return this.useIntroDb !== false;
+		}
+
+		canLoadFromAnyProvider() {
+			return this.isTheIntroDbServiceEnabled() || this.isIntroDbServiceEnabled();
+		}
+
+		canSubmitToTheIntroDb() {
+			return this.isTheIntroDbServiceEnabled() && this.hasTheIntroDbApiKey();
+		}
+
+		canSubmitToIntroDb() {
+			return this.isIntroDbServiceEnabled() && this.hasIntroDbApiKey();
+		}
+
+		hasAnySubmitApiKey() {
+			return this.canSubmitToTheIntroDb() || this.canSubmitToIntroDb();
+		}
+
+		canChooseSubmitTarget() {
+			return this.canSubmitToTheIntroDb() && this.canSubmitToIntroDb();
+		}
+
+		/**
+		 * Resolve the effective submit target from the panel selection and configured keys.
+		 *
+		 * @param {string} selectedValue Panel selection value.
+		 * @returns {string|null} `theintrodb`, `introdb`, `both`, or null when no provider is available.
+		 */
+		resolveSubmitTarget(selectedValue) {
+			if (this.canChooseSubmitTarget()) {
+				if (selectedValue === SUBMIT_TARGET_INTRODB || selectedValue === SUBMIT_TARGET_BOTH) {
+					return selectedValue;
+				}
+				return SUBMIT_TARGET_THEINTRODB;
+			}
+			if (this.canSubmitToTheIntroDb()) return SUBMIT_TARGET_THEINTRODB;
+			if (this.canSubmitToIntroDb()) return SUBMIT_TARGET_INTRODB;
+			return null;
+		}
+
+		isSegmentSupportedByIntroDb(segmentType) {
+			return mapSegmentTypeToIntroDb(segmentType) != null;
+		}
+
 		getTidbHeaders() {
 			const headers = {
-				"User-Agent": TIDB_USER_AGENT
+				"User-Agent": PLUGIN_USER_AGENT
 			};
 
 			if (this.userApiKey) {
@@ -1246,10 +1488,19 @@
 			return headers;
 		}
 
+		getIntroDbHeaders() {
+			return {
+				"User-Agent": PLUGIN_USER_AGENT,
+				"X-API-Key": this.introDbApiKey,
+				Accept: "application/json",
+				"Content-Type": "application/json"
+			};
+		}
+
 		async validateApiKey() {
 			if (!this.userApiKey) return false;
 			try {
-				const res = await fetch(`${SERVER_URL}/user/stats`, {
+				const res = await fetch(`${THEINTRODB_SERVER_URL}/user/stats`, {
 					headers: {
 						...this.getTidbHeaders(),
 						Accept: "application/json"
@@ -1262,14 +1513,20 @@
 			}
 		}
 
-		formatSubmitAuthError(apiMessage) {
+		formatSubmitAuthError(apiMessage, provider) {
 			const message = String(apiMessage || "").trim();
+			if (provider === SUBMIT_TARGET_INTRODB) {
+				if (message.toLowerCase().includes("invalid api key")) {
+					return `${message}. ${formatIntroDbApiKeyHint()}`;
+				}
+				return message;
+			}
 			if (
 				message.toLowerCase().includes("invalid or expired token") ||
 				message.toLowerCase().includes("invalid api key") ||
 				message.toLowerCase().includes("missing authorization")
 			) {
-				return `${message}. ${formatApiKeyHint()}`;
+				return `${message}. ${formatTheIntroDbApiKeyHint()}`;
 			}
 			return message;
 		}
@@ -1379,7 +1636,7 @@
 				await this.settingsReady;
 				this.loadSettings().catch(() => {});
 
-				console.log(`[TheIntroDB] \nEpisode ID: ${this.episodeId}, \nTitle: ${this.title || "Unknown Title"}`);
+				console.log(`${LOG_PREFIX} \nEpisode ID: ${this.episodeId}, \nTitle: ${this.title || "Unknown Title"}`);
 				await this.fetchData();
 				this.attachUiObservers();
 				this.ensureContributeUi();
@@ -1650,7 +1907,7 @@
 					params.set("duration_ms", String(attemptDuration));
 				}
 				try {
-					const res = await fetch(`${SERVER_URL}/media?${params}`, {
+					const res = await fetch(`${THEINTRODB_SERVER_URL}/media?${params}`, {
 						headers: this.getTidbHeaders()
 					});
 					const tmdbId = await this.parseTmdbIdFromMediaResponse(res);
@@ -1705,10 +1962,108 @@
 			});
 		}
 
+		/**
+		 * Fetch segment data from TheIntroDB for the current episode.
+		 *
+		 * @param {object} query Query parameters for `/media`.
+		 * @returns {Promise<{segments: Record<string, Array<{start: number, end: number|null}>>, tmdbId: number|null}>}
+		 */
+		async fetchTheIntroDbSegments(query) {
+			const params = new URLSearchParams();
+			if (query.imdbId) {
+				params.set("imdb_id", query.imdbId);
+			} else if (query.tmdbId) {
+				params.set("tmdb_id", String(query.tmdbId));
+			} else {
+				return { segments: emptySegments(), tmdbId: null };
+			}
+			if (query.isTvShow) {
+				params.set("season", String(query.season));
+				params.set("episode", String(query.episode));
+			}
+			if (query.durationMs != null) {
+				params.set("duration_ms", String(query.durationMs));
+			}
+
+			const res = await fetch(`${THEINTRODB_SERVER_URL}/media?${params}`, {
+				headers: this.getTidbHeaders()
+			});
+
+			if (res.status === 204 || res.status === 404 || !res.ok) {
+				return { segments: emptySegments(), tmdbId: null };
+			}
+
+			const json = await res.json();
+			const segments = emptySegments();
+			for (const segmentType of SEGMENT_TYPES) {
+				if (json[segmentType] && json[segmentType].length > 0) {
+					segments[segmentType] = json[segmentType].map((segment) => ({
+						start: segment.start_ms == null ? 0 : segment.start_ms / 1000,
+						end: segment.end_ms == null ? null : segment.end_ms / 1000
+					}));
+				}
+			}
+
+			return {
+				segments,
+				tmdbId: isValidTmdbId(json.tmdb_id) ? Number(json.tmdb_id) : null
+			};
+		}
+
+		/**
+		 * Fetch segment data from IntroDB for the current TV episode.
+		 *
+		 * @param {string} imdbId Series IMDb ID.
+		 * @param {number} season Season number.
+		 * @param {number} episode Episode number.
+		 * @returns {Promise<Record<string, Array<{start: number, end: number|null}>>>}
+		 */
+		async fetchIntroDbSegments(imdbId, season, episode) {
+			if (!imdbId || !isPlausibleSeason(season) || !isPlausibleEpisode(episode)) {
+				return emptySegments();
+			}
+
+			try {
+				const json = await invokeIntroDbProxy("introdb-get-segments", {
+					imdbId,
+					season: Number(season),
+					episode: Number(episode)
+				});
+				if (!json || typeof json !== "object") {
+					return emptySegments();
+				}
+
+				const segments = emptySegments();
+				const intro = segmentObjectToSeconds(json.intro);
+				const recap = segmentObjectToSeconds(json.recap);
+				const outro = segmentObjectToSeconds(json.outro);
+
+				if (intro) segments.intro = [intro];
+				if (recap) segments.recap = [recap];
+				if (outro) segments.credits = [outro];
+
+				return segments;
+			} catch (error) {
+				console.warn(`${LOG_PREFIX} IntroDB segment proxy failed:`, error);
+				return emptySegments();
+			}
+		}
+
 		async fetchData() {
 			const video = this.video;
 			const episodeId = this.episodeId;
 			if (!video || !episodeId) {
+				return null;
+			}
+
+			if (!this.canLoadFromAnyProvider()) {
+				this.segments = emptySegments();
+				this._segmentsLoadedEpisodeId = episodeId;
+				this.stopSegmentWatcher();
+				this.removeActiveButton();
+				this.displayedSegmentType = null;
+				this.activeSegment = null;
+				console.log(`${LOG_PREFIX} All segment providers disabled for episode ${episodeId}`);
 				return null;
 			}
 
@@ -1720,8 +2075,9 @@
 			const episode =
 				isPlausibleEpisode(this.playbackEpisode) ? this.playbackEpisode : parsedEpisode?.episode;
 			const isTvShow = isPlausibleSeason(season) && isPlausibleEpisode(episode);
+
 			for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-				console.log(`[TheIntroDB] Fetching /media for episode ${episodeId} (attempt ${attempt})`);
+				console.log(`${LOG_PREFIX} Fetching segments for episode ${episodeId} (attempt ${attempt})`);
 
 				try {
 					const imdbId =
@@ -1730,75 +2086,63 @@
 						this.mediaImdbId ||
 						extractImdbId(episodeId);
 					const tmdbFromId = extractTmdbIdFromCatalogId(id);
-					const queryParams = new URLSearchParams();
-
-					if (imdbId) {
-						queryParams.set("imdb_id", imdbId);
-					} else if (tmdbFromId) {
-						queryParams.set("tmdb_id", String(tmdbFromId));
-					} else {
-						console.warn(`[TheIntroDB] No valid IMDB/TMDB id in episodeId: ${episodeId}`);
-						return null;
-					}
-
-					if (isTvShow) {
-						queryParams.set("season", season);
-						queryParams.set("episode", episode);
-					}
-
 					const durationMs = getVideoDurationMs(video);
-					if (durationMs != null) queryParams.set("duration_ms", String(durationMs));
 					this._lastFetchedDurationMs = durationMs;
 
-					const res = await fetch(`${SERVER_URL}/media?${queryParams}`, {
-						headers: this.getTidbHeaders()
-					});
-
-					if (res.status === 204) {
-						if (fetchGeneration !== this._fetchGeneration || this.episodeId !== episodeId) return null;
-						this.segments = emptySegments();
-						this._segmentsLoadedEpisodeId = episodeId;
-						console.log(`[TheIntroDB] No skip data for episode ${episodeId} (${res.status})`);
+					if (!imdbId && !tmdbFromId) {
+						console.warn(`${LOG_PREFIX} No valid IMDB/TMDB id in episodeId: ${episodeId}`);
 						return null;
 					}
 
-					if (res.status === 404) {
-						if (fetchGeneration !== this._fetchGeneration || this.episodeId !== episodeId) return null;
-						this.segments = emptySegments();
-						this._segmentsLoadedEpisodeId = episodeId;
-						console.warn(`[TheIntroDB] No data found for episode ${episodeId}`);
+					const loadTheIntroDb = this.isTheIntroDbServiceEnabled();
+					const loadIntroDb = this.isIntroDbServiceEnabled() && isTvShow && imdbId;
+
+					const [theIntroDbResult, introDbResult] = await Promise.allSettled([
+						loadTheIntroDb
+							? this.fetchTheIntroDbSegments({
+								imdbId,
+								tmdbId: tmdbFromId,
+								isTvShow,
+								season,
+								episode,
+								durationMs
+							})
+							: Promise.resolve({ segments: emptySegments(), tmdbId: null }),
+						loadIntroDb
+							? this.fetchIntroDbSegments(imdbId, season, episode)
+							: Promise.resolve(emptySegments())
+					]);
+
+					if (fetchGeneration !== this._fetchGeneration || this.episodeId !== episodeId) {
 						return null;
 					}
 
-					if (!res.ok) {
-						console.warn(`[TheIntroDB] Unexpected response for ${episodeId}: ${res.status}`);
-						return null;
-					}
+					const theIntroDbPayload =
+						theIntroDbResult.status === "fulfilled"
+							? theIntroDbResult.value
+							: { segments: emptySegments(), tmdbId: null };
+					const introDbSegments =
+						introDbResult.status === "fulfilled" ? introDbResult.value : emptySegments();
 
-					const json = await res.json();
-					if (fetchGeneration !== this._fetchGeneration || this.episodeId !== episodeId) return null;
-
-					if (isValidTmdbId(json.tmdb_id)) {
-						this.resolvedTmdbId = Number(json.tmdb_id);
+					if (theIntroDbPayload.tmdbId) {
+						this.resolvedTmdbId = theIntroDbPayload.tmdbId;
 					} else if (imdbId) {
 						const resolved = await this.fetchTmdbIdViaTmdbFind(imdbId, isTvShow ? "tv" : "movie");
 						if (resolved) this.resolvedTmdbId = resolved;
 					}
 
-					this.segments = emptySegments();
+					this.segments = mergeProviderSegments(theIntroDbPayload.segments, introDbSegments);
 
 					for (const segmentType of SEGMENT_TYPES) {
-						if (json[segmentType] && json[segmentType].length > 0) {
-							this.segments[segmentType] = json[segmentType].map((segment) => ({
-								start: segment.start_ms == null ? 0 : segment.start_ms / 1000,
-								end: segment.end_ms == null ? null : segment.end_ms / 1000
-							}));
-							console.log(`[TheIntroDB] Loaded ${this.segments[segmentType].length} ${segmentType} segments`);
+						if (this.segments[segmentType].length > 0) {
+							console.log(
+								`${LOG_PREFIX} Loaded ${this.segments[segmentType].length} merged ${segmentType} segment(s)`
+							);
 						}
 					}
 
 					if (Object.values(this.segments).flat().length === 0) {
-						console.log(`[TheIntroDB] No segment data found for episode ${episodeId}`);
+						console.log(`${LOG_PREFIX} No segment data found for episode ${episodeId}`);
 					}
 
 					this._segmentsLoadedEpisodeId = episodeId;
@@ -1813,7 +2157,7 @@
 					});
 					return null;
 				} catch (err) {
-					console.error(`[TheIntroDB] Error fetching media for ${episodeId}:`, err);
+					console.error(`${LOG_PREFIX} Error fetching segments for ${episodeId}:`, err);
 
 					if (attempt < MAX_RETRIES) {
 						await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
@@ -2027,7 +2371,7 @@
 				const video = this.getPlaybackVideo();
 				if (video) {
 					video.currentTime = segment.end;
-					console.log(`[TheIntroDB] Skipping ${segmentType}: targetTime=${segment.end}`);
+					console.log(`${LOG_PREFIX} Skipping ${segmentType}: targetTime=${segment.end}`);
 				}
 				skipBtn.remove();
 				this.displayedSegmentType = null;
@@ -2108,6 +2452,46 @@
 				return { error: "Start time is beyond the episode duration." };
 			}
 			return { start, end };
+		}
+
+		buildIntroDbSubmissionBody(segment, startSec, endSec, mediaContext, durationSec) {
+			const media = mediaContext || this.parseMediaContext();
+			if (!media) return null;
+
+			const introDbSegment = mapSegmentTypeToIntroDb(segment);
+			if (!introDbSegment) return null;
+			if (media.type !== "tv") return null;
+
+			const imdbId = media.submissionImdbId || media.imdbId;
+			if (!imdbId) return null;
+			if (!isPlausibleSeason(media.season) || !isPlausibleEpisode(media.episode)) {
+				return null;
+			}
+			if (startSec == null || !Number.isFinite(startSec)) return null;
+
+			let resolvedEndSec = endSec;
+			if (
+				(segment === "credits" || introDbSegment === "outro") &&
+				(resolvedEndSec == null || !Number.isFinite(resolvedEndSec)) &&
+				durationSec != null &&
+				Number.isFinite(durationSec)
+			) {
+				resolvedEndSec = durationSec;
+			}
+			if (resolvedEndSec == null || !Number.isFinite(resolvedEndSec)) return null;
+
+			const body = {
+				segment_type: introDbSegment,
+				imdb_id: imdbId,
+				season: Number(media.season),
+				episode: Number(media.episode),
+				start_sec: startSec,
+				end_sec: resolvedEndSec
+			};
+			if (media.tmdbId != null && isValidTmdbId(media.tmdbId)) {
+				body.tmdb_id = Number(media.tmdbId);
+			}
+			return body;
 		}
 
 		buildSubmissionBody(segment, startSec, endSec, durationMs, mediaContext) {
@@ -2330,7 +2714,8 @@
 				segment: fields.segmentSelect.value,
 				startValue: fields.startInput.value,
 				endValue: fields.endInput.value,
-				markedStartSec: this.contributeMarkedStartSec
+				markedStartSec: this.contributeMarkedStartSec,
+				submitTarget: fields.targetSelect ? fields.targetSelect.value : this.contributeSubmitTarget
 			};
 			this.contributeSelectedSegment = fields.segmentSelect.value;
 		}
@@ -2348,6 +2733,16 @@
 				});
 				fields.startInput.value = this.contributeFormDraft.startValue;
 				fields.endInput.value = this.contributeFormDraft.endValue;
+				if (fields.targetSelect && this.contributeFormDraft.submitTarget) {
+					fields.targetSelect.value = this.contributeFormDraft.submitTarget;
+					fields.panel.querySelectorAll("[data-tidb-target-value]").forEach((chip) => {
+						chip.classList.toggle(
+							"active",
+							chip.getAttribute("data-tidb-target-value") === this.contributeFormDraft.submitTarget
+						);
+					});
+					this.contributeSubmitTarget = this.contributeFormDraft.submitTarget;
+				}
 				this.contributeSelectedSegment = this.contributeFormDraft.segment;
 				this.contributeMarkedStartSec =
 					this.contributeFormDraft.markedStartSec != null &&
@@ -2365,12 +2760,39 @@
 			if (!panel) return null;
 			return {
 				panel,
+				targetRow: panel.querySelector("[data-tidb-target-row]"),
+				targetSelect: panel.querySelector("[data-tidb-target]"),
 				segmentSelect: panel.querySelector("[data-tidb-segment]"),
 				startInput: panel.querySelector("[data-tidb-start]"),
 				endInput: panel.querySelector("[data-tidb-end]"),
 				markHint: panel.querySelector(".tidb-contribute-mark-hint"),
 				submitBtn: panel.querySelector("[data-tidb-submit]")
 			};
+		}
+
+		updateContributeSubmitTargetVisibility() {
+			const fields = this.getContributePanelFields();
+			if (!fields || !fields.targetRow || !fields.targetSelect) return;
+
+			const canChoose = this.canChooseSubmitTarget();
+			fields.targetRow.hidden = !canChoose;
+			fields.targetRow.style.display = canChoose ? "" : "none";
+
+			if (!canChoose) {
+				fields.targetSelect.value = this.resolveSubmitTarget(fields.targetSelect.value) || SUBMIT_TARGET_THEINTRODB;
+				this.contributeSubmitTarget = fields.targetSelect.value;
+				return;
+			}
+
+			const current = fields.targetSelect.value || this.contributeSubmitTarget || SUBMIT_TARGET_THEINTRODB;
+			fields.targetSelect.value = current;
+			fields.panel.querySelectorAll("[data-tidb-target-value]").forEach((chip) => {
+				chip.classList.toggle(
+					"active",
+					chip.getAttribute("data-tidb-target-value") === current
+				);
+			});
+			this.contributeSubmitTarget = current;
 		}
 
 		refreshContributeMarkHint() {
@@ -2418,6 +2840,15 @@
 						<div class="tidb-contribute-title">Submit timestamp</div>
 						<button type="button" class="tidb-contribute-close" data-tidb-close aria-label="Close">×</button>
 					</div>
+					<div class="tidb-contribute-target-row" data-tidb-target-row hidden>
+						<label>Submit to</label>
+						<div class="tidb-contribute-segment-row" role="tablist" aria-label="Submit target">
+							<button type="button" class="tidb-contribute-chip active" data-tidb-target-value="theintrodb">TheIntroDB</button>
+							<button type="button" class="tidb-contribute-chip" data-tidb-target-value="introdb">IntroDB</button>
+							<button type="button" class="tidb-contribute-chip" data-tidb-target-value="both">Both</button>
+						</div>
+						<input type="hidden" data-tidb-target value="theintrodb" />
+					</div>
 					<label>Segment</label>
 					<div class="tidb-contribute-segment-row" data-tidb-segment-row role="tablist" aria-label="Segment">
 						<button type="button" class="tidb-contribute-chip active" data-tidb-segment-value="intro">Intro</button>
@@ -2453,6 +2884,19 @@
 				document.body.appendChild(panel);
 
 				panel.querySelector("[data-tidb-close]").addEventListener("click", () => this.closeContributePanel());
+				panel.querySelectorAll("[data-tidb-target-value]").forEach((button) => {
+					button.addEventListener("click", () => {
+						const value = button.getAttribute("data-tidb-target-value");
+						if (!value) return;
+						const hidden = panel.querySelector("[data-tidb-target]");
+						if (hidden) hidden.value = value;
+						this.contributeSubmitTarget = value;
+						panel.querySelectorAll("[data-tidb-target-value]").forEach((chip) => {
+							chip.classList.toggle("active", chip === button);
+						});
+						this.saveContributeFormDraft();
+					});
+				});
 				panel.querySelectorAll("[data-tidb-segment-value]").forEach((button) => {
 					button.addEventListener("click", () => {
 						const value = button.getAttribute("data-tidb-segment-value");
@@ -2507,6 +2951,7 @@
 			}
 
 			this.restoreContributeFormDraft();
+			this.updateContributeSubmitTargetVisibility();
 
 			panel.classList.add("open");
 			this.contributePanelOpen = true;
@@ -2579,7 +3024,7 @@
 
 		ensureContributeUi() {
 			injectContributeStyles();
-			if (!this.userApiKey || !this.isOnPlayerRoute()) {
+			if (!this.hasAnySubmitApiKey() || !this.isOnPlayerRoute()) {
 				this.removeContributeUi();
 				return;
 			}
@@ -2605,8 +3050,8 @@
 				}
 				button.id = CONTRIBUTE_BTN_ID;
 				button.classList.add(CONTRIBUTE_BTN_CLASS);
-				button.title = "Submit TheIntroDB timestamp";
-				button.setAttribute("aria-label", "Submit TheIntroDB timestamp");
+				button.title = "Submit intro timestamp";
+				button.setAttribute("aria-label", "Submit intro timestamp");
 				replaceContributeIcon(button);
 				button.addEventListener("click", (event) => {
 					event.preventDefault();
@@ -2621,20 +3066,189 @@
 				}
 			}
 
+			this.updateContributeSubmitTargetVisibility();
+
 			if (this.contributePanelOpen) {
 				this.positionContributePanel();
 			}
 		}
 
+		async submitToTheIntroDb(segment, startSec, endSec, durationMs, mediaContext) {
+			const body = this.buildSubmissionBody(segment, startSec, endSec, durationMs, mediaContext);
+			if (!body) {
+				const hasTmdbKey = Boolean(await this.getCrossPluginSetting("data-enrichment", "tmdbApiKey"));
+				const badSeason =
+					mediaContext &&
+					mediaContext.type === "tv" &&
+					(!isPlausibleSeason(mediaContext.season) || !isPlausibleEpisode(mediaContext.episode));
+				return {
+					ok: false,
+					label: "TheIntroDB",
+					message: badSeason
+						? "Could not resolve season/episode for this title. Pause playback briefly and try again."
+						: hasTmdbKey
+							? "Could not resolve TMDB ID for this episode (required for TheIntroDB submit). Wait a moment and try again."
+							: "Could not resolve TMDB ID. Add a TMDB API key in Settings (Data Enrichment) or use a Cinemeta/IMDB source."
+				};
+			}
+
+			console.log(`${LOG_PREFIX} TheIntroDB submit payload:`, body);
+			const res = await fetch(`${THEINTRODB_SERVER_URL}/submit`, {
+				method: "POST",
+				headers: {
+					...this.getTidbHeaders(),
+					"Content-Type": "application/json",
+					Accept: "application/json"
+				},
+				credentials: "omit",
+				body: JSON.stringify(body)
+			});
+
+			const responseText = await res.text();
+			let responseJson = null;
+			try {
+				responseJson = responseText ? JSON.parse(responseText) : null;
+			} catch (_) {}
+
+			console.log(`${LOG_PREFIX} TheIntroDB submit response:`, res.status, responseJson || responseText);
+
+			if (!res.ok) {
+				const apiMessage = responseJson && (responseJson.message || responseJson.error);
+				return {
+					ok: false,
+					label: "TheIntroDB",
+					message: apiMessage
+						? this.formatSubmitAuthError(apiMessage, SUBMIT_TARGET_THEINTRODB)
+						: `TheIntroDB submission failed (${res.status}).`
+				};
+			}
+
+			const submissionResult = parseSubmissionResponse(responseJson);
+			if (!submissionResult.ok) {
+				return {
+					ok: false,
+					label: "TheIntroDB",
+					message: "TheIntroDB accepted the request but did not return a submission."
+				};
+			}
+
+			return {
+				ok: true,
+				label: "TheIntroDB",
+				statuses: submissionResult.statuses
+			};
+		}
+
+		async submitToIntroDb(segment, startSec, endSec, mediaContext, durationSec) {
+			const body = this.buildIntroDbSubmissionBody(segment, startSec, endSec, mediaContext, durationSec);
+			if (!body) {
+				if (segment === "preview") {
+					return {
+						ok: false,
+						label: "IntroDB",
+						message: "Preview segments can only be submitted to TheIntroDB."
+					};
+				}
+				if (!mediaContext || mediaContext.type !== "tv") {
+					return {
+						ok: false,
+						label: "IntroDB",
+						message: "IntroDB submissions require a TV episode with a valid IMDb ID."
+					};
+				}
+				return {
+					ok: false,
+					label: "IntroDB",
+					message: "Could not build an IntroDB submission for this episode."
+				};
+			}
+
+			console.log(`${LOG_PREFIX} IntroDB submit payload:`, body);
+			let proxyResult;
+			try {
+				proxyResult = await invokeIntroDbProxy("introdb-submit", {
+					apiKey: this.introDbApiKey,
+					body
+				});
+			} catch (error) {
+				console.error(`${LOG_PREFIX} IntroDB submit proxy failed:`, error);
+				return {
+					ok: false,
+					label: "IntroDB",
+					message: error && error.message
+						? String(error.message)
+						: "IntroDB submission failed due to a network error."
+				};
+			}
+
+			const status = Number(proxyResult && proxyResult.status);
+			const responseJson = proxyResult && proxyResult.body ? proxyResult.body : null;
+
+			console.log(`${LOG_PREFIX} IntroDB submit response:`, status, responseJson);
+
+			if (!Number.isFinite(status) || status < 200 || status >= 300) {
+				const apiMessage = responseJson && (responseJson.message || responseJson.error);
+				return {
+					ok: false,
+					label: "IntroDB",
+					message: apiMessage
+						? this.formatSubmitAuthError(apiMessage, SUBMIT_TARGET_INTRODB)
+						: `IntroDB submission failed (${status || "unknown"}).`
+				};
+			}
+
+			const submissionResult = parseIntroDbSubmissionResponse(responseJson);
+			if (!submissionResult.ok) {
+				return {
+					ok: false,
+					label: "IntroDB",
+					message: "IntroDB accepted the request but did not return a submission."
+				};
+			}
+
+			return {
+				ok: true,
+				label: "IntroDB",
+				statuses: submissionResult.statuses
+			};
+		}
+
 		async submitContributeTimestamp() {
 			if (this.contributeSubmitting) return;
-			if (!this.userApiKey) {
-				this.setContributeStatus("Please add your TIDB API key in the plugin settings.", "error");
-				return;
-			}
 
 			const fields = this.getContributePanelFields();
 			if (!fields) return;
+
+			const submitTarget = this.resolveSubmitTarget(
+				fields.targetSelect ? fields.targetSelect.value : this.contributeSubmitTarget
+			);
+			if (!submitTarget) {
+				this.setContributeStatus(
+					"Enable at least one provider and add its API key in the plugin settings.",
+					"error"
+				);
+				return;
+			}
+
+			const wantsTheIntroDb =
+				submitTarget === SUBMIT_TARGET_THEINTRODB || submitTarget === SUBMIT_TARGET_BOTH;
+			let wantsIntroDb =
+				submitTarget === SUBMIT_TARGET_INTRODB || submitTarget === SUBMIT_TARGET_BOTH;
+
+			if (wantsTheIntroDb && !this.canSubmitToTheIntroDb()) {
+				this.setContributeStatus(
+					"TheIntroDB is disabled or missing an API key in the plugin settings.",
+					"error"
+				);
+				return;
+			}
+			if (wantsIntroDb && !this.canSubmitToIntroDb()) {
+				this.setContributeStatus(
+					"IntroDB is disabled or missing an API key in the plugin settings.",
+					"error"
+				);
+				return;
+			}
 
 			const segment = fields.segmentSelect.value;
 			const durationSec = this.getPlaybackDurationSec();
@@ -2674,28 +3288,18 @@
 			startSec = normalized.start;
 			endSec = normalized.end;
 
+			if (wantsIntroDb && !this.isSegmentSupportedByIntroDb(segment)) {
+				if (!wantsTheIntroDb) {
+					this.setContributeStatus("Preview segments can only be submitted to TheIntroDB.", "error");
+					return;
+				}
+				wantsIntroDb = false;
+			}
+
 			const mediaContext = await this.prepareSubmissionMediaContext(durationMs);
 			if (!mediaContext || (!mediaContext.imdbId && !mediaContext.tmdbId)) {
 				this.setContributeStatus(
 					"Could not resolve a valid IMDB or TMDB ID for this title. Use a Cinemeta/IMDB-linked source.",
-					"error"
-				);
-				return;
-			}
-
-			const body = this.buildSubmissionBody(segment, startSec, endSec, durationMs, mediaContext);
-			if (!body) {
-				const hasTmdbKey = Boolean(await this.getCrossPluginSetting("data-enrichment", "tmdbApiKey"));
-				const badSeason =
-					mediaContext &&
-					mediaContext.type === "tv" &&
-					(!isPlausibleSeason(mediaContext.season) || !isPlausibleEpisode(mediaContext.episode));
-				this.setContributeStatus(
-					badSeason
-						? "Could not resolve season/episode for this title. Pause playback briefly and try again."
-						: hasTmdbKey
-							? "Could not resolve TMDB ID for this episode (required for v3 submit). Wait a moment and try again."
-							: "Could not resolve TMDB ID. Add a TMDB API key in Settings (Data Enrichment) or use a Cinemeta/IMDB source.",
 					"error"
 				);
 				return;
@@ -2706,54 +3310,65 @@
 			this.setContributeStatus("Submitting…");
 
 			try {
-				console.log("[TheIntroDB] Submit payload:", body);
-				const res = await fetch(`${SERVER_URL}/submit`, {
-					method: "POST",
-					headers: {
-						...this.getTidbHeaders(),
-						"Content-Type": "application/json",
-						Accept: "application/json"
-					},
-					credentials: "omit",
-					body: JSON.stringify(body)
+				const results = [];
+				const errors = [];
+
+				if (wantsTheIntroDb) {
+					const result = await this.submitToTheIntroDb(
+						segment,
+						startSec,
+						endSec,
+						durationMs,
+						mediaContext
+					);
+					if (result.ok) {
+						results.push(result);
+					} else {
+						errors.push(result.message);
+					}
+				}
+
+				if (wantsIntroDb) {
+					const result = await this.submitToIntroDb(
+						segment,
+						startSec,
+						endSec,
+						mediaContext,
+						durationSec
+					);
+					if (result.ok) {
+						results.push(result);
+					} else {
+						errors.push(result.message);
+					}
+				}
+
+				if (results.length === 0) {
+					this.setContributeStatus(errors[0] || "Submission failed.", "error");
+					return;
+				}
+
+				this.track("timestamp_submitted", {
+					segment,
+					target: submitTarget
 				});
 
-				const responseText = await res.text();
-				let responseJson = null;
-				try {
-					responseJson = responseText ? JSON.parse(responseText) : null;
-				} catch (_) {}
+				const successMessage =
+					results.length === 1
+						? formatSubmissionSuccessMessage(results[0], results[0].label)
+						: formatCombinedSubmissionSuccessMessage(results);
 
-				console.log("[TheIntroDB] Submit response:", res.status, responseJson || responseText);
-
-				if (!res.ok) {
-					const apiMessage = responseJson && (responseJson.message || responseJson.error);
-					this.setContributeStatus(
-						apiMessage
-							? this.formatSubmitAuthError(apiMessage)
-							: `Submission failed (${res.status}).`,
-						"error"
-					);
-					return;
+				if (errors.length > 0) {
+					this.setContributeStatus(`${successMessage} However: ${errors.join(" ")}`, "success");
+				} else {
+					this.setContributeStatus(successMessage, "success");
+					this.contributeFormDraft = null;
+					this.contributeMarkedStartSec = null;
+					this.refreshContributeMarkHint();
 				}
-
-				const submissionResult = parseSubmissionResponse(responseJson);
-				if (!submissionResult.ok) {
-					this.setContributeStatus(
-						"The server accepted the request but did not return a submission. Try again or check theintrodb.org Stats.",
-						"error"
-					);
-					return;
-				}
-
-				this.track("timestamp_submitted", { segment });
-				this.setContributeStatus(formatSubmissionSuccessMessage(submissionResult), "success");
-				this.contributeFormDraft = null;
-				this.contributeMarkedStartSec = null;
-				this.refreshContributeMarkHint();
 				await this.fetchData();
 			} catch (error) {
-				console.error("[TheIntroDB] Submit failed:", error);
+				console.error(`${LOG_PREFIX} Submit failed:`, error);
 				this.setContributeStatus("Network error while submitting.", "error");
 			} finally {
 				this.contributeSubmitting = false;
@@ -2762,7 +3377,7 @@
 		}
 
 		cleanup() {
-			console.log("[TheIntroDB] Cleaning up previous media...");
+			console.log(`${LOG_PREFIX} Cleaning up previous media...`);
 
 			if (this.video && this.onLoadedMetadataHandler) {
 				this.video.removeEventListener("loadedmetadata", this.onLoadedMetadataHandler);
@@ -2819,7 +3434,7 @@
 		window.tidbPlugin.destroy();
 	}
 
-	window.tidbPlugin = new TheIntroDBPlugin();
+	window.tidbPlugin = new IntroSkipPlugin();
 	if (!window.__tidbBeforeUnloadInstalled) {
 		window.__tidbBeforeUnloadInstalled = true;
 		window.addEventListener("beforeunload", () => {

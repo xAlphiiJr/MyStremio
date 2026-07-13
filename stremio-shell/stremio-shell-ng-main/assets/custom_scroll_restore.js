@@ -249,6 +249,7 @@
     const el = getBoardScrollEl();
     if (!el || el.__stremioCustomScrollObserved) return;
     el.__stremioCustomScrollObserved = true;
+    ensureHeroGutterObserver();
 
     const observer = new MutationObserver(() => {
       if (!isRestoreSessionActive()) return;
@@ -272,12 +273,93 @@
     } catch (_) {}
   }
 
+  const HERO_GUTTER_STYLE_ID = 'mystremio-board-hero-gutter-style';
+  let heroGutterObserver = null;
+
+  /**
+   * @param {Element} scrollEl
+   * @returns {number}
+   */
+  function measureScrollbarGutter(scrollEl) {
+    return Math.max(0, scrollEl.offsetWidth - scrollEl.clientWidth);
+  }
+
+  /**
+   * Extend the board hero through the live scrollbar gutter so the #141414
+   * hero-slot fallback color cannot show as a fat gray stripe.
+   */
+  function applyBoardHeroGutterFix() {
+    const boardScroll = getBoardScrollEl();
+    const hero =
+      boardScroll?.querySelector('[class*="hero-slot"]')
+      || document.querySelector('#app [class*="board-content"] [class*="hero-slot"]');
+
+    if (!boardScroll || !hero) {
+      document.getElementById(HERO_GUTTER_STYLE_ID)?.remove();
+      return;
+    }
+
+    const gutter = measureScrollbarGutter(boardScroll);
+    let style = document.getElementById(HERO_GUTTER_STYLE_ID);
+    if (!style) {
+      style = document.createElement('style');
+      style.id = HERO_GUTTER_STYLE_ID;
+      (document.head || document.documentElement).appendChild(style);
+    }
+
+    const gutterPx = `${gutter}px`;
+    style.textContent = `
+      #app [class*="board-content"] [class*="hero-slot"] {
+        width: calc(100vw + ${gutterPx}) !important;
+        max-width: none !important;
+        left: auto !important;
+        right: auto !important;
+        margin-left: calc(50% - 50vw) !important;
+        margin-right: calc(50% - 50vw - ${gutterPx}) !important;
+        background-color: transparent !important;
+      }
+      #app [class*="board-content"] [class*="hero-slot"] [class*="hero-container"] {
+        width: 100% !important;
+      }
+      #app [class*="board-content"] {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+      }
+      #app [class*="board-content"]::-webkit-scrollbar {
+        width: 6px !important;
+        background: transparent !important;
+      }
+      #app [class*="board-content"]::-webkit-scrollbar-thumb {
+        background-color: rgba(255, 255, 255, 0.18);
+        border-radius: 6px;
+      }
+      #app [class*="board-content"]::-webkit-scrollbar-track,
+      #app [class*="board-content"]::-webkit-scrollbar-track-piece,
+      #app [class*="board-content"]::-webkit-scrollbar-corner {
+        background: transparent !important;
+      }
+    `;
+  }
+
+  function ensureHeroGutterObserver() {
+    applyBoardHeroGutterFix();
+    const boardScroll = getBoardScrollEl();
+    if (!boardScroll) return;
+
+    if (!heroGutterObserver) {
+      heroGutterObserver = new ResizeObserver(() => applyBoardHeroGutterFix());
+      heroGutterObserver.observe(boardScroll);
+      window.addEventListener('resize', applyBoardHeroGutterFix);
+    }
+  }
+
   function enterBoardRoute(fromDetailOrPlayer) {
     boardMountAt = Date.now();
 
     if (fromDetailOrPlayer) {
       loadPersistedScroll();
       ensureBoardObserver();
+      ensureHeroGutterObserver();
       scheduleRestore();
       return;
     }
@@ -285,6 +367,7 @@
     clearStaleBoardSessionFlags();
     cancelRestore();
     ensureBoardObserver();
+    ensureHeroGutterObserver();
     scrollBoardToTop();
   }
 
@@ -370,11 +453,13 @@
     if (event.persisted && isBoardRoute()) {
       loadPersistedScroll();
       ensureBoardObserver();
+      ensureHeroGutterObserver();
       scheduleRestore();
     }
   });
 
   document.addEventListener('stremio-custom-hero-layout-changed', () => {
+    ensureHeroGutterObserver();
     if (!isBoardRoute() || !isRestoreSessionActive()) return;
     if (Date.now() - boardMountAt < HERO_LAYOUT_GRACE_MS) return;
     const el = getBoardScrollEl();

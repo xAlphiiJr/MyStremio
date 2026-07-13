@@ -18,7 +18,6 @@
   const APP_LOADING_MASK_ID = 'stremio-custom-app-loading-mask';
   const APP_LOADING_STYLE_ID = 'stremio-custom-app-loading-style';
   const TOP_SEAM_FIX_STYLE_ID = 'stremio-custom-top-seam-fix';
-  const SCROLLBAR_FIX_STYLE_ID = 'stremio-custom-scrollbar-fix';
 
   const Phase = { IDLE: 'idle', LOADING: 'loading', VIDEO: 'video' };
 
@@ -176,26 +175,6 @@
       }
     `;
     (document.head || document.documentElement).appendChild(style);
-  }
-
-  function ensureScrollbarFix() {
-    if (document.getElementById(SCROLLBAR_FIX_STYLE_ID)) return;
-    const style = document.createElement('style');
-    style.id = SCROLLBAR_FIX_STYLE_ID;
-    style.textContent = `
-      html { color-scheme: dark; }
-      #app [class*="main-nav-bars-container"] { margin-left: 0 !important; margin-right: 0 !important; width: 100% !important; }
-      [class*="hero-slot"] { position: relative !important; margin-left: -1rem !important; margin-right: -1rem !important; width: calc(100% + 2rem) !important; max-width: none !important; }
-      #app [class*="board-content-container"] > [class*="board-content"],
-      #app [class*="discover-content"] [class*="catalog-container"],
-      #app [class*="library-content"],
-      #app [class*="addons-list-container"],
-      #app [class*="calendar-content"] [class*="content"] {
-        overflow-x: hidden !important; scrollbar-width: none !important;
-      }
-    `;
-    (document.head || document.documentElement).appendChild(style);
-    window.__stremioCustomScrollbarEnsure?.();
   }
 
   let appMaskTimer = null;
@@ -486,7 +465,6 @@
 
   injectSessionStyles();
   ensureTopSeamFix();
-  ensureScrollbarFix();
   showBootLoadingMaskUntilReady();
   if (shouldEnterPlayerSession()) onPlayerEnter();
 

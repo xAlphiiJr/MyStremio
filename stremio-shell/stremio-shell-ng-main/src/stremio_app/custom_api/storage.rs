@@ -386,7 +386,8 @@ fn default_preferences() -> Value {
         "onboarding": {
             "tmdbNoticeShown": false,
             "defaultsApplied": false
-        }
+        },
+        "uiScale": 100
     })
 }
 
@@ -525,6 +526,7 @@ fn normalize_preferences(value: Value) -> Value {
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .unwrap_or_default();
+    let ui_scale = normalize_ui_scale_percent(value.get("uiScale"));
 
     json!({
         "enabledPlugins": enabled,
@@ -537,7 +539,8 @@ fn normalize_preferences(value: Value) -> Value {
         "library": library,
         "language": language,
         "onboarding": onboarding,
-        "authProfile": auth_profile
+        "authProfile": auth_profile,
+        "uiScale": ui_scale
     })
 }
 
@@ -598,6 +601,10 @@ fn collect_early_storage_pairs(prefs: &Value) -> Map<String, Value> {
     {
         put("stremio-custom-preload-secs", preload.to_string());
     }
+    put(
+        "stremio-custom-ui-scale-percent",
+        read_ui_scale_percent_from_value(&prefs).to_string(),
+    );
 
     if let Some(volume) = prefs.get("volume") {
         if let Some(level) = volume.get("level").and_then(|v| v.as_f64()) {
@@ -724,7 +731,8 @@ function hasAuthProfile(){{try{{var raw=localStorage.getItem('profile');if(!raw)
 var authProfile={auth_json};
 if(authProfile&&!hasAuthProfile()){{try{{localStorage.setItem('profile',authProfile);}}catch(_){{}}}}
 var restore={restore_json};
-Object.keys(restore).forEach(function(key){{try{{if(localStorage.getItem(key)===null)localStorage.setItem(key,restore[key]);}}catch(_){{}}}});
+var forceRestoreKeys={{"stremio-custom-ui-scale-percent":true}};
+Object.keys(restore).forEach(function(key){{try{{if(forceRestoreKeys[key]||localStorage.getItem(key)===null)localStorage.setItem(key,restore[key]);}}catch(_){{}}}});
 }}catch(e){{console.warn('[StremioCustom] early storage restore failed',e);}}}})();"#
     )
 }
@@ -736,4 +744,42 @@ fn write_json_object(path: &Path, value: &Value) {
     if let Ok(content) = serde_json::to_string_pretty(value) {
         let _ = fs::write(path, content);
     }
+}
+
+const ALLOWED_UI_SCALE_PERCENTS: [u32; 6] = [75, 100, 125, 150, 175, 200];
+
+/// Snaps a UI scale percentage to the nearest supported 25% step.
+pub fn normalize_ui_scale_percent(value: Option<&Value>) -> u32 {
+    let raw = value
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_i64().map(|n| if n < 0 { 0 } else { n as u64 }))
+                .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+        })
+        .unwrap_or(100) as u32;
+    ALLOWED_UI_SCALE_PERCENTS
+        .iter()
+        .copied()
+        .min_by_key(|allowed| allowed.abs_diff(raw))
+        .unwrap_or(100)
+}
+
+fn read_ui_scale_percent_from_value(prefs: &Value) -> u32 {
+    normalize_ui_scale_percent(prefs.get("uiScale"))
+}
+
+/// Returns the persisted UI scale percentage (75–200 in 25% steps, default 100).
+pub fn read_ui_scale_percent() -> u32 {
+    read_ui_scale_percent_from_value(&read_user_preferences())
+}
+
+/// Persists the UI scale percentage and returns the normalized value.
+pub fn save_ui_scale_percent(percent: u32) -> u32 {
+    let normalized = normalize_ui_scale_percent(Some(&json!(percent)));
+    let mut prefs = read_user_preferences();
+    if let Some(obj) = prefs.as_object_mut() {
+        obj.insert("uiScale".to_string(), json!(normalized));
+        save_user_preferences(&prefs);
+    }
+    normalized
 }

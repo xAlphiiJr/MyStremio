@@ -2,9 +2,10 @@
 
 **MyStremio** is a personalized Windows desktop client built on the Stremio shell stack.
 It combines UI upgrades, player improvements, plugins/themes and library tools in one installer.
-Current release: **2.2.9**
+Current release: **2.3.0**
 
 > **Disclaimer:** MyStremio is an independent community project and is not affiliated with official Stremio.
+
 ---
 
 ## 📌 Table of Contents
@@ -15,9 +16,9 @@ Current release: **2.2.9**
 - [🛠️ Patch Notes](#️-patch-notes)
 - [💾 Installation](#-installation)
   - [📂 Install paths](#-install-paths)
-   - [📋 Requirements](#-requirements)
-   - [🗑️ Uninstall](#️-uninstall)
-   - [🎬 First-time setup](#-first-time-setup)
+  - [📋 Requirements](#-requirements)
+  - [🗑️ Uninstall](#️-uninstall)
+  - [🎬 First-time setup](#-first-time-setup)
 - [🎨 Themes and plugins (manual files)](#-themes-and-plugins-manual-files)
 - [🧑‍💻 Build from source (developers)](#-build-from-source-developers)
 - [🔒 Privacy and local data](#-privacy-and-local-data)
@@ -25,6 +26,8 @@ Current release: **2.2.9**
 - [💬 Feedback](#-feedback)
 
 ---
+
+
 
 ### ❓ How MyStremio differs from official Stremio
 
@@ -44,28 +47,32 @@ Current release: **2.2.9**
 
 ---
 
+
+
 ### ❤️ Support
 
-If you want to support my work you can leave a small tip on [ko-fi]( https://ko-fi.com/xalphiijr), I would really appreciate it! <3 
+If you want to support my work you can leave a small tip on [ko-fi](https://ko-fi.com/xalphiijr), I would really appreciate it! <3 
 
 ---
 
+
+
 ## 🚀 Features
+
+
 
 ### 🏠 Board hero home view
 
 The board includes a hero section with rotating titles. The Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme) and just slightly optimized by me.
 
-   <p align="center">
-  <img src="./images/01-board-hero.png" alt="Board Hero Home" width="1000"/>
-</p>
+
 
 ### 🖱️ Hover metadata in catalogs
 
    While browsing catalogs, hover cards show key information (plot, genres, cast) without forcing a page change.
-   <p align="center">
-  <img src="./images/02-catalog-hover.png" alt="Catalog Hover Metadata" width="1000"/>
-</p>
+   
+  
+
 
 
 ### 📖 Detail view with metadata and stream sidebar
@@ -73,51 +80,39 @@ The board includes a hero section with rotating titles. The Theme is made by [Fx
 The Data Enrichment Plugin by MrBlu03 (if TMDB API-Key is set) offers an enhanced detail page with cast and similar titles.
 The StreamUI plugin offers a clean and modern sidebar with folders to pick streams from. (The plugin works for the follwing addons: Most torrent addons, [WatchHub](https://stremio-addons.net/addons/watchhub), [Ratings Aggregator](https://stremio-addons.net/addons/ratings-aggregator), [IMDb Ratings](https://stremio-addons.net/addons/imdb-ratings), [AfterCredits](https://aftercredits.almosteffective.com/configure.html)).
 
-  <p align="center">
-  <img src="./images/03-detail-metadata-stream-sidebar.png" alt="Metadata and Stream UI" width="1000"/>
-</p>
+
 
 ### 🌐 Favorite subtitle and audio languages
 
 Inside player settings, you can define favorite subtitle and audio languages that act as your preferred language pool.
 This preference layer is used by the quick language actions shown in the next section.
 
-   <p align="center">
-  <img src="./images/05-favorite-languages-subtitles.png" alt="Favorite Languages for Subtitles and Audio" />
-</p>
+
 
 ### ⚡ Quick Select language shortcuts
 
 Quick Select reads your favorites and exposes them as one-click subtitle/audio buttons, so switching language is fast and consistent.
 In short: favorites define what is available, Quick Select is the runtime shortcut layer that applies those preferences immediately.
 
-   <p align="center">
-  <img src="./images/06-quick-settings.png" alt="Quick Select Language Shortcuts" />
-</p>
+
 
 ### ⚙️ Settings: Plugins
 
 Plugins can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and communtiy made plugins built into to installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: Enhanced Title Bar by Fxy, EnhancedCovers by Fxy, SlashtoSearch by REVENGE977. A few of other plugins are slightly tuned to fit into MyStremio including: Dynamic Hero by Fxy, Context Menu Fix by MrBlu03, Data Enrichment by MrBlu03, TheIntroDB by TheIntroDB.
 
-   <p align="center">
-  <img src="./images/07-01-settings-themes-plugins.png" alt="Themes and Plugins Settings" />
-</p>
+
 
 ### ⚙️ Settings: preload, library backup, Discord
 
 Inside **Settings → MyStremio**, you get central controls for buffer/preload, library export/import, and Discord Rich Presence.
 
-  <p align="center">
-  <img src="./images/08-01-settings-preload-library-discord.png" alt="Preload Library Discord Settings" w/>
-</p>
+
 
 ### ⏱️ TheIntroDB timestamp submission
 
 Contribute segment timestamps to TheIntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
 
-  <p align="center">
-  <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB panel" />
-</p>
+
 
 ### 🎞️ Cinebye Addon Manager
 
@@ -136,15 +131,29 @@ Built in brightness slider to dim the video while watching without the need to c
 Built in timestamps when hovering the seek bar in the player.
 
 ---
+
+
+
 ### 💡 Planned Features
 
-- **IntroDB integration:** I plan on implementing both TheIntroDB and IntroDB together to achieve maximum coverage.
 - **PiP:** I'm working on a picture in picture video mode
 - **Seek Bar Thumbnail:** I want to add a thumbnail when hovering over the seek bar in the player.
 
 ---
 
+
+
 ## 🛠️ Patch Notes
+
+
+
+### 2.3.0
+
+- **IntroDB integration** — TheIntroDB plugin now loads skip segments from both [TheIntroDB](https://theintrodb.org/) and [IntroDB](https://introdb.app/), with separate API keys, contributor target selection, and a shell-side IntroDB proxy to bypass browser CORS limits.
+- **Library title fix** — Library items now show the correct title reliably across navigation and route changes.
+- **UI scaling settings** — New **Settings → Interface → UI Scaling** dropdown (75%–200%), independent of Windows display scaling, persisted across restarts via WebView2 zoom.
+
+
 
 ### 2.2.9
 
@@ -172,25 +181,31 @@ Built in timestamps when hovering the seek bar in the player.
 
 ---
 
+
+
 ### Known Issues
 
 - **First stream playback:** On the first stream start after launching the app, the video may remain frozen on the first frame. One click into the seek bar fixes the issue.
 - **Cast Search Addon:** The Cast Search Addon is not compatible with the StreamUI plugin as the cast members load the same way as video streams which messes with correct grouping.
 - **Formatter:** Flags don't display correctly.
 - **Hover timestamps:** When starting a stream from the "Continue Watching" segment on the board, the hover timestamps won't load. Starting the stream from the details page fixes this problem.
+
 ---
+
+
 
 ## 💾 Installation
 
 1. Download the latest installer from this repository's **Releases** page.
-2. Run `MyStremioSetup-v2.2.9_x64.exe` (or the latest version).
+2. Run `MyStremioSetup-v2.3.0_x64.exe` (or the latest version).
 3. The installer sets up:
-   - App binaries (`mystremio-shell.exe`, streaming server, FFmpeg, libmpv)
-   - Bundled plugins and themes
-   - Prebuilt local Web UI
-   - WebView2 runtime (if missing)
-   - Protocol handlers (`stremio://`, `magnet:`, optional `.torrent`)
+  - App binaries (`mystremio-shell.exe`, streaming server, FFmpeg, libmpv)
+  - Bundled plugins and themes
+  - Prebuilt local Web UI
+  - WebView2 runtime (if missing)
+  - Protocol handlers (`stremio://`, `magnet:`, optional `.torrent`)
 4. Launch MyStremio from the Start menu or desktop shortcut.
+
 
 
 ### 📂 Install paths
@@ -198,11 +213,15 @@ Built in timestamps when hovering the seek bar in the player.
 - App: `%LOCALAPPDATA%\Programs\MyStremio\`
 - User data (settings/addons): `%APPDATA%\MyStremio\`
 
+
+
 ### 📋 Requirements
 
 - Windows 10/11 (64-bit)
 - Internet connection (addons, metadata sources, streaming)
 - Optional API keys for plugins (for example TMDB, TheIntroDB)
+
+
 
 ### 🗑️ Uninstall
 
@@ -211,18 +230,22 @@ Optionally delete `%APPDATA%\MyStremio\` to remove all local user data.
 
 ---
 
+
+
 ## 🎬 First-time setup
 
 1. Install and launch MyStremio.
 2. Sign in with your Stremio account.
 3. Open **Settings → MyStremio** and configure optional items:
-   - Preload/buffer
-   - Plugins
-   - Discord Rich Presence
-   - Plugin API keys (TheIntroDB for timestamp submission)
+  - Preload/buffer
+  - Plugins
+  - Discord Rich Presence
+  - Plugin API keys (TheIntroDB for timestamp submission)
 4. Create library folders and use JSON import/export when needed.
 
 ---
+
+
 
 ## 🎨 Plugins (manual files)
 
@@ -233,6 +256,8 @@ Optionally delete `%APPDATA%\MyStremio\` to remove all local user data.
 
 ---
 
+
+
 ## 🧑‍💻 Build from source (developers)
 
 Requires Rust (MSVC), Visual Studio Build Tools, Inno Setup 6, Node.js with pnpm (optional, for Web UI rebuild), and an installed Stremio Desktop runtime (for `libmpv-2.dll`).
@@ -242,11 +267,14 @@ cd stremio-shell\stremio-shell-ng-main
 .\package-release.ps1
 ```
 
-Output: `release\MyStremioSetup-v2.2.9_x64.exe`
+Output: `release\MyStremioSetup-v2.3.0_x64.exe`
 
 The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle. To rebuild the Web UI from source, clone [stremio-web](https://github.com/Stremio/stremio-web) into `.tmp/stremio-web`, apply MyStremio patches, then run the build script again.
 
 ---
+
+
+
 ## 🔒 Privacy and local data
 
 - API keys, personal setting sand library structure are stored locally in `%APPDATA%\MyStremio\`.
@@ -254,6 +282,8 @@ The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle
 - Discord Rich Presence only sends data when enabled and connected.
 
 ---
+
+
 
 ## 🙏 Credits
 
@@ -267,6 +297,8 @@ MyStremio is based on the following independent community projects:
 These projects were important inspiration, and I used many of their features for my own custom build.
 
 ---
+
+
 
 ## 💬 Feedback
 

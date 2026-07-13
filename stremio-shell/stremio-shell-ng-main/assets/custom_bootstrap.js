@@ -192,6 +192,7 @@
       discordPresence: getDiscordPresencePreferences(),
       library: getLibraryPreferences(),
       authProfile,
+      uiScale: getUiScalePreference(),
       onboarding: {
         tmdbNoticeShown: localStorage.getItem(TMDB_NOTICE_KEY) === 'true',
         defaultsApplied: localStorage.getItem(DEFAULTS_APPLIED_KEY) === 'true',
@@ -210,6 +211,7 @@
   const HORIZONTAL_NAV_PLUGIN = 'interface/horizontal-navigation.plugin.js';
   const METADATA_ADDON_KEY = 'stremio-custom-metadata-addon';
   const PRELOAD_SECS_KEY = 'stremio-custom-preload-secs';
+  const UI_SCALE_PERCENT_KEY = 'stremio-custom-ui-scale-percent';
   const VOLUME_KEYS = {
     level: 'stremio-custom-player-volume',
     muted: 'stremio-custom-player-muted',
@@ -246,6 +248,15 @@
     const normalized = String(fileRef || '').replace(/\\/g, '/');
     const baseName = normalized.split('/').pop() || '';
     return /hero[-_]?div\.plugin\.js$/i.test(normalized) || /hero[-_]?div\.plugin\.js$/i.test(baseName);
+  }
+
+  function cleanupLegacyScrollbarDom() {
+    document.getElementById('stremio-custom-scrollbar-track')?.remove();
+    document.getElementById('stremio-custom-scrollbar-style')?.remove();
+    document.getElementById('stremio-custom-scrollbar-fix')?.remove();
+    for (const el of document.querySelectorAll('.stremio-custom-scroll-host')) {
+      el.classList.remove('stremio-custom-scroll-host');
+    }
   }
 
   function cleanupLegacyHeroDom() {
@@ -427,6 +438,38 @@
     const normalized = String(value).trim();
     if (!normalized) return;
     localStorage.setItem(PRELOAD_SECS_KEY, normalized);
+  }
+
+  function normalizeUiScalePercent(value) {
+    const options = [75, 100, 125, 150, 175, 200];
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 100;
+    let closest = 100;
+    let bestDelta = Infinity;
+    for (const option of options) {
+      const delta = Math.abs(option - num);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        closest = option;
+      }
+    }
+    return closest;
+  }
+
+  function getUiScalePreference() {
+    try {
+      const raw = localStorage.getItem(UI_SCALE_PERCENT_KEY);
+      if (raw == null || raw === '') return 100;
+      return normalizeUiScalePercent(raw);
+    } catch (_) {
+      return 100;
+    }
+  }
+
+  function applyUiScalePreference(percent) {
+    const normalized = normalizeUiScalePercent(percent);
+    localStorage.setItem(UI_SCALE_PERCENT_KEY, String(normalized));
+    return normalized;
   }
 
   function getVolumePreferences() {
@@ -726,6 +769,7 @@
         typeof preferences?.metadataAddon === 'string' ? preferences.metadataAddon : '';
       const diskLanguage = preferences?.language;
       const diskPreload = preferences?.preload;
+      const diskUiScale = preferences?.uiScale;
       const diskVolume = preferences?.volume;
       const diskPlayerVolume = await api.getPlayerVolume().catch(() => null);
       const diskVolumeMerged = mergeVolumePreferences(diskVolume, diskPlayerVolume);
@@ -760,6 +804,9 @@
       if (diskPreload !== undefined && diskPreload !== null) {
         applyPreloadPreference(diskPreload);
       }
+      if (diskUiScale !== undefined && diskUiScale !== null) {
+        applyUiScalePreference(diskUiScale);
+      }
 
       const mergedVolume = mergeVolumePreferences(diskVolumeMerged, getVolumePreferences());
       if (mergedVolume.level != null || mergedVolume.muted != null) {
@@ -792,6 +839,7 @@
         discordPresence: getDiscordPresencePreferences(),
         library: getLibraryPreferences(),
         authProfile,
+        uiScale: getUiScalePreference(),
         onboarding: {
           tmdbNoticeShown: localStorage.getItem(TMDB_NOTICE_KEY) === 'true',
           defaultsApplied: localStorage.getItem(DEFAULTS_APPLIED_KEY) === 'true',
@@ -1274,6 +1322,8 @@
       setMetadataAddon,
       getLibraryPreferences,
       applyLibraryPreferences,
+      getUiScalePreference,
+      applyUiScalePreference,
       isNativeSettingsSection,
       getSettingsSectionsContainer,
       getNativeSettingsSections,
@@ -1305,6 +1355,7 @@
     hookShellMessages();
     injectPlaybackGuard();
     await hydrateUserPreferences();
+    await invoke('apply-ui-scale').catch(() => {});
     if (localStorage.getItem(DYNAMIC_HERO_ENABLED_KEY) === null) {
       localStorage.setItem(DYNAMIC_HERO_ENABLED_KEY, '1');
     }
@@ -1315,8 +1366,6 @@
     window.__stremioLanguageNames = await invoke('read-language-names');
     await ensureThemeApplied();
     await ensurePluginsLoadedForRoute();
-    safeRun('removePlayerLanguageBars', () => window.StremioCustomFavoriteLanguages?.removePlayerLanguageBars?.());
-    safeRun('favoriteLanguages', () => window.StremioCustomFavoriteLanguages?.injectFavoriteHeartsRuntime?.());
     safeRun('settingsWatcher', () => window.StremioCustomSettings?.startSettingsWatcher?.(pluginApi));
     ensurePlayerGlassStyles();
     ensurePlayerTransparencyFix();
@@ -1337,11 +1386,13 @@
     setTimeout(() => {
       if (isOnSettingsPage()) {
         safeRun('settingsCheck', () => window.StremioCustomSettings?.checkSettings?.(pluginApi));
+        safeRun('uiScaleSettings', () => window.StremioCustomUiScale?.scheduleSettingsCheck?.());
       }
     }, 500);
     setTimeout(() => {
       if (isOnSettingsPage()) {
         safeRun('settingsCheck', () => window.StremioCustomSettings?.checkSettings?.(pluginApi));
+        safeRun('uiScaleSettings', () => window.StremioCustomUiScale?.scheduleSettingsCheck?.());
       }
     }, 2500);
   }
@@ -1350,6 +1401,7 @@
   async function runBootstrapOnce() {
     if (bootstrapStarted) return;
     bootstrapStarted = true;
+    cleanupLegacyScrollbarDom();
     try {
       await bootstrap();
     } catch (error) {
@@ -1373,6 +1425,7 @@
           loadPlugin,
           unloadPlugin,
         }));
+        safeRun('uiScaleSettings', () => window.StremioCustomUiScale?.scheduleSettingsCheck?.());
       }, 400);
     }
     if (isPlayerRoute()) {

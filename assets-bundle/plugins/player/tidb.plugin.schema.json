@@ -1,25 +1,29 @@
 [
   {
+    "defaultValue": true,
+    "description": "Load intro, recap, credits, and preview segments from TheIntroDB. Disable to ignore this provider entirely.",
+    "key": "use_theintrodb",
+    "label": "TheIntroDB",
+    "type": "toggle"
+  },
+  {
     "defaultValue": "",
     "key": "tidb_api_key",
-    "label": "TIDB API Key",
+    "label": "API Key",
     "type": "input"
   },
   {
-    "defaultValue": "default",
-    "key": "tidb_theme",
-    "label": "Button Theme",
-    "options": [
-      {
-        "label": "Default",
-        "value": "default"
-      },
-      {
-        "label": "Glass",
-        "value": "glass"
-      }
-    ],
-    "type": "select"
+    "defaultValue": true,
+    "description": "Load intro, recap, and credits segments from IntroDB. Disable to ignore this provider entirely.",
+    "key": "use_introdb",
+    "label": "IntroDB",
+    "type": "toggle"
+  },
+  {
+    "defaultValue": "",
+    "key": "introdb_api_key",
+    "label": "API Key",
+    "type": "input"
   },
   {
     "defaultValue": true,

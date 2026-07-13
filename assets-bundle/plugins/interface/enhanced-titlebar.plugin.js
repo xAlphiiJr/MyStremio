@@ -1,7 +1,7 @@
 /**
  * @name Enhanced Title Bar
  * @description Enhances the title bar with additional information.
- * @version 26.0.1
+ * @version 26.0.5
  * @author Fxy
  */
 
@@ -139,39 +139,148 @@ async function resolveMetadata(imdbId, typeHints) {
   return null;
 }
 
-function extractImdbId(posterImg, detailLink, cardOrContainer) {
-  const candidates = [];
+function computeTitlebarSlotKey(posterImg, detailLink, itemRoot) {
+  return extractImdbId(posterImg, detailLink, itemRoot) || "";
+}
 
-  if (posterImg) {
-    candidates.push(posterImg.getAttribute("data-imdb-id"));
-    candidates.push(posterImg.getAttribute("src"));
-    candidates.push(posterImg.getAttribute("data-src"));
-    candidates.push(posterImg.getAttribute("data-original"));
+function clearEnhancedState(titlebar) {
+  if (titlebar.classList.contains("enhanced-title-bar")) {
+    if (titlebar.dataset.originalContent) {
+      titlebar.innerHTML = titlebar.dataset.originalContent;
+    } else {
+      titlebar
+        .querySelectorAll(".enhanced-title, .enhanced-metadata, .enhanced-loading")
+        .forEach((node) => node.remove());
+    }
   }
+  titlebar.classList.remove("enhanced-title-bar");
+  delete titlebar.dataset.enhancedId;
+  delete titlebar.dataset.enhancedSlotKey;
+  delete titlebar.dataset.enhancedComplete;
+  delete titlebar.dataset.enhancedPending;
+  delete titlebar.dataset.enhancedAttempts;
+  delete titlebar.dataset.enhancedRetryAt;
+  delete titlebar.dataset.enhancedUpdatedAt;
+  delete titlebar.dataset.enhancedFetchToken;
+  delete titlebar.dataset.originalContent;
+}
 
-  if (cardOrContainer && cardOrContainer.dataset) {
-    candidates.push(cardOrContainer.dataset.imdb);
-    candidates.push(cardOrContainer.dataset.id);
-  }
-
-  if (detailLink) {
-    candidates.push(detailLink.getAttribute("href"));
-    candidates.push(detailLink.getAttribute("data-id"));
-    if (detailLink.id && /^tt\d{7,}$/.test(detailLink.id)) {
-      candidates.push(detailLink.id);
+function readNativeTitle(card, posterImg, detailLink, titlebar) {
+  if (titlebar) {
+    const titleLabel = titlebar.querySelector('[class*="title-label"]');
+    const nativeLabel = titleLabel?.textContent?.trim();
+    if (nativeLabel) {
+      return nativeLabel;
     }
   }
 
-  for (let i = 0; i < candidates.length; i++) {
-    const value = candidates[i];
-    if (!value || typeof value !== "string") continue;
-    const match = value.match(/tt\d{7,}/);
-    if (match) {
-      return match[0];
+  if (detailLink) {
+    const ariaLabel = detailLink.getAttribute("aria-label");
+    if (ariaLabel && ariaLabel.trim()) {
+      return ariaLabel.trim();
+    }
+    const labelled = detailLink.querySelector('[class*="title"]');
+    if (labelled?.textContent?.trim()) {
+      return labelled.textContent.trim();
+    }
+  }
+
+  if (posterImg) {
+    const altTitle = posterImg.getAttribute("alt");
+    if (altTitle && altTitle.trim()) {
+      return altTitle.trim();
+    }
+    const posterTitle = posterImg.getAttribute("title");
+    if (posterTitle && posterTitle.trim()) {
+      return posterTitle.trim();
+    }
+  }
+
+  if (titlebar && !titlebar.querySelector(".enhanced-title")) {
+    const titleElement =
+      titlebar.querySelector('[class*="menu-label"]') ||
+      titlebar.querySelector('[class*="title"]:not(.enhanced-title)');
+    const nativeTitle = titleElement?.textContent?.trim();
+    if (nativeTitle) {
+      return nativeTitle;
+    }
+  }
+
+  return "";
+}
+
+function matchImdbId(value) {
+  if (!value || typeof value !== "string") return null;
+  const match = value.match(/tt\d{7,}/);
+  return match ? match[0] : null;
+}
+
+function extractImdbIdFromPoster(posterImg) {
+  if (!posterImg) return null;
+  const sources = [
+    posterImg.currentSrc,
+    posterImg.getAttribute("src"),
+    posterImg.getAttribute("data-src"),
+    posterImg.getAttribute("data-original"),
+    posterImg.getAttribute("data-imdb-id"),
+  ];
+  for (let i = 0; i < sources.length; i++) {
+    const id = matchImdbId(sources[i]);
+    if (id) return id;
+  }
+  return null;
+}
+
+function extractImdbIdFromDetailLink(detailLink) {
+  if (!detailLink) return null;
+  const sources = [
+    detailLink.getAttribute("href"),
+    detailLink.getAttribute("data-id"),
+    /^tt\d{7,}$/.test(detailLink.id || "") ? detailLink.id : null,
+  ];
+  for (let i = 0; i < sources.length; i++) {
+    const id = matchImdbId(sources[i]);
+    if (id) return id;
+  }
+  return null;
+}
+
+function extractImdbId(posterImg, detailLink, cardOrContainer) {
+  const posterId = extractImdbIdFromPoster(posterImg);
+  if (posterId) {
+    return posterId;
+  }
+
+  const linkId = extractImdbIdFromDetailLink(detailLink);
+  if (linkId) {
+    return linkId;
+  }
+
+  if (cardOrContainer?.dataset) {
+    const containerId =
+      matchImdbId(cardOrContainer.dataset.imdb) ||
+      matchImdbId(cardOrContainer.dataset.id);
+    if (containerId) {
+      return containerId;
     }
   }
 
   return null;
+}
+
+function resolveTileLinks(posterImg, detailLink, itemRoot) {
+  let link = detailLink;
+  if (link && itemRoot && !itemRoot.contains(link)) {
+    link = null;
+  }
+
+  const posterId = extractImdbIdFromPoster(posterImg);
+  const linkId = extractImdbIdFromDetailLink(link);
+  if (posterId && linkId && posterId !== linkId) {
+    link = null;
+  }
+
+  return link;
 }
 
 function createMetadataElements(metadata) {
@@ -201,8 +310,22 @@ function createMetadataElements(metadata) {
   return elements;
 }
 
+function isLibraryPage() {
+  return /#\/library(?:[/?#]|$)/.test(location.hash || "");
+}
+
 function shouldEnhancePage() {
-  return !/#\/player/.test(location.hash);
+  if (/#\/player/.test(location.hash)) return false;
+  if (isLibraryPage()) return false;
+  return true;
+}
+
+function restoreLibraryNativeTitlebars() {
+  const libraryRoot = document.querySelector('[class*="library-container"]');
+  if (!libraryRoot) return;
+  libraryRoot
+    .querySelectorAll('[class*="title-bar-container"], [class*="title-bar"]')
+    .forEach((titlebar) => clearEnhancedState(titlebar));
 }
 
 async function enhanceMediaContainers() {
@@ -219,175 +342,56 @@ async function enhanceMediaContainers() {
 }
 
 async function enhanceMediaContainersImpl() {
-  // Find all media containers using multiple possible selectors
-  const containerSelectors = [
-    '[class*="poster-container"]',
-    '[class*="media-item"]',
-    '[class*="library-item"]',
-    '[class*="board-item"]',
-    '[class*="meta-item"]',
-    '[class*="catalog-item"]',
-    '[class*="poster-card"]',
-  ];
-
-  const containerSet = new Set();
-  containerSelectors.forEach((selector) => {
-    const matches = document.querySelectorAll(selector);
-    for (let i = 0; i < matches.length; i++) {
-      containerSet.add(matches[i]);
-    }
-  });
-
-  // Also try finding containers by looking for elements that have both images and titlebars
-  const allImages = document.querySelectorAll('img[src*="tt"]');
-  allImages.forEach((img) => {
-    let container = img.parentElement;
-    let attempts = 0;
-    while (container && attempts < 5) {
-      const titlebar = container.querySelector(
-        '[class*="title-bar"], [class*="title-label"]',
-      );
-      if (titlebar) {
-        containerSet.add(container);
-        break;
-      }
-      container = container.parentElement;
-      attempts++;
-    }
-  });
-
-  const containers = Array.from(containerSet);
-
-  for (const container of containers) {
+  const items = document.querySelectorAll('[class*="meta-item-container"]');
+  for (let i = 0; i < items.length; i++) {
     try {
-      await enhanceContainer(container);
+      await enhanceMetaItemContainer(items[i]);
     } catch (error) {
-      // Skip this container if enhancement fails
-      console.log("Container enhancement failed:", error);
+      console.log("Meta item enhancement failed:", error);
     }
   }
 }
 
-async function enhanceContainer(container) {
-  // Find poster image (prefer ones with IMDb IDs)
-  let posterImg = container.querySelector('img[src*="tt"]');
-  if (!posterImg) {
-    posterImg = container.querySelector("img");
-  }
-
-  // Card = single tile (one poster + one titlebar). Never use container-level
-  // querySelector for link/titlebar or we pair CW with Popular when container spans both.
-  const card = posterImg
-    ? posterImg.closest("[class*=\"meta-item\"]") ||
-      posterImg.closest("[class*=\"poster-container\"]")?.parentElement ||
-      posterImg.parentElement
-    : null;
-
-  // Only use a detail link that is inside this card (or wraps the poster). Never
-  // container.querySelector('a[...]') — that can return another row's link (e.g. Popular).
-  let detailLink = posterImg
-    ? posterImg.closest('a[href^="stremio:///detail/"], a[href*="#/detail/"]')
-    : null;
-  if (!detailLink && card) {
-    detailLink = card.querySelector('a[href^="stremio:///detail/"], a[href*="#/detail/"]');
-  }
-  if (!detailLink && posterImg) {
-    let node = posterImg.parentElement;
-    for (let depth = 0; node && depth < 5; depth++) {
-      if (
-        node.tagName === "A" &&
-        node.href &&
-        (node.href.indexOf("stremio:///detail/") === 0 || node.href.indexOf("#/detail/") !== -1)
-      ) {
-        detailLink = node;
-        break;
-      }
-      node = node.parentElement;
-    }
-  }
-
-  if (!posterImg && !detailLink) {
+/**
+ * Enhance the title bar inside a single catalog/library tile.
+ *
+ * @param {Element} itemRoot One `meta-item-container` tile.
+ */
+async function enhanceMetaItemContainer(itemRoot) {
+  if (!itemRoot || !itemRoot.matches?.('[class*="meta-item-container"]')) {
     return;
   }
-  const titlebarSelectors = [
-    '[class*="title-bar-container"]',
-    '[class*="title-bar"]',
-    '[class*="title-label"]',
-    '[class*="title-container"]',
-  ];
 
-  let titlebar = null;
-  if (card) {
-    for (const selector of titlebarSelectors) {
-      titlebar = card.querySelector(selector);
-      if (titlebar) break;
-    }
-    if (!titlebar && card.nextElementSibling) {
-      const next = card.nextElementSibling;
-      if (next.matches && next.matches("[class*=\"title-bar\"], [class*=\"title-label\"]")) {
-        titlebar = next;
-      } else {
-        for (const selector of titlebarSelectors) {
-          titlebar = next.querySelector(selector);
-          if (titlebar) break;
-        }
-      }
-    }
+  const posterImg =
+    itemRoot.querySelector('img[src*="tt"]') || itemRoot.querySelector("img");
+  if (!posterImg) {
+    return;
   }
-  if (!titlebar && card) {
-    // First titlebar that follows the poster within the same card only
-    for (const selector of titlebarSelectors) {
-      const list = card.querySelectorAll(selector);
-      for (let i = 0; i < list.length; i++) {
-        const el = list[i];
-        if (posterImg.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) {
-          titlebar = el;
-          break;
-        }
-      }
-      if (titlebar) break;
-    }
-  }
+
+  const titlebar = itemRoot.querySelector(
+    '[class*="title-bar-container"], [class*="title-bar"]',
+  );
   if (!titlebar) {
-    for (const selector of titlebarSelectors) {
-      const list = (card || container).querySelectorAll(selector);
-      for (let i = 0; i < list.length; i++) {
-        const el = list[i];
-        if (posterImg.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) {
-          titlebar = el;
-          break;
-        }
-      }
-      if (titlebar) break;
-    }
-  }
-  if (!titlebar) {
-    for (const selector of titlebarSelectors) {
-      titlebar = (card || container).querySelector(selector);
-      if (titlebar) break;
-    }
+    return;
   }
 
-  if (!titlebar) return;
-  if (card && !card.contains(titlebar)) return;
+  let detailLink =
+    posterImg.closest('a[href^="stremio:///detail/"], a[href*="#/detail/"]') ||
+    itemRoot.querySelector('a[href^="stremio:///detail/"], a[href*="#/detail/"]');
 
-  // Get the original title text
-  const titleElement = titlebar.querySelector('[class*="title"]') || titlebar;
-  let originalTitle = titleElement.textContent.trim();
-  if (!originalTitle && posterImg) {
-    const altTitle = posterImg.getAttribute("alt");
-    if (altTitle && altTitle.trim()) {
-      originalTitle = altTitle.trim();
-    }
-  }
-  if (!originalTitle && posterImg) {
-    const fallbackTitle = posterImg.getAttribute("title");
-    if (fallbackTitle && fallbackTitle.trim()) {
-      originalTitle = fallbackTitle.trim();
-    }
+  detailLink = resolveTileLinks(posterImg, detailLink, itemRoot);
+
+  const slotKey = computeTitlebarSlotKey(posterImg, detailLink, itemRoot);
+  if (!slotKey) {
+    return;
   }
 
-  // Find associated detail link (used for ID/type detection)
+  if (titlebar.dataset.enhancedSlotKey !== slotKey) {
+    clearEnhancedState(titlebar);
+    titlebar.dataset.enhancedSlotKey = slotKey;
+  }
+
+  let originalTitle = readNativeTitle(itemRoot, posterImg, detailLink, titlebar);
   if (!originalTitle && detailLink) {
     const linkTitle =
       detailLink.getAttribute("title") || detailLink.textContent;
@@ -396,12 +400,23 @@ async function enhanceContainer(container) {
     }
   }
 
-  if (!originalTitle) return;
+  const imdbId = slotKey;
+  await applyTitlebarEnhancement(
+    titlebar,
+    originalTitle,
+    imdbId,
+    detailLink,
+    slotKey,
+  );
+}
 
-  const imdbId = extractImdbId(posterImg, detailLink, card || container);
-  if (!imdbId) return;
-
-  // Check if already enhanced with correct content (like covers plugin)
+async function applyTitlebarEnhancement(
+  titlebar,
+  originalTitle,
+  imdbId,
+  detailLink,
+  slotKey,
+) {
   const now = Date.now();
   const retryAt = parseInt(titlebar.dataset.enhancedRetryAt || "0", 10);
   if (retryAt && now < retryAt) {
@@ -413,11 +428,11 @@ async function enhanceContainer(container) {
   const pending = titlebar.dataset.enhancedPending === "true";
   const complete = titlebar.dataset.enhancedComplete === "true";
 
-  if (currentId !== imdbId) {
+  if (currentId !== imdbId || titlebar.dataset.enhancedSlotKey !== slotKey) {
     attempts = 0;
   } else {
     if (complete) {
-      return; // Already enhanced correctly
+      return;
     }
     if (pending) {
       const updatedAt = parseInt(titlebar.dataset.enhancedUpdatedAt || "0", 10);
@@ -433,6 +448,7 @@ async function enhanceContainer(container) {
   titlebar.dataset.enhancedPending = "true";
   titlebar.dataset.enhancedComplete = "false";
   titlebar.dataset.enhancedId = imdbId;
+  titlebar.dataset.enhancedFetchToken = `${slotKey}|${now}`;
   delete titlebar.dataset.enhancedRetryAt;
 
   console.log(`Enhancing: "${originalTitle}" with IMDb ID: ${imdbId}`);
@@ -441,7 +457,7 @@ async function enhanceContainer(container) {
   titlebar.classList.add("enhanced-title-bar");
 
   // Store original content if not already stored
-  if (!titlebar.dataset.originalContent) {
+  if (!titlebar.dataset.originalContent && !titlebar.classList.contains("enhanced-title-bar")) {
     titlebar.dataset.originalContent = titlebar.innerHTML;
   }
 
@@ -450,7 +466,7 @@ async function enhanceContainer(container) {
 
   const title = document.createElement("div");
   title.className = "enhanced-title";
-  title.textContent = originalTitle;
+  title.textContent = originalTitle || "…";
   titlebar.appendChild(title);
 
   const metadataContainer = document.createElement("div");
@@ -476,10 +492,19 @@ async function enhanceContainer(container) {
 
   // Fetch and display metadata
   try {
+    const fetchToken = titlebar.dataset.enhancedFetchToken || "";
     const metadata = await resolveMetadata(imdbId, typeHints);
 
+    if (
+      titlebar.dataset.enhancedFetchToken !== fetchToken ||
+      titlebar.dataset.enhancedSlotKey !== slotKey ||
+      titlebar.dataset.enhancedId !== imdbId
+    ) {
+      return;
+    }
+
     if (metadata) {
-      if (metadata.title && metadata.title !== originalTitle) {
+      if (metadata.title) {
         title.textContent = metadata.title;
       }
 
@@ -551,9 +576,17 @@ function scheduleEnhancement(mutationTarget) {
   }, 300);
 }
 
+function scheduleLibraryEnhancementRefresh() {
+  restoreLibraryNativeTitlebars();
+}
+
 function init() {
   injectStyles();
-  enhanceMediaContainers();
+  if (isLibraryPage()) {
+    restoreLibraryNativeTitlebars();
+  } else {
+    enhanceMediaContainers();
+  }
 
   if (mutationObserver) {
     mutationObserver.disconnect();
@@ -582,6 +615,26 @@ function init() {
       enhanceMediaContainers();
     }
   }, 5000);
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      const chip = event.target?.closest?.(
+        '[class*="library-container"] [class*="chip-"]:not([data-sc-custom-folder-tab])',
+      );
+      if (!chip) return;
+      setTimeout(scheduleLibraryEnhancementRefresh, 120);
+    },
+    true,
+  );
+
+  window.addEventListener("hashchange", () => {
+    if (isLibraryPage()) {
+      restoreLibraryNativeTitlebars();
+      return;
+    }
+    scheduleEnhancement();
+  });
 }
 
 if (document.readyState === "loading") {

@@ -94,7 +94,6 @@
 
   async function togglePlugin(fileRef, toggle) {
     const h = helpers();
-    const p = pluginsApi();
     if (!h.isPluginEnabled || !h.disablePlugin || !h.enablePlugin) return;
 
     const enabled = h.isPluginEnabled(fileRef);
@@ -178,7 +177,6 @@
 
     const host = document.getElementById(HOST_ID);
     if (!host) return;
-
     if (host.dataset.pluginsBuilt === '1') return;
     await buildPluginList(host);
   }
