@@ -22,7 +22,6 @@ Current release: **2.3.0**
   - [📂 Install paths](#-install-paths)
   - [📋 Requirements](#-requirements)
   - [🗑️ Uninstall](#️-uninstall)
-- [🧑‍💻 Build from source (developers)](#-build-from-source-developers)
 - [🔒 Privacy and local data](#-privacy-and-local-data)
 - [🙏 Credits](#-credits)
 - [💬 Feedback](#-feedback)
@@ -230,7 +229,7 @@ Optionally delete `%APPDATA%\MyStremio\` to remove all local user data.
 
 ---
 
-## 🧑‍💻 Build from source (developers)
+### 🧑‍💻 Build from source (developers)
 
 Requires Rust (MSVC), Visual Studio Build Tools, Inno Setup 6, Node.js with pnpm (optional, for Web UI rebuild), and an installed Stremio Desktop runtime (for `libmpv-2.dll`).
 
