@@ -65,13 +65,19 @@ If you want to support my work you can leave a small tip on [ko-fi](https://ko-f
 
 The board includes a hero section with rotating titles. The Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme) and just slightly optimized by me.
 
+<p align="center">
+  <img src="./images/01-board-hero.png" alt="Board Hero Home" width="1000"/>
+</p>
+
 
 
 ### 🖱️ Hover metadata in catalogs
 
    While browsing catalogs, hover cards show key information (plot, genres, cast) without forcing a page change.
-   
-  
+
+<p align="center">
+  <img src="./images/02-catalog-hover.png" alt="Hover Metadata in Catalogs" width="1000"/>
+</p>
 
 
 
@@ -80,12 +86,20 @@ The board includes a hero section with rotating titles. The Theme is made by [Fx
 The Data Enrichment Plugin by MrBlu03 (if TMDB API-Key is set) offers an enhanced detail page with cast and similar titles.
 The StreamUI plugin offers a clean and modern sidebar with folders to pick streams from. (The plugin works for the follwing addons: Most torrent addons, [WatchHub](https://stremio-addons.net/addons/watchhub), [Ratings Aggregator](https://stremio-addons.net/addons/ratings-aggregator), [IMDb Ratings](https://stremio-addons.net/addons/imdb-ratings), [AfterCredits](https://aftercredits.almosteffective.com/configure.html)).
 
+<p align="center">
+  <img src="./images/03-detail-metadata-stream-sidebar.png" alt="Detail View with Metadata and Stream Sidebar" width="1000"/>
+</p>
+
 
 
 ### 🌐 Favorite subtitle and audio languages
 
 Inside player settings, you can define favorite subtitle and audio languages that act as your preferred language pool.
 This preference layer is used by the quick language actions shown in the next section.
+
+<p align="center">
+  <img src="./images/05-favorite-languages-subtitles.png" alt="Favorite Subtitle and Audio Languages" width="1000"/>
+</p>
 
 
 
@@ -94,11 +108,19 @@ This preference layer is used by the quick language actions shown in the next se
 Quick Select reads your favorites and exposes them as one-click subtitle/audio buttons, so switching language is fast and consistent.
 In short: favorites define what is available, Quick Select is the runtime shortcut layer that applies those preferences immediately.
 
+<p align="center">
+  <img src="./images/06-quick-settings.png" alt="Quick Select Language Shortcuts" width="1000"/>
+</p>
+
 
 
 ### ⚙️ Settings: Plugins
 
 Plugins can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and communtiy made plugins built into to installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: Enhanced Title Bar by Fxy, EnhancedCovers by Fxy, SlashtoSearch by REVENGE977. A few of other plugins are slightly tuned to fit into MyStremio including: Dynamic Hero by Fxy, Context Menu Fix by MrBlu03, Data Enrichment by MrBlu03, TheIntroDB by TheIntroDB.
+
+<p align="center">
+  <img src="./images/07-01-settings-themes-plugins.png" alt="Settings: Plugins" width="1000"/>
+</p>
 
 
 
@@ -106,11 +128,19 @@ Plugins can be managed directly from settings, including quick access to the plu
 
 Inside **Settings → MyStremio**, you get central controls for buffer/preload, library export/import, and Discord Rich Presence.
 
+<p align="center">
+  <img src="./images/08-01-settings-preload-library-discord.png" alt="Settings: Preload, Library Backup, Discord" width="1000"/>
+</p>
+
 
 
 ### ⏱️ TheIntroDB timestamp submission
 
 Contribute segment timestamps to TheIntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
+
+<p align="center">
+  <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB Timestamp Submission" width="1000"/>
+</p>
 
 
 
