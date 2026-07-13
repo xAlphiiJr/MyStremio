@@ -22,8 +22,6 @@ Current release: **2.3.0**
   - [📂 Install paths](#-install-paths)
   - [📋 Requirements](#-requirements)
   - [🗑️ Uninstall](#️-uninstall)
-  - [🎬 First-time setup](#-first-time-setup)
-- [🎨 Themes and plugins (manual files)](#-themes-and-plugins-manual-files)
 - [🧑‍💻 Build from source (developers)](#-build-from-source-developers)
 - [🔒 Privacy and local data](#-privacy-and-local-data)
 - [🙏 Credits](#-credits)
