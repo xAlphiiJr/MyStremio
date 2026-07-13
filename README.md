@@ -16,6 +16,7 @@ Current release: **2.3.0**
   - [🪄 UI](#-ui)
   - [⚙️ Settings](#-settings)
   - [🎞️ Addon Manager](#-addon-manager)
+  - [📺 Player](#-player)
 - [🛠️ Patch Notes](#️-patch-notes)
 - [💾 Installation](#-installation)
   - [📂 Install paths](#-install-paths)
@@ -136,22 +137,25 @@ How to define favorites is explained in the section below.
 Inside **player** settings, you can define favorite subtitle and audio languages that act as your preferred language pool.
 This preference layer is used by the quick language actions shown in the previous section.
 
+### 📺 Player
+
+#### ⏩ Seek buttons plugin
+
+Configurable skip-back and skip-forward controls in the player bar — useful for quick rewinds or jumping ahead without scrubbing. The skip interval can be changed in the settings: MyStremio → Plugins → Player → Seek Buttons.
+
+#### 🔆 Brightness slider
+
+Built in brightness slider to dim the video while watching without the need to change monitor/screen/tv settings.
+
+#### ⏳ Hover Timestamps
+
+Built in timestamps when hovering the seek bar in the player.
+
 
 ### 🎞️Addon Manager
 
 [Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio and optionally disable specific sources (for example Cinemeta).
 
-### ⏩ Seek buttons plugin
-
-Configurable skip-back and skip-forward controls in the player bar — useful for quick rewinds or jumping ahead without scrubbing. The skip interval can be changed in the settings: MyStremio → Plugins → Player → Seek Buttons.
-
-### 🔆 Brightness slider
-
-Built in brightness slider to dim the video while watching without the need to change monitor/screen/tv settings.
-
-### ⏳ Hover Timestamps
-
-Built in timestamps when hovering the seek bar in the player.
 
 ---
 
