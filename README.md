@@ -31,8 +31,6 @@ Current release: **2.3.0**
 
 ---
 
-
-
 ### ❓ How MyStremio differs from official Stremio
 
 -MyStremio uses MPV as the native video player
@@ -51,18 +49,13 @@ Current release: **2.3.0**
 
 ---
 
-
-
 ### ❤️ Support
 
 If you want to support my work you can leave a small tip on [ko-fi](https://ko-fi.com/xalphiijr), I would really appreciate it! <3 
 
 ---
 
-
-
 ## 🚀 Features
-
 ### 🪄 UI
 MyStremio offers its own UI enhancements and combines it with already existing plugins made by the communtiy.
 
@@ -74,8 +67,6 @@ The board includes a hero section with rotating titles. The Theme is made by [Fx
   <img src="./images/01-board-hero.png" alt="Board Hero Home" width="1000"/>
 </p>
 
-
-
 #### 🖱️ Hover metadata in catalogs
 
    While browsing catalogs, hover cards show key information (plot, genres, cast) without forcing a page change.
@@ -83,8 +74,6 @@ The board includes a hero section with rotating titles. The Theme is made by [Fx
 <p align="center">
   <img src="./images/02-catalog-hover.png" alt="Hover Metadata in Catalogs" width="1000"/>
 </p>
-
-
 
 #### 📖 Detail view with metadata and stream sidebar
 
@@ -115,16 +104,6 @@ In the picture below you can see the MyStremio section in the settings. These in
   
 - **Discord** Rich Presence by [REVENGE977](https://github.com/REVENGE977/) enhances the native Discord integration and shows additional info.
 
-
-
-#### ⏱️ TheIntroDB/IntroDB timestamp submission
-
-Contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
-
-<p align="center">
-  <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB Timestamp Submission" width="1000"/>
-</p>
-
 #### ⚡ Quick Select
 
 Quick Select reads your favorites and exposes them as one-click subtitle/audio buttons, so switching language is fast and consistent.
@@ -142,6 +121,15 @@ This preference layer is used by the quick language actions shown in the previou
 ---
 
 ### 📺 Player
+MyStremio offers some qualitiy of life changes directly built into the player.
+
+#### ⏱️ TheIntroDB/IntroDB timestamp submission
+
+Contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
+
+<p align="center">
+  <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB Timestamp Submission" width="1000"/>
+</p>
 
 #### ⏩ Seek buttons plugin
 
@@ -161,10 +149,7 @@ Built in timestamps when hovering the seek bar in the player.
 
 [Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio and optionally disable specific sources (for example Cinemeta).
 
-
 ---
-
-
 
 ### 💡 Planned Features
 
@@ -173,19 +158,12 @@ Built in timestamps when hovering the seek bar in the player.
 
 ---
 
-
-
 ## 🛠️ Patch Notes
-
-
-
 ### 2.3.0
 
 - **IntroDB integration** — TheIntroDB plugin now loads skip segments from both [TheIntroDB](https://theintrodb.org/) and [IntroDB](https://introdb.app/), with separate API keys, contributor target selection, and a shell-side IntroDB proxy to bypass browser CORS limits.
 - **Library title fix** — Library items now show the correct title reliably across navigation and route changes.
 - **UI scaling settings** — New **Settings → Interface → UI Scaling** dropdown (75%–200%), independent of Windows display scaling, persisted across restarts via WebView2 zoom.
-
-
 
 ### 2.2.9
 
@@ -210,8 +188,6 @@ Built in timestamps when hovering the seek bar in the player.
 
 ---
 
-
-
 ### Known Issues
 
 - **First stream playback:** On the first stream start after launching the app, the video may remain frozen on the first frame. One click into the seek bar fixes the issue.
@@ -220,7 +196,6 @@ Built in timestamps when hovering the seek bar in the player.
 - **Hover timestamps:** When starting a stream from the "Continue Watching" segment on the board, the hover timestamps won't load. Starting the stream from the details page fixes this problem.
 
 ---
-
 
 
 ## 💾 Installation
@@ -234,7 +209,6 @@ Built in timestamps when hovering the seek bar in the player.
   - WebView2 runtime (if missing)
   - Protocol handlers (`stremio://`, `magnet:`, optional `.torrent`)
 4. Launch MyStremio from the Start menu or desktop shortcut.
-
 
 
 ### 📂 Install paths
@@ -251,41 +225,12 @@ Built in timestamps when hovering the seek bar in the player.
 - Optional API keys for plugins (for example TMDB, TheIntroDB)
 
 
-
 ### 🗑️ Uninstall
 
 Use **Windows Apps & Features** or the Start menu uninstaller.
 Optionally delete `%APPDATA%\MyStremio\` to remove all local user data.
 
 ---
-
-
-
-## 🎬 First-time setup
-
-1. Install and launch MyStremio.
-2. Sign in with your Stremio account.
-3. Open **Settings → MyStremio** and configure optional items:
-  - Preload/buffer
-  - Plugins
-  - Discord Rich Presence
-  - Plugin API keys (TheIntroDB for timestamp submission)
-4. Create library folders and use JSON import/export when needed.
-
----
-
-
-
-## 🎨 Plugins (manual files)
-
-1. Open **Settings → MyStremio**.
-2. Click **Open themes/plugins folder**.
-3. Place your tplugin files in that folder.
-4. Toggle the switch and press CTRL+R to reload the app.
-
----
-
-
 
 ## 🧑‍💻 Build from source (developers)
 
@@ -302,8 +247,6 @@ The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle
 
 ---
 
-
-
 ## 🔒 Privacy and local data
 
 - API keys, personal setting sand library structure are stored locally in `%APPDATA%\MyStremio\`.
@@ -312,11 +255,9 @@ The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle
 
 ---
 
-
-
 ## 🙏 Credits
 
-MyStremio is based on the following independent community projects:
+MyStremio includes parts of the following independent community projects:
 
 - [REVENGE977/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced)
 - [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme)
@@ -324,7 +265,7 @@ MyStremio is based on the following independent community projects:
 - [TheIntroDB](https://theintrodb.org/)
 - [IntroDB](https://introdb.app/)
 
-These projects were important inspiration, and I used many of their features for my own custom build.
+These are the projects I used as inspiration and some of their features for my own custom build. Definetly check out TheIntroDB and IntroDB, both of them deliver intro timestamps for us to enjoy for free.
 
 ---
 
