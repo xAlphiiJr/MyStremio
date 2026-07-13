@@ -113,7 +113,7 @@ Quick Select reads your favorites and exposes them as one-click subtitle/audio b
 In short: favorites define what is available, Quick Select is the runtime shortcut layer that applies those preferences immediately.
 
 <p align="center">
-  <img src="./images/06-quick-settings.png" alt="Quick Select Language Shortcuts" width="50%"/>
+  <img src="./images/06-quick-settings.png" alt="Quick Select Language Shortcuts" width="1000"/>
 </p>
 
 
@@ -122,7 +122,7 @@ In short: favorites define what is available, Quick Select is the runtime shortc
 In the picture below you can see the MyStremio section in the settings. These include settings for plugins, buffering, library and discord.
 
 <p align="center">
-  <img src="./images/07-01-settings-themes-plugins.png" alt="Settings: Plugins" width="1000"/>
+  <img src="./images/07-01-settings-themes-plugins.png" alt="Settings: Plugins" width="50%"/>
 </p>
 
 - **Plugins** can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and communtiy made plugins built into to installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: Enhanced Title Bar by Fxy, EnhancedCovers by Fxy, SlashtoSearch by REVENGE977. A few of other plugins are slightly tuned to fit into MyStremio including: Dynamic Hero by Fxy, Context Menu Fix by MrBlu03 and Data Enrichment by MrBlu03.
