@@ -17,7 +17,7 @@ Current release: **2.3.0**
   - [⚙️ Settings](#-settings)
   - [📺 Player](#-player)
   - [🎞️ Addon Manager](#-addon-manager)
-- [🛠️ Patch Notes](#️-patch-notes)
+- [🛠️ Patch Notes](#-patch-notes)
 - [💾 Installation](#-installation)
   - [📂 Install paths](#-install-paths)
   - [📋 Requirements](#-requirements)
