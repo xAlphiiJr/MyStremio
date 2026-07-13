@@ -113,7 +113,7 @@ Quick Select reads your favorites and exposes them as one-click subtitle/audio b
 In short: favorites define what is available, Quick Select is the runtime shortcut layer that applies those preferences immediately.
 
 <p align="center">
-  <img src="./images/06-quick-settings.png" alt="Quick Select Language Shortcuts" width="1000"/>
+  <img src="./images/06-quick-settings.png" alt="Quick Select Language Shortcuts" width="50%"/>
 </p>
 
 
@@ -133,24 +133,6 @@ In the picture below you can see the MyStremio section in the settings. These in
   
 - **Discord** Rich Presence by [REVENGE977](https://github.com/REVENGE977/) enhances the native Discord integration and shows additional info.
 
-<table>
-  <tr>
-    <td valign="top">
-
-<p><strong>Plugins</strong> can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and community-made plugins built into the installer...</p>
-
-<p><strong>Preload</strong> settings determine how much of the video is buffered ahead...</p>
-
-<p><strong>Library</strong> JSON can be imported or exported...</p>
-
-<p><strong>Discord</strong> Rich Presence by <a href="https://github.com/REVENGE977">REVENGE977</a> enhances the native Discord integration...</p>
-
-    </td>
-    <td valign="top">
-      <img src="./images/07-01-settings-themes-plugins.png" width="500">
-    </td>
-  </tr>
-</table>
 
 
 #### ⏱️ TheIntroDB/IntroDB timestamp submission
