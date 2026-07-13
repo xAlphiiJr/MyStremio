@@ -125,26 +125,18 @@ In the picture below you can see the MyStremio section in the settings. These in
   <img src="./images/07-01-settings-themes-plugins.png" alt="Settings: Plugins" width="1000"/>
 </p>
 
-- **Plugins** can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and communtiy made plugins built into to installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: Enhanced Title Bar by Fxy, EnhancedCovers by Fxy, SlashtoSearch by REVENGE977. A few of other plugins are slightly tuned to fit into MyStremio including: Dynamic Hero by Fxy, Context Menu Fix by MrBlu03, Data Enrichment by MrBlu03, TheIntroDB by TheIntroDB.
+- **Plugins** can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and communtiy made plugins built into to installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: Enhanced Title Bar by Fxy, EnhancedCovers by Fxy, SlashtoSearch by REVENGE977. A few of other plugins are slightly tuned to fit into MyStremio including: Dynamic Hero by Fxy, Context Menu Fix by MrBlu03 and Data Enrichment by MrBlu03.
 
+- **Preload** settings determine how much of the video gets bufferd ahead. You can chose from buffering only the next 10 seconds or the entire video. This currently works for torrent/debrid streams and is not designed for usenet or http. That doesn't mean it won't work on those, I just can't test it as I'm not using usenet/http.
 
-
-
-
-
-#### ⚙️ Settings: preload, library backup, Discord
-
-Inside **Settings → MyStremio**, you get central controls for buffer/preload, library export/import, and Discord Rich Presence.
-
-<p align="center">
-  <img src="./images/08-01-settings-preload-library-discord.png" alt="Settings: Preload, Library Backup, Discord" width="1000"/>
-</p>
-
+- **Library** json can be importet or exportet to keep your custom library entries safe or import them on another device. Updating the app won't remove your library entries, but if you decide to uninstall MyStremio and reinstall it in the future you will need the json to get your custom library back.
+  
+- **Discord** Rich Presence by [REVENGE977](https://github.com/REVENGE977/) enhances the native Discord integration and shows additional info.
 
 
 #### ⏱️ TheIntroDB/IntroDB timestamp submission
 
-Contribute segment timestamps to TheIntroDB and IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
+Contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
 
 <p align="center">
   <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB Timestamp Submission" width="1000"/>
