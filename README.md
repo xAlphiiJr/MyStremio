@@ -121,7 +121,7 @@ In short: favorites define what is available, Quick Select is the runtime shortc
 #### 🛠️ MyStremio
 In the picture below you can see the MyStremio section in the settings. These include settings for plugins, buffering, library and discord.
 
-<p align="right">
+<p align="center">
   <img src="./images/07-01-settings-themes-plugins.png" alt="Settings: Plugins" width="50%"/>
 </p>
 
