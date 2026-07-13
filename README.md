@@ -13,6 +13,7 @@ Current release: **2.3.0**
 - [📌 Table of Contents](#-table-of-contents)
 - [❤️ Support](#-support)
 - [🚀 Features](#-features)
+  - [🪄 UI](#-ui)
 - [🛠️ Patch Notes](#️-patch-notes)
 - [💾 Installation](#-installation)
   - [📂 Install paths](#-install-paths)
@@ -59,9 +60,9 @@ If you want to support my work you can leave a small tip on [ko-fi](https://ko-f
 
 ## 🚀 Features
 
+### 🪄 UI
 
-
-### 🏠 Board hero home view
+#### 🏠 Board hero home view
 
 The board includes a hero section with rotating titles. The Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme) and just slightly optimized by me.
 
