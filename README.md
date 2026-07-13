@@ -132,6 +132,28 @@ In the picture below you can see the MyStremio section in the settings. These in
 - **Library** json can be importet or exportet to keep your custom library entries safe or import them on another device. Updating the app won't remove your library entries, but if you decide to uninstall MyStremio and reinstall it in the future you will need the json to get your custom library back.
   
 - **Discord** Rich Presence by [REVENGE977](https://github.com/REVENGE977/) enhances the native Discord integration and shows additional info.
+```html
+<table>
+<tr>
+<td width="55%" valign="top">
+
+- **Plugins** can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and community-made plugins built into the installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: **Enhanced Title Bar** by Fxy, **EnhancedCovers** by Fxy, and **SlashtoSearch** by REVENGE977. A few other plugins have been slightly tuned to better fit MyStremio, including **Dynamic Hero** by Fxy, **Context Menu Fix** by MrBlu03, and **Data Enrichment** by MrBlu03.
+
+- **Preload** settings determine how much of the video is buffered ahead. You can choose to buffer only the next 10 seconds or the entire video. This currently works for torrent/debrid streams and is not designed for Usenet or HTTP. That doesn't necessarily mean it won't work with those sources—I just can't test them since I don't use Usenet or HTTP.
+
+- **Library** JSON can be imported or exported to keep your custom library entries safe or transfer them to another device. Updating the app won't remove your library entries, but if you uninstall MyStremio and reinstall it later, you'll need the exported JSON file to restore them.
+
+- **Discord** Rich Presence by [REVENGE977](https://github.com/REVENGE977) enhances the native Discord integration and displays additional information.
+
+</td>
+<td width="45%" align="center" valign="top">
+
+<img src="./images/07-01-settings-themes-plugins.png" alt="Settings: Plugins" width="100%">
+
+</td>
+</tr>
+</table>
+```
 
 
 #### ⏱️ TheIntroDB/IntroDB timestamp submission
