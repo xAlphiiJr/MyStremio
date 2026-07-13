@@ -37,7 +37,7 @@ Current release: **2.3.0**
 
 -Better stream organization and metadata presentation (enrichment panels and cleaner stream UI behavior)
 
--Integrated Cinebye management (manage addons, optional Cinemeta disable)
+-Integrated Cinebye addon manager (manage addons, disable Cinemeta)
 
 -Custom library groups with JSON import/export
 
