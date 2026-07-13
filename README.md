@@ -33,7 +33,7 @@ Current release: **2.3.0**
 
 -MyStremio uses MPV as the native video player
 
--Improved player tooling (hover timestamp, TheIntroDB/auto-skip options, controllable preload behavior, brightness control)
+-Improved player tooling (hover timestamp, TheIntroDB/IntroDB with auto-skip options, controllable preload behavior, brightness control)
 
 -Better stream organization and metadata presentation (enrichment panels and cleaner stream UI behavior)
 
@@ -134,9 +134,9 @@ Inside **Settings → MyStremio**, you get central controls for buffer/preload, 
 
 
 
-### ⏱️ TheIntroDB timestamp submission
+### ⏱️ TheIntroDB/IntroDB timestamp submission
 
-Contribute segment timestamps to TheIntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
+Contribute segment timestamps to TheIntroDB and IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone.
 
 <p align="center">
   <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB Timestamp Submission" width="1000"/>
@@ -323,6 +323,7 @@ MyStremio is based on the following independent community projects:
 - [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme)
 - [Bo0ii/StreamGo](https://github.com/Bo0ii/StreamGo)
 - [TheIntroDB](https://theintrodb.org/)
+- [IntroDB]((https://introdb.app/)
 
 These projects were important inspiration, and I used many of their features for my own custom build.
 
