@@ -130,17 +130,21 @@ Contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open 
   <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB Timestamp Submission" width="50%"/>
 </p>
 
-#### ⏩ Seek buttons plugin
+#### ⏩ Seek Buttons Plugin
 
 Configurable skip-back and skip-forward controls in the player bar — useful for quick rewinds or jumping ahead without scrubbing. The skip interval can be changed in the settings: MyStremio → Plugins → Player → Seek Buttons.
 
-#### 🔆 Brightness slider
+#### 🔆 Brightness Slider Plugin
 
-Built in brightness slider to dim the video while watching without the need to change monitor/screen/tv settings.
+Built in plugin that adds a brightness slider to dim the video while watching without the need to change monitor/screen/tv settings.
 
-#### ⏳ Hover Timestamps
+#### ⏳ Hover Timestamps Plugin
 
-Built in timestamps when hovering the seek bar in the player.
+Built in plugin that adds timestamps when hovering the seek bar in the player.
+
+#### 👤 Cast Overlay Plugin
+
+Built in plugin that adds a cast section directly into the player.
 
 ---
 
