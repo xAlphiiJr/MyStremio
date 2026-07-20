@@ -88,14 +88,11 @@ The StreamUI plugin offers a clean and modern sidebar with folders to pick strea
 MyStremio comes with a few custom settings including Favorite Languages, Plugins and Buffering.
 
 #### 🛠️ MyStremio
-In the picture below you can see the MyStremio section in the settings. These include settings for plugins, buffering, library and discord.
+In the Stremio settings you will find the **MyStremio** section. These include settings for API Keys, plugins, buffering, library and discord.
 
-<p align="center">
-  <img src="./images/07-01-settings-themes-plugins.png" alt="Settings: Plugins" width="50%"/>
-</p>
+- **API Keys** are managed centrally under Settings → MyStremio → API Keys (one key for all installed plugins that need it).
 
-- Plugins can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and communtiy made plugins built into to installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: Enhanced Title Bar by Fxy, EnhancedCovers by Fxy, SlashtoSearch by REVENGE977. A few of other plugins are slightly tuned to fit into MyStremio including: Dynamic Hero by Fxy, Context Menu Fix by MrBlu03 and Data Enrichment by MrBlu03.
-- **API Keys** are managed centrally under Settings → MyStremio → API Keys (one key per service for all installed plugins that need it).
+- **Plugins** can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and communtiy made plugins built into to installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: Enhanced Title Bar by Fxy, EnhancedCovers by Fxy, SlashtoSearch by REVENGE977. A few of other plugins are slightly tuned to fit into MyStremio including: Dynamic Hero by Fxy, Context Menu Fix by MrBlu03 and Data Enrichment by MrBlu03.
 
 - **Preload** settings determine how much of the video gets bufferd ahead. You can chose from buffering only the next 10 seconds or the entire video. This currently works for torrent/debrid streams and is not designed for usenet or http. That doesn't mean it won't work on those, I just can't test it as I'm not using usenet/http.
 
