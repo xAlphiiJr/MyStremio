@@ -87,6 +87,16 @@ The StreamUI plugin offers a clean and modern sidebar with folders to pick strea
 ### ⚙️ Settings
 MyStremio comes with a few custom settings including Favorite Languages, Plugins and Buffering.
 
+#### ⚡ Quick Select
+
+Quick Select reads your favorites and exposes them as one-click subtitle/audio buttons, so switching language is fast and consistent.
+How to define favorites is explained in the section below.
+
+#### 🌐 Favorite subtitle and audio languages
+
+Inside **player** settings, you can define favorite subtitle and audio languages that act as your preferred language pool.
+This preference layer is used by the quick language actions shown in the previous section.
+
 #### 🛠️ MyStremio
 In the Stremio settings you will find the **MyStremio** section. These include settings for API Keys, plugins, buffering, library and discord.
 
@@ -100,20 +110,6 @@ In the Stremio settings you will find the **MyStremio** section. These include s
   
 - **Discord** Rich Presence by [REVENGE977](https://github.com/REVENGE977/) enhances the native Discord integration and shows additional info.
 
-#### ⚡ Quick Select
-
-Quick Select reads your favorites and exposes them as one-click subtitle/audio buttons, so switching language is fast and consistent.
-How to define favorites is explained in the section below.
-
-<p align="center">
-  <img src="./images/06-quick-settings.png" alt="Quick Select Language Shortcuts" width="1000"/>
-</p> 
-
-#### 🌐 Favorite subtitle and audio languages
-
-Inside **player** settings, you can define favorite subtitle and audio languages that act as your preferred language pool.
-This preference layer is used by the quick language actions shown in the previous section.
-
 ---
 
 ### 📺 Player
@@ -122,10 +118,6 @@ MyStremio offers some qualitiy of life changes directly built into the player.
 #### ⏱️ TheIntroDB/IntroDB timestamp submission
 
 Contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone. You have to set your personal API Key in the plugin settings in order to use this feature!
-
-<p align="center">
-  <img src="./images/10-tidb-timestamp.png" alt="TheIntroDB Timestamp Submission" width="50%"/>
-</p>
 
 #### ⏩ Seek Buttons Plugin
 
