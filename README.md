@@ -113,15 +113,15 @@ In the Stremio settings you will find the **MyStremio** section. These include s
 ---
 
 ### 📺 Player
-MyStremio offers some qualitiy of life changes directly built into the player.
+MyStremio offers some qualitiy of life changes available as plugins so you can enable/disable them to further customize your experience.
 
-#### ⏱️ TheIntroDB/IntroDB timestamp submission
+#### ⏱️ Skip Intro Plugin
 
-Contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone. You have to set your personal API Key in the plugin settings in order to use this feature!
+Built in plugin that allows to receive and contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone. You have to set your personal API Key in the settings in order to use the submit feature!
 
 #### ⏩ Seek Buttons Plugin
 
-Configurable skip-back and skip-forward controls in the player bar — useful for quick rewinds or jumping ahead without scrubbing. The skip interval can be changed in the settings: MyStremio → Plugins → Player → Seek Buttons.
+Built in plugin that adds configurable skip-back and skip-forward controls to the player bar — useful for quick rewinds or jumping ahead without scrubbing. The skip interval can be changed in the settings: MyStremio → Plugins → Player → Seek Buttons.
 
 #### 🔆 Brightness Slider Plugin
 
