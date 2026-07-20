@@ -1,7 +1,7 @@
 /**
  * @name Meta Hover Panel
  * @description Rich movie/series info panel on poster hover using Cinemeta metadata.
- * @version 2.0.2
+ * @version 2.0.3
  * @author MyStremio
  * @category Metadata
  */
@@ -794,7 +794,9 @@
 
   async function getTmdbApiKey() {
     try {
-      return (await window.StremioEnhancedAPI?.getSetting('data-enrichment', 'tmdbApiKey')) || null;
+      const client = window.StremioCustomAPI || window.StremioEnhancedAPI;
+      const value = await client?.getSetting?.('meta-hover-panel', 'tmdbApiKey');
+      return value && String(value).trim() ? String(value).trim() : null;
     } catch {
       return null;
     }
@@ -1149,6 +1151,17 @@
     return Boolean(anchor?.isConnected && trackedAnchor === anchor);
   }
 
+  /**
+   * Hover panels are only for browse surfaces — never on detail/player routes.
+   * @returns {boolean}
+   */
+  function isHoverRouteAllowed() {
+    const hash = String(location.hash || '');
+    if (/#\/(?:detail|metadetails)\b/i.test(hash)) return false;
+    if (/#\/player\b/i.test(hash)) return false;
+    return true;
+  }
+
   function isPointerOverAnchor(anchor, x, y) {
     if (!anchor?.isConnected) return false;
     const rect = anchor.getBoundingClientRect();
@@ -1179,8 +1192,13 @@
   }
 
   async function showPanel(anchor, media) {
+    if (!isHoverRouteAllowed()) {
+      clearHoverState();
+      return;
+    }
     const generation = ++showGeneration;
-    const stillValid = () => generation === showGeneration && isHoverIntentActive(anchor);
+    const stillValid = () =>
+      generation === showGeneration && isHoverIntentActive(anchor) && isHoverRouteAllowed();
 
     removePanel();
     if (!stillValid()) return;
@@ -1254,22 +1272,30 @@
   }
 
   function scheduleHover(anchor) {
-    if (!anchor) return;
+    if (!anchor || !isHoverRouteAllowed()) return;
     trackedAnchor = anchor;
     clearTimeout(hoverTimer);
 
     hoverTimer = setTimeout(async () => {
-      if (!isHoverIntentActive(anchor)) return;
+      if (!isHoverRouteAllowed() || !isHoverIntentActive(anchor)) return;
       const media = await extractMediaInfo(anchor);
-      if (!media || !isHoverIntentActive(anchor)) return;
+      if (!isHoverRouteAllowed() || !media || !isHoverIntentActive(anchor)) return;
       showPanel(anchor, media);
     }, CONFIG.HOVER_DELAY);
   }
 
   function handlePointerMove(event) {
+    if (!isHoverRouteAllowed()) {
+      if (activePanel || trackedAnchor || hoverTimer) clearHoverState();
+      return;
+    }
     if (moveRaf) return;
     moveRaf = requestAnimationFrame(() => {
       moveRaf = null;
+      if (!isHoverRouteAllowed()) {
+        clearHoverState();
+        return;
+      }
       const anchor = getMetaItemAnchor(document.elementFromPoint(event.clientX, event.clientY));
       if (!anchor) {
         clearHoverState();
@@ -1285,6 +1311,19 @@
 
       scheduleHover(anchor);
     });
+  }
+
+  /**
+   * Dismiss immediately on click/press so navigation to detail never flashes the panel.
+   * @param {Event} event
+   * @returns {void}
+   */
+  function handlePointerDown(event) {
+    if (!(event instanceof PointerEvent) || event.button !== 0) return;
+    const anchor = getMetaItemAnchor(event.target);
+    if (anchor || activePanel || trackedAnchor) {
+      clearHoverState();
+    }
   }
 
   function handleScroll() {
@@ -1305,6 +1344,7 @@
     annotateMetaItems();
 
     document.addEventListener('mousemove', handlePointerMove, { passive: true });
+    document.addEventListener('pointerdown', handlePointerDown, true);
     document.addEventListener('mouseleave', clearHoverState);
     window.addEventListener('scroll', handleScroll, true);
     window.addEventListener('resize', () => {
@@ -1316,6 +1356,10 @@
       repositionActivePanel();
     });
     window.addEventListener('hashchange', () => {
+      invalidateCatalogCache();
+      clearHoverState();
+    });
+    window.addEventListener('popstate', () => {
       invalidateCatalogCache();
       clearHoverState();
     });

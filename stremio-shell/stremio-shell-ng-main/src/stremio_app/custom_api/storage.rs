@@ -97,13 +97,35 @@ pub fn read_user_preferences() -> Value {
 }
 
 pub fn save_user_preferences(preferences: &Value) {
-    let normalized = normalize_preferences(preferences.clone());
+    // Many JS callers (persistUserPreferences) omit apiKeys. Preserve the vault
+    // from disk whenever the key is absent so shared keys are not wiped.
+    let mut merged = preferences.clone();
+    if merged.get("apiKeys").is_none() {
+        if let Some(existing_keys) = read_api_keys_from_disk_raw() {
+            if let Some(obj) = merged.as_object_mut() {
+                obj.insert("apiKeys".to_string(), existing_keys);
+            }
+        }
+    }
+    let normalized = normalize_preferences(merged);
     if let Some(parent) = preferences_path().parent() {
         let _ = fs::create_dir_all(parent);
     }
     if let Ok(content) = serde_json::to_string_pretty(&normalized) {
         let _ = fs::write(preferences_path(), content);
     }
+}
+
+/// Reads `apiKeys` from the preferences file without full normalize (no recursion).
+fn read_api_keys_from_disk_raw() -> Option<Value> {
+    let path = preferences_path();
+    if !path.exists() {
+        return None;
+    }
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+        .and_then(|value| value.get("apiKeys").cloned())
 }
 
 pub fn read_autoskip_settings() -> Value {
@@ -387,7 +409,8 @@ fn default_preferences() -> Value {
             "tmdbNoticeShown": false,
             "defaultsApplied": false
         },
-        "uiScale": 100
+        "uiScale": 100,
+        "apiKeys": {}
     })
 }
 
@@ -527,6 +550,7 @@ fn normalize_preferences(value: Value) -> Value {
         .map(str::to_string)
         .unwrap_or_default();
     let ui_scale = normalize_ui_scale_percent(value.get("uiScale"));
+    let api_keys = super::api_keys::normalize_api_keys(value.get("apiKeys"));
 
     json!({
         "enabledPlugins": enabled,
@@ -540,7 +564,8 @@ fn normalize_preferences(value: Value) -> Value {
         "language": language,
         "onboarding": onboarding,
         "authProfile": auth_profile,
-        "uiScale": ui_scale
+        "uiScale": ui_scale,
+        "apiKeys": api_keys
     })
 }
 

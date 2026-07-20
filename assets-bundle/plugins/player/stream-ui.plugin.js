@@ -969,11 +969,18 @@
    */
   async function getTmdbApiKeyForRatings() {
     const client = window.StremioCustomAPI || window.StremioEnhancedAPI;
-    if (!client?.getSetting) return null;
+    if (!client) return null;
     try {
-      for (const base of ['data-enrichment', 'cast-overlay']) {
-        const key = await client.getSetting(base, 'tmdbApiKey');
-        if (key && String(key).trim()) return String(key).trim();
+      if (client.getApiKey) {
+        const shared = await client.getApiKey('tmdb');
+        if (shared && String(shared).trim()) return String(shared).trim();
+      }
+      // Fallback for older shells: any plugin that declares TMDB resolves from the vault.
+      if (client.getSetting) {
+        for (const base of ['data-enrichment', 'cast-overlay', 'meta-hover-panel', 'tidb']) {
+          const key = await client.getSetting(base, 'tmdbApiKey');
+          if (key && String(key).trim()) return String(key).trim();
+        }
       }
     } catch (_) {}
     return null;

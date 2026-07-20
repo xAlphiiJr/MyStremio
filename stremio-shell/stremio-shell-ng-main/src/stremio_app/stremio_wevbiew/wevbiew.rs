@@ -299,9 +299,11 @@ impl PartialUi for WebView {
 
                             for script in [
                                 include_str!("../../../assets/custom_startup_guard.js"),
+                                include_str!("../../../assets/custom_route_change.js"),
                                 include_str!("../../../assets/custom_bootstrap.js"),
                                 include_str!("../../../assets/custom_scroll_restore.js"),
                                 include_str!("../../../assets/custom_player_glass.js"),
+                                include_str!("../../../assets/custom_dead_player_nav.js"),
                                 include_str!("../../../assets/custom_player_loading.js"),
                                 include_str!("../../../assets/custom_liquid_glass_nav.js"),
                                 include_str!("../../../assets/custom_hero_loading.js"),
@@ -316,6 +318,7 @@ impl PartialUi for WebView {
                                 include_str!("../../../assets/custom_settings_ui.js"),
                                 include_str!("../../../assets/custom_ui_scale.js"),
                                 include_str!("../../../assets/custom_api_key_settings.js"),
+                                include_str!("../../../assets/custom_api_keys_hub.js"),
                                 include_str!("../../../assets/custom_playback_bootstrap.js"),
                                 include_str!("../../../assets/custom_stream_cache.js"),
                                 include_str!("../../../assets/custom_playback_api.js"),

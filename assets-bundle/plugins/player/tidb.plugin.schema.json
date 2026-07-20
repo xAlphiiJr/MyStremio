@@ -9,7 +9,7 @@
   {
     "defaultValue": "",
     "key": "tidb_api_key",
-    "label": "API Key",
+    "label": "TheIntroDB API Key",
     "type": "input"
   },
   {
@@ -22,7 +22,15 @@
   {
     "defaultValue": "",
     "key": "introdb_api_key",
-    "label": "API Key",
+    "label": "IntroDB API Key",
+    "type": "input"
+  },
+  {
+    "defaultValue": "",
+    "description": "Get your free API key at themoviedb.org/settings/api. Used to resolve TMDB IDs when submitting segments.",
+    "key": "tmdbApiKey",
+    "label": "TMDB API Key",
+    "placeholder": "Enter your TMDB API key",
     "type": "input"
   },
   {

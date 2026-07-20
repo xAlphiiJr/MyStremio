@@ -1,3 +1,4 @@
+mod api_keys;
 mod introdb_proxy;
 mod paths;
 mod storage;
@@ -11,10 +12,10 @@ use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
 use storage::{
     clear_registered_schema, get_plugin_config, get_plugin_setting, get_registered_schema,
-    list_plugin_files, list_theme_files, read_asset_metadata, read_plugin_source, read_theme_css,
-    read_autoskip_settings, read_player_volume, read_ui_scale_percent, read_user_preferences,
-    register_plugin_schema, save_autoskip_settings, save_player_volume, save_plugin_setting,
-    save_ui_scale_percent, save_user_preferences,
+    list_plugin_files, list_theme_files, load_registered_schemas, read_asset_metadata,
+    read_plugin_source, read_theme_css, read_autoskip_settings, read_player_volume,
+    read_ui_scale_percent, read_user_preferences, register_plugin_schema, save_autoskip_settings,
+    save_player_volume, save_plugin_setting, save_ui_scale_percent, save_user_preferences,
 };
 
 static REGISTERED_SCHEMAS: OnceLock<Mutex<storage::RegisteredSchemas>> = OnceLock::new();
@@ -124,17 +125,65 @@ pub fn handle_request(message: &Value) -> Option<String> {
         "get-plugin-setting" => {
             let plugin = params.get("pluginBaseName").and_then(|v| v.as_str()).unwrap_or("");
             let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
-            json!(get_plugin_setting(plugin, key))
+            if let Some(shared) = api_keys::resolve_plugin_setting(plugin, key, schemas()) {
+                json!(shared)
+            } else {
+                json!(get_plugin_setting(plugin, key))
+            }
         }
         "get-plugin-config" => {
             let plugin = params.get("pluginBaseName").and_then(|v| v.as_str()).unwrap_or("");
-            json!(get_plugin_config(plugin))
+            let mut config = get_plugin_config(plugin);
+            // Overlay shared API keys so plugins that read full config still see vault values.
+            let registered = get_registered_schema(schemas(), plugin);
+            let schema = match registered {
+                Value::Array(ref fields) if !fields.is_empty() => registered,
+                _ => load_registered_schemas()
+                    .get(plugin)
+                    .cloned()
+                    .unwrap_or_else(|| Value::Array(Vec::new())),
+            };
+            let fields = if let Value::Array(fields) = schema {
+                fields
+            } else {
+                Vec::new()
+            };
+            if let Some(obj) = config.as_object_mut() {
+                for field in fields {
+                    let Some(key) = field.get("key").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
+                    if !api_keys::is_api_key_field(key) {
+                        continue;
+                    }
+                    let service = api_keys::service_id_for_field_key(key);
+                    let value = api_keys::get_api_key(&service);
+                    obj.insert(
+                        key.to_string(),
+                        if value.is_empty() {
+                            Value::Null
+                        } else {
+                            json!(value)
+                        },
+                    );
+                }
+            }
+            json!(config)
         }
         "save-plugin-setting" => {
             let plugin = params.get("pluginBaseName").and_then(|v| v.as_str()).unwrap_or("");
             let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
             let value = params.get("value").cloned().unwrap_or(Value::Null);
-            let config = save_plugin_setting(plugin, key, value);
+            let config = if let Some(saved) = api_keys::save_shared_plugin_setting(key, &value) {
+                // Keep plugin JSON free of secrets; return overlayed config for listeners.
+                let mut config = get_plugin_config(plugin);
+                if let Some(obj) = config.as_object_mut() {
+                    obj.insert(key.to_string(), json!(saved));
+                }
+                config
+            } else {
+                save_plugin_setting(plugin, key, value)
+            };
             return Some(
                 json!({
                     "stremioCustom": true,
@@ -146,6 +195,54 @@ pub fn handle_request(message: &Value) -> Option<String> {
                 })
                 .to_string(),
             );
+        }
+        "list-api-key-services" => api_keys::list_api_key_services(schemas()),
+        "get-api-key" => {
+            let service_id = params.get("serviceId").and_then(|v| v.as_str()).unwrap_or("");
+            json!(api_keys::get_api_key(service_id))
+        }
+        "set-api-key" => {
+            let service_id = params.get("serviceId").and_then(|v| v.as_str()).unwrap_or("");
+            let value = params.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            let saved = api_keys::set_api_key(service_id, value);
+            // Collect plugin bases that use this service so the UI can refresh listeners.
+            let mut plugin_bases = Vec::new();
+            if let Ok(guard) = schemas().lock() {
+                for (plugin_base, schema) in guard.iter() {
+                    let Value::Array(fields) = schema else {
+                        continue;
+                    };
+                    let uses = fields.iter().any(|field| {
+                        field
+                            .get("key")
+                            .and_then(|v| v.as_str())
+                            .map(|key| {
+                                api_keys::is_api_key_field(key)
+                                    && api_keys::service_id_for_field_key(key) == service_id
+                            })
+                            .unwrap_or(false)
+                    });
+                    if uses {
+                        plugin_bases.push(plugin_base.clone());
+                    }
+                }
+            }
+            return Some(
+                json!({
+                    "stremioCustom": true,
+                    "id": id,
+                    "result": saved,
+                    "event": "on-api-key-saved",
+                    "serviceId": service_id,
+                    "pluginBaseNames": plugin_bases,
+                    "payload": saved,
+                })
+                .to_string(),
+            );
+        }
+        "get-plugin-api-key-status" => {
+            let plugin = params.get("pluginBaseName").and_then(|v| v.as_str()).unwrap_or("");
+            api_keys::plugin_api_key_status(plugin, schemas())
         }
         "register-plugin-settings" => {
             let plugin = params.get("pluginBaseName").and_then(|v| v.as_str()).unwrap_or("");

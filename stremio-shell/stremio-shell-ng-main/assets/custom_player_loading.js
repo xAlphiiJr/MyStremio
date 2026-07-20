@@ -449,10 +449,16 @@
     else onPlayerLeave({ silent: true });
   };
 
-  window.addEventListener('hashchange', () => {
+  /**
+   * Enter/leave player session on SPA navigations (HashRouter push/replace).
+   */
+  function onRouteChangeForSession() {
     if (!isPlayerRoute()) onPlayerLeave();
     else onPlayerEnter();
-  });
+  }
+
+  window.addEventListener('hashchange', onRouteChangeForSession);
+  document.addEventListener('stremio-custom-route-change', onRouteChangeForSession);
 
   document.addEventListener('stremio-custom-bootstrap-ready', () => {
     if (shouldEnterPlayerSession()) onPlayerEnter();

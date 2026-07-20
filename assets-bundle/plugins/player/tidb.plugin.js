@@ -1879,7 +1879,13 @@
 		async fetchTmdbIdViaTmdbFind(imdbId, type) {
 			if (!imdbId) return null;
 			const api = this.getSettingsApi();
-			const apiKey = api ? await api.getSetting("data-enrichment", "tmdbApiKey") : null;
+			let apiKey = null;
+			if (api?.getApiKey) {
+				apiKey = await api.getApiKey("tmdb");
+			}
+			if (!apiKey && api?.getSetting) {
+				apiKey = await api.getSetting(PLUGIN_ID, "tmdbApiKey");
+			}
 			if (!apiKey) return null;
 			try {
 				const res = await fetch(
@@ -3161,7 +3167,12 @@
 		async submitToTheIntroDb(segment, startSec, endSec, durationMs, mediaContext) {
 			const body = this.buildSubmissionBody(segment, startSec, endSec, durationMs, mediaContext);
 			if (!body) {
-				const hasTmdbKey = Boolean(await this.getCrossPluginSetting("data-enrichment", "tmdbApiKey"));
+				const hasTmdbKey = Boolean(
+					(this.getSettingsApi()?.getApiKey
+						? await this.getSettingsApi().getApiKey("tmdb")
+						: null) ||
+						(await this.getSetting("tmdbApiKey"))
+				);
 				const badSeason =
 					mediaContext &&
 					mediaContext.type === "tv" &&
@@ -3173,7 +3184,7 @@
 						? "Could not resolve season/episode for this title. Pause playback briefly and try again."
 						: hasTmdbKey
 							? "Could not resolve TMDB ID for this episode (required for TheIntroDB submit). Wait a moment and try again."
-							: "Could not resolve TMDB ID. Add a TMDB API key in Settings (Data Enrichment) or use a Cinemeta/IMDB source."
+							: "Could not resolve TMDB ID. Add a TMDB API key in Settings > MyStremio > API Keys or use a Cinemeta/IMDB source."
 				};
 			}
 

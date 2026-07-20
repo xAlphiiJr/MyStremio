@@ -9,7 +9,7 @@
 
 #define MyAppPublisher "MyStremio"
 #define MyAppCopyright "Copyright (c) " + GetDateTimeString('yyyy', '', '') + " " + MyAppPublisher
-#define MyAppURL "https://github.com/"
+#define MyAppURL "https://github.com/xAlphiiJr/MyStremio"
 #define AssocTorrentExt ".torrent"
 #define AssocTorrentKey StringChange(MyAppName, " ", "") + AssocTorrentExt
 #define AssocTorrentDesc "Bittorrent seed file"

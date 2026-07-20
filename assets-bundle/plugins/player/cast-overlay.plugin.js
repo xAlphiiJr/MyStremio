@@ -70,7 +70,7 @@
   }
 
   /**
-   * Resolves the TMDB API key from this plugin or data-enrichment fallback.
+   * Resolves the TMDB API key from this plugin's own settings only.
    * @returns {Promise<string|null>}
    */
   async function getTmdbApiKey() {
@@ -80,8 +80,6 @@
     try {
       const ownKey = await api.getSetting(PLUGIN_ID, 'tmdbApiKey');
       if (ownKey && String(ownKey).trim()) return String(ownKey).trim();
-      const fallbackKey = await api.getSetting('data-enrichment', 'tmdbApiKey');
-      if (fallbackKey && String(fallbackKey).trim()) return String(fallbackKey).trim();
     } catch (_) {}
 
     return null;
@@ -601,7 +599,7 @@
     const apiKey = await getTmdbApiKey();
     if (!apiKey) {
       setOverlayBodyHtml(
-        '<div class="mystremio-cast-status error">Add a TMDB API key in Cast Overlay or Data Enrichment settings.</div>'
+        '<div class="mystremio-cast-status error">Add a TMDB API key in Settings → MyStremio → API Keys.</div>'
       );
       return;
     }

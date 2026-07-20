@@ -49,6 +49,44 @@
       }
       return;
     }
+    if (data.event === 'on-api-key-saved') {
+      const pluginBases = Array.isArray(data.pluginBaseNames) ? data.pluginBaseNames : [];
+      pluginBases.forEach((pluginBaseName) => {
+        const callbacks = settingsCallbacks.get(pluginBaseName) || [];
+        if (!callbacks.length) return;
+        // Deliver overlayed plugin config so listeners get real key fields (tmdbApiKey, …).
+        const notify = (payload) => {
+          callbacks.forEach((cb) => {
+            try {
+              cb(payload);
+            } catch (error) {
+              console.error('[StremioCustom] api-key settings callback failed', error);
+            }
+          });
+        };
+        if (typeof api?.getPluginConfig === 'function') {
+          api
+            .getPluginConfig(pluginBaseName)
+            .then((config) => notify(config && typeof config === 'object' ? config : { apiKeyServiceId: data.serviceId, value: data.payload }))
+            .catch(() => notify({ apiKeyServiceId: data.serviceId, value: data.payload }));
+        } else {
+          notify({ apiKeyServiceId: data.serviceId, value: data.payload });
+        }
+      });
+      try {
+        document.dispatchEvent(
+          new CustomEvent('mystremio-api-keys-changed', {
+            detail: { serviceId: data.serviceId, value: data.payload, pluginBaseNames: pluginBases },
+          })
+        );
+      } catch (_) {}
+      if (data.id != null && pending.has(data.id)) {
+        const entry = pending.get(data.id);
+        pending.delete(data.id);
+        entry.resolve(data.result ?? true);
+      }
+      return;
+    }
     if (data.id == null) return;
     const entry = pending.get(data.id);
     if (!entry) return;
@@ -120,6 +158,11 @@
     getPlayerVolume: () => invoke('get-player-volume'),
     savePlayerVolume: (settings) => invoke('save-player-volume', settings),
     openExternalUrl: (url) => invoke('open-external-url', { url }),
+    listApiKeyServices: () => invoke('list-api-key-services'),
+    getApiKey: (serviceId) => invoke('get-api-key', { serviceId }),
+    setApiKey: (serviceId, value) => invoke('set-api-key', { serviceId, value }),
+    getPluginApiKeyStatus: (pluginBaseName) =>
+      invoke('get-plugin-api-key-status', { pluginBaseName }),
     invoke,
     info: (pluginBaseName, message) => console.info(`[${pluginBaseName}]`, message),
     warn: (pluginBaseName, message) => console.warn(`[${pluginBaseName}]`, message),
@@ -1185,7 +1228,7 @@
     if (document.getElementById('stremio-custom-playback-guard')) return;
     const script = document.createElement('script');
     script.id = 'stremio-custom-playback-guard';
-    script.textContent = `(function(){function isPlaybackRoute(){return /#\\/player/.test(location.hash||'');}window.stremioCustomIsPlaybackRoute=isPlaybackRoute;window.stremioCustomSuspendBackground=function(){return isPlaybackRoute();};window.addEventListener('hashchange',function(){document.dispatchEvent(new CustomEvent('stremio-custom-playback-route',{detail:{active:isPlaybackRoute()}}));});})();`;
+    script.textContent = `(function(){function isPlaybackRoute(){return /#\\/player/.test(location.hash||'');}function emit(){document.dispatchEvent(new CustomEvent('stremio-custom-playback-route',{detail:{active:isPlaybackRoute()}}));}window.stremioCustomIsPlaybackRoute=isPlaybackRoute;window.stremioCustomSuspendBackground=function(){return isPlaybackRoute();};window.addEventListener('hashchange',emit);document.addEventListener('stremio-custom-route-change',emit);})();`;
     (document.head || document.documentElement).appendChild(script);
     script.remove();
   }
@@ -1344,7 +1387,7 @@
     notice.innerHTML = `
       <span class="stremio-custom-native-toast-icon">&#10003;</span>
       <div class="stremio-custom-native-toast-message">
-        Data Enrichment needs a TMDB API key. Add it in Settings > MyStremio > Plugins > Data Enrichment.
+        Data Enrichment needs a TMDB API key. Add it in Settings > MyStremio > API Keys.
       </div>
       <button type="button" class="stremio-custom-native-toast-close" aria-label="Close">&#10005;</button>
     `;
@@ -1497,7 +1540,12 @@
   if (document.readyState !== 'loading') {
     runBootstrapOnce();
   }
-  window.addEventListener('hashchange', () => {
+  /**
+   * Keep shell transparency / theme in sync with HashRouter navigations.
+   * HashRouter uses pushState/replaceState (no native hashchange) — also listen
+   * to stremio-custom-route-change from custom_route_change.js.
+   */
+  function onShellRouteChange() {
     ensurePlayerTransparencyFix();
     if (isOnSettingsPage()) {
       setTimeout(() => {
@@ -1527,7 +1575,10 @@
       ensureThemeApplied();
     }
     syncPluginsToRoute();
-  });
+  }
+
+  window.addEventListener('hashchange', onShellRouteChange);
+  document.addEventListener('stremio-custom-route-change', onShellRouteChange);
   document.addEventListener('stremio-custom-playback-route', (event) => {
     if (event?.detail?.active) {
       ensurePlayerTransparencyFix();
@@ -1547,6 +1598,7 @@
   }
 
   window.addEventListener('hashchange', scheduleMaintenance);
+  document.addEventListener('stremio-custom-route-change', scheduleMaintenance);
   setInterval(() => {
     if (typeof window.stremioCustomSuspendBackground === 'function' && window.stremioCustomSuspendBackground()) {
       return;

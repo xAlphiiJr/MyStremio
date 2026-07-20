@@ -982,6 +982,7 @@
   });
 
   window.addEventListener('hashchange', ensurePlaybackApi);
+  document.addEventListener('stremio-custom-route-change', ensurePlaybackApi);
   document.addEventListener('stremio-custom-playback-route', ensurePlaybackApi);
   document.addEventListener('stremio-custom-bootstrap-ready', ensurePlaybackApi);
   document.addEventListener('stremio-custom-stream-started', () => {

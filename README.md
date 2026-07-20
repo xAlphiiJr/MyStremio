@@ -2,7 +2,7 @@
 
 **MyStremio** is a personalized Windows desktop client built on the Stremio shell stack.
 It combines UI upgrades, player improvements, plugins/themes and library tools in one installer.
-Current release: **2.3.1**
+Current release: **2.3.2**
 
 > **Disclaimer:** MyStremio is an independent community project and is not affiliated with official Stremio.
 
@@ -75,7 +75,7 @@ The board includes a hero section with rotating titles. The Theme is made by [Fx
 
 #### 📖 Detail view with metadata and stream sidebar
 
-The Data Enrichment Plugin by MrBlu03 (if TMDB API-Key is set) offers an enhanced detail page with cast and similar titles.
+The Data Enrichment Plugin by MrBlu03 (if a TMDB API key is set under **Settings → MyStremio → API Keys**) offers an enhanced detail page with cast and similar titles.
 The StreamUI plugin offers a clean and modern sidebar with folders to pick streams from. (The plugin works for the follwing addons: Most torrent addons, [WatchHub](https://stremio-addons.net/addons/watchhub), [Ratings Aggregator](https://stremio-addons.net/addons/ratings-aggregator), [IMDb Ratings](https://stremio-addons.net/addons/imdb-ratings), [AfterCredits](https://aftercredits.almosteffective.com/configure.html)).
 
 <p align="center">
@@ -94,7 +94,8 @@ In the picture below you can see the MyStremio section in the settings. These in
   <img src="./images/07-01-settings-themes-plugins.png" alt="Settings: Plugins" width="50%"/>
 </p>
 
-- **Plugins** can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and communtiy made plugins built into to installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: Enhanced Title Bar by Fxy, EnhancedCovers by Fxy, SlashtoSearch by REVENGE977. A few of other plugins are slightly tuned to fit into MyStremio including: Dynamic Hero by Fxy, Context Menu Fix by MrBlu03 and Data Enrichment by MrBlu03.
+- Plugins can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and communtiy made plugins built into to installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: Enhanced Title Bar by Fxy, EnhancedCovers by Fxy, SlashtoSearch by REVENGE977. A few of other plugins are slightly tuned to fit into MyStremio including: Dynamic Hero by Fxy, Context Menu Fix by MrBlu03 and Data Enrichment by MrBlu03.
+- **API Keys** are managed centrally under Settings → MyStremio → API Keys (one key per service for all installed plugins that need it).
 
 - **Preload** settings determine how much of the video gets bufferd ahead. You can chose from buffering only the next 10 seconds or the entire video. This currently works for torrent/debrid streams and is not designed for usenet or http. That doesn't mean it won't work on those, I just can't test it as I'm not using usenet/http.
 
@@ -157,6 +158,11 @@ Built in timestamps when hovering the seek bar in the player.
 ---
 
 ## 🛠️ Patch Notes
+### 2.3.2
+
+- **Central API Keys** — Shared API keys (TMDB, RPDB, TheIntroDB, IntroDB, …) live under **Settings → MyStremio → API Keys**, discovered from installed plugin schemas; plugin cards show Set/Missing instead of duplicate inputs.
+- **Player navigation fix** — Fixed the black screen after Episode → Next (Detail streams) → Back by syncing shell leave-cleanup with HashRouter `pushState`/`replaceState` (opaque UI restored when leaving the player; abandoned dead `#/player` routes no longer stick).
+
 ### 2.3.1
 
 - **NEW Cast Overlay Plugin** — Optional player cast bubble with TMDB photos; TV series use TMDB Series Cast (`aggregate_credits`).
@@ -207,7 +213,7 @@ Built in timestamps when hovering the seek bar in the player.
 ## 💾 Installation
 
 1. Download the latest installer from this repository's **Releases** page.
-2. Run `MyStremioSetup-v2.3.1_x64.exe` (or the latest version).
+2. Run `MyStremioSetup-v2.3.2_x64.exe` (or the latest version).
 3. The installer sets up:
   - App binaries (`mystremio-shell.exe`, streaming server, FFmpeg, libmpv)
   - Bundled plugins and themes
@@ -228,7 +234,7 @@ Built in timestamps when hovering the seek bar in the player.
 
 - Windows 10/11 (64-bit)
 - Internet connection (addons, metadata sources, streaming)
-- Optional API keys for plugins (for example TMDB, TheIntroDB)
+- Optional API keys for plugins (for example TMDB, TheIntroDB) under **Settings → MyStremio → API Keys**
 
 
 ### 🗑️ Uninstall
@@ -245,7 +251,7 @@ cd stremio-shell\stremio-shell-ng-main
 .\package-release.ps1
 ```
 
-Output: `release\MyStremioSetup-v2.3.1_x64.exe`
+Output: `release\MyStremioSetup-v2.3.2_x64.exe`
 
 The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle. To rebuild the Web UI from source, clone [stremio-web](https://github.com/Stremio/stremio-web) into `.tmp/stremio-web`, apply MyStremio patches, then run the build script again.
 
