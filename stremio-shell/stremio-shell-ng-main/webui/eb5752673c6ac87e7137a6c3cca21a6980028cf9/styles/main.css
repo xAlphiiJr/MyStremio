@@ -8641,46 +8641,75 @@ html:not(.active-slider-within-NcgYf) .player-container-wIELK.overlayHidden-gyjI
 }
 
 .updater-banner-MjMLN {
-  height: 4rem;
+  position: relative;
+  height: 3.75rem;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  padding: 0 1rem;
-  font-size: 1rem;
-  font-weight: bold;
-  color: var(--primary-foreground-color);
-  background-color: var(--primary-accent-color);
+  padding: 0 4.5rem 0 1.25rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  /* Do not use --primary-accent-color: liquid-glass sets it to white. */
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(22, 22, 26, 0.92);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 -10px 28px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 .updater-banner-MjMLN .button-ixcOU {
   display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  height: 2.5rem;
-  padding: 0 1rem;
-  border-radius: var(--border-radius);
-  color: var(--primary-background-color);
-  background-color: var(--primary-foreground-color);
-  transition: all 0.1s ease-out;
+  height: 2.35rem;
+  padding: 0 1.15rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 .updater-banner-MjMLN .button-ixcOU:hover {
-  color: var(--primary-foreground-color);
-  background-color: transparent;
-  box-shadow: inset 0 0 0 0.15rem var(--primary-foreground-color);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow:
+    0 4px 18px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 .updater-banner-MjMLN .close-Quid9 {
   position: absolute;
   right: 0;
-  height: 4rem;
-  width: 4rem;
+  height: 3.75rem;
+  width: 3.75rem;
   display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: center;
+  color: rgba(255, 255, 255, 0.72);
+  border-radius: 0;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.updater-banner-MjMLN .close-Quid9:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
 }
 .updater-banner-MjMLN .close-Quid9 .icon-N2Lyd {
-  height: 2rem;
+  height: 1.65rem;
+  width: 1.65rem;
+  color: inherit;
+  fill: currentColor;
+  opacity: 1;
 }
 
 .shortcuts-modal-A5Jm_ {
@@ -9269,7 +9298,7 @@ html body #app .tooltip-container-Qpse8 {
   transition: opacity 0.1s ease-out;
 }
 html body #app .updater-banner-container-Bk1mq {
-  z-index: 1;
+  z-index: 40;
   position: absolute;
   left: 0;
   right: 0;
