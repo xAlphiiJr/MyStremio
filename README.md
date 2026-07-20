@@ -163,6 +163,7 @@ Built in timestamps when hovering the seek bar in the player.
 - **Data Enrichment cast** — TV detail cast also uses `aggregate_credits` so Series Cast matches TMDB instead of a tiny credits subset.
 - **Rating links** — Stream UI rating cards now clickable and open the correct source pages.
 - **Intro Skip Plugin** — Added +/- buttons to allow for small corrections before submitting.
+- **Hover Timestamps and Brightness** Switched the Hover Timestamps and Brightness features from native settings to plugins to allow more individualisation. 
 
 ### 2.3.0
 
