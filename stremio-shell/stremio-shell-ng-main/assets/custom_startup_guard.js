@@ -8,6 +8,7 @@
    * The shell WebView is transparent on that route, which looks like a black screen.
    */
 
+  if (window.self !== window.top) return;
   if (window.__stremioCustomStartupGuard) return;
   window.__stremioCustomStartupGuard = true;
 

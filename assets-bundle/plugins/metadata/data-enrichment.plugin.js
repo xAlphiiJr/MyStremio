@@ -1,7 +1,7 @@
 /**
  * @name Data Enrichment
  * @description Enriches movie and TV show details with TMDB data including enhanced cast, similar titles, collections, and ratings.
- * @version 2.0.0
+ * @version 2.0.1
  * @category metadata
  * @author MrBlu03 edited by MyStremio
  */
@@ -515,8 +515,11 @@
                 
                 enrichmentContainer.dataset.imdbId = imdbId;
 
-                if (this.config.enhancedCast && data.credits) {
-                    this.injectEnhancedCast(data.credits, enrichmentContainer);
+                if (this.config.enhancedCast) {
+                    const castCredits = this.resolveCastCredits(data);
+                    if (castCredits.cast?.length) {
+                        this.injectEnhancedCast(castCredits, enrichmentContainer);
+                    }
                 }
 
                 if (this.config.similarTitles) {
@@ -588,7 +591,12 @@
                     return null;
                 }
                 
-                const detailUrl = `https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=${apiKey}&append_to_response=credits,similar,recommendations,external_ids,content_ratings,release_dates,images&include_image_language=en,null`;
+                // TV Series Cast needs aggregate_credits; plain credits is often only a handful of people.
+                const append =
+                    mediaType === 'tv'
+                        ? 'credits,aggregate_credits,similar,recommendations,external_ids,content_ratings,release_dates,images'
+                        : 'credits,similar,recommendations,external_ids,content_ratings,release_dates,images';
+                const detailUrl = `https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=${apiKey}&append_to_response=${append}&include_image_language=en,null`;
                 const detailResponse = await fetch(detailUrl);
                 
                 if (!detailResponse.ok) return null;
@@ -604,8 +612,33 @@
             }
         }
 
+        /**
+         * Picks the richest cast list for display (aggregate Series Cast for TV).
+         * @param {object} data TMDB detail payload
+         * @returns {{ cast: Array<object> }}
+         */
+        resolveCastCredits(data) {
+            if (data?.media_type === 'tv' && Array.isArray(data.aggregate_credits?.cast) && data.aggregate_credits.cast.length) {
+                const cast = data.aggregate_credits.cast
+                    .map((actor) => ({
+                        ...actor,
+                        character:
+                            actor.character ||
+                            actor.roles?.[0]?.character ||
+                            (Array.isArray(actor.roles)
+                                ? actor.roles.map((role) => role.character).filter(Boolean).join(' / ')
+                                : '') ||
+                            '',
+                        total_episode_count: Number(actor.total_episode_count || actor.roles?.[0]?.episode_count || 0),
+                    }))
+                    .sort((a, b) => b.total_episode_count - a.total_episode_count);
+                return { cast };
+            }
+            return data?.credits || { cast: [] };
+        }
+
         injectEnhancedCast(credits, container) {
-            const cast = credits.cast?.slice(0, 15) || [];
+            const cast = credits.cast?.slice(0, 20) || [];
             if (cast.length === 0) return;
 
             const section = document.createElement('div');

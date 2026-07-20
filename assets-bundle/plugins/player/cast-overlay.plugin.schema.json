@@ -1,0 +1,10 @@
+[
+  {
+    "defaultValue": "",
+    "description": "Get your free API key at themoviedb.org/settings/api",
+    "key": "tmdbApiKey",
+    "label": "TMDB API Key",
+    "placeholder": "Enter your TMDB API key",
+    "type": "input"
+  }
+]

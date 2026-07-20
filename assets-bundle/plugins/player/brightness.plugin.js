@@ -1,8 +1,26 @@
+/**
+ * @name Brightness
+ * @description Adjust player video brightness via MPV
+ * @version 1.0.0
+ * @author MyStremio
+ * @category player
+ */
+/* jshint esversion: 11, browser: true, devel: true */
+
 (function () {
   'use strict';
 
-  if (window.__stremioCustomPlayerBrightness) return;
-  window.__stremioCustomPlayerBrightness = true;
+  const PLUGIN_VERSION = '1.0.0';
+  const PLUGIN_REF = 'player/brightness.plugin.js';
+
+  /**
+   * @returns {boolean}
+   */
+  function isBrightnessEnabled() {
+    const helpers = window.StremioCustom?.helpers;
+    if (!helpers?.isPluginEnabled) return false;
+    return helpers.isPluginEnabled(PLUGIN_REF);
+  }
 
   const BTN_ID = 'mystremio-brightness-btn';
   const PANEL_ID = 'mystremio-brightness-panel';
@@ -728,6 +746,11 @@
   }
 
   function ensureButton() {
+    if (!isBrightnessEnabled()) {
+      removeUi();
+      return;
+    }
+
     if (!isPlayerRoute()) {
       removeUi();
       return;
@@ -779,6 +802,11 @@
   }
 
   function ensureAll() {
+    if (!isBrightnessEnabled()) {
+      removeUi();
+      return;
+    }
+
     ensureButton();
     if (!isPlayerRoute()) return;
     const percent = readStoredPercent();
@@ -815,8 +843,47 @@
     layoutObserver.observe(target, { childList: true, subtree: true });
   }
 
-  if (!window.__stremioCustomPlayerBrightnessBootstrapped) {
-    window.__stremioCustomPlayerBrightnessBootstrapped = true;
+
+  function teardownDisabled() {
+    removeUi();
+    document.getElementById(STYLE_ID)?.remove();
+    if (typeof resetMpvTone === 'function') {
+      resetMpvTone();
+    } else {
+      sendMpvSetProp('gamma', 1);
+      sendMpvSetProp('brightness', 0);
+    }
+    if (layoutObserver) {
+      layoutObserver.disconnect();
+      layoutObserver = null;
+    }
+    if (ensureTimer) {
+      window.clearTimeout(ensureTimer);
+      ensureTimer = null;
+    }
+    if (overlayTimer) {
+      window.clearInterval(overlayTimer);
+      overlayTimer = null;
+    }
+    document.documentElement.classList.remove(OVERLAY_LOCK_CLASS);
+    document.documentElement.classList.remove(SLIDER_ACTIVE_CLASS);
+    window.__stremioBrightnessPluginReady = false;
+  }
+
+  window.__stremioBrightnessUnload = function () {
+    teardownDisabled();
+  };
+
+  if (!isBrightnessEnabled()) {
+    window.__stremioBrightnessUnload();
+    return;
+  }
+
+  if (window.__stremioBrightnessPluginReady === PLUGIN_VERSION) return;
+  window.__stremioBrightnessPluginReady = PLUGIN_VERSION;
+
+  if (!window.__stremioBrightnessBootstrapped) {
+    window.__stremioBrightnessBootstrapped = true;
     ensureAll();
     window.addEventListener('hashchange', () => {
       scheduleEnsure();
@@ -849,5 +916,5 @@
     }, 1000);
   }
 
-  console.info('[StremioCustom] Player brightness module ready.');
+  console.info('[StremioCustom] Brightness plugin ready.');
 })();

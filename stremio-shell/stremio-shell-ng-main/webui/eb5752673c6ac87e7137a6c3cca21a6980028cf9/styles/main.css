@@ -4002,17 +4002,40 @@ kbd {
 .hero-slot-szdy9[data-state='ready'] .hero-slot-loader-defhU {
   display: none;
 }
-.hero-slot-spinner-PmL7q {
-  width: 42px;
-  height: 42px;
-  border: 3px solid rgba(255, 255, 255, 0.14);
-  border-top-color: rgba(255, 255, 255, 0.88);
-  border-radius: 50%;
-  animation: mystremio-hero-slot-spin-mFLbx 0.85s linear infinite;
+.hero-slot-spinner-PmL7q,
+.hero-slot-progress-PmL7q {
+  position: relative;
+  width: min(320px, 70vw);
+  height: 4px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  animation: none;
 }
-@keyframes mystremio-hero-slot-spin-mFLbx {
-  to {
-    transform: rotate(360deg);
+.hero-slot-spinner-PmL7q::after,
+.hero-slot-progress-PmL7q::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.2) 0%,
+    rgba(255, 255, 255, 0.95) 50%,
+    rgba(255, 255, 255, 0.2) 100%
+  );
+  animation: mystremio-hero-slot-progress-mFLbx 1.15s ease-in-out infinite;
+}
+@keyframes mystremio-hero-slot-progress-mFLbx {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(280%);
   }
 }
 .hero-image-stack-FF4jn {
@@ -6628,6 +6651,13 @@ kbd {
   gap: 0.75rem;
   width: 100%;
 }
+/* Stack label + Get API Key immediately (native default is a single row). */
+.plugin-setting-label-row-l5wOf:has(.api-key-link-vAO15) {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0.1rem;
+}
 .plugin-setting-label-Q1Uqf {
   flex: 1;
   min-width: 0;
@@ -6636,9 +6666,15 @@ kbd {
   white-space: normal;
   word-break: break-word;
 }
+.plugin-setting-label-row-l5wOf:has(.api-key-link-vAO15) .plugin-setting-label-Q1Uqf {
+  flex: none;
+  width: 100%;
+  white-space: nowrap;
+}
 .api-key-link-vAO15 {
   border: 0;
   padding: 0;
+  margin: 0.15rem 0 0.35rem;
   background: transparent;
   color: var(--secondary-accent-color);
   font-size: 0.82rem;
@@ -6648,6 +6684,7 @@ kbd {
   text-underline-offset: 0.15rem;
   white-space: nowrap;
   flex-shrink: 0;
+  align-self: flex-start;
 }
 .api-key-link-vAO15:hover {
   opacity: 0.85;

@@ -14,8 +14,6 @@
   let lastCurrentTime = 0;
   let estimatedAheadSec = 0;
   let lastAdvanceAt = 0;
-  let hoverBoundSlider = null;
-  let cachedHoverDuration = 0;
   let coreDurationPollGen = 0;
 
   function parseShellPayload(raw) {
@@ -83,28 +81,6 @@
         z-index: 4 !important;
       }
 
-      #stremio-custom-seek-hover-time {
-        position: fixed !important;
-        z-index: 2147482000 !important;
-        pointer-events: none !important;
-        padding: 0.28rem 0.62rem !important;
-        border-radius: 999px !important;
-        background: rgba(30, 30, 30, 0.78) !important;
-        color: #fff !important;
-        font-size: 0.85rem !important;
-        line-height: 1.1 !important;
-        font-weight: 600 !important;
-        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-        box-shadow:
-          0 8px 24px rgba(0, 0, 0, 0.35),
-          inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-        backdrop-filter: blur(14px) saturate(170%) !important;
-        -webkit-backdrop-filter: blur(14px) saturate(170%) !important;
-        transform: translate(-50%, -84%) !important;
-        display: none;
-        white-space: nowrap;
-      }
-
       .stremio-custom-preload-segment {
         position: absolute !important;
         top: 50% !important;
@@ -121,25 +97,6 @@
       }
     `;
     (document.head || document.documentElement).appendChild(style);
-  }
-
-  function formatTime(seconds) {
-    const total = Math.max(0, Math.floor(Number(seconds) || 0));
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    return `${m}:${String(s).padStart(2, '0')}`;
-  }
-
-  function getHoverTooltip() {
-    let el = document.getElementById('stremio-custom-seek-hover-time');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'stremio-custom-seek-hover-time';
-      document.body.appendChild(el);
-    }
-    return el;
   }
 
   function handleMpvPropChange(payload) {
@@ -226,92 +183,20 @@
     return null;
   }
 
-  function readDurationFromShellVideo() {
-    const duration = window.StremioCustomPlayback?.getDuration?.();
-    return Number.isFinite(duration) && duration > 0 ? duration : null;
-  }
-
-  function readStyleWidthRatio(element) {
-    if (!element) return null;
-    const inline = element.getAttribute('style') || '';
-    const inlineMatch = inline.match(/width:\s*([\d.]+)%/);
-    if (inlineMatch) {
-      const ratio = Number(inlineMatch[1]) / 100;
-      if (Number.isFinite(ratio) && ratio > 0.004 && ratio < 0.996) return ratio;
-    }
-    try {
-      const computed = window.getComputedStyle(element);
-      const width = parseFloat(computed.width);
-      const parent = element.parentElement;
-      const parentWidth = parent ? parseFloat(window.getComputedStyle(parent).width) : NaN;
-      if (Number.isFinite(width) && Number.isFinite(parentWidth) && parentWidth > 0) {
-        const ratio = width / parentWidth;
-        if (Number.isFinite(ratio) && ratio > 0.004 && ratio < 0.996) return ratio;
-      }
-    } catch (_) {}
-    return null;
-  }
-
-  function inferDurationFromSeekThumb() {
-    const trackBefore = document.querySelector(
-      '[class*="seek-bar-container"] [class*="track-before"]'
-    );
-    const current = readTimeFromDom();
-    if (!trackBefore || current == null || current <= 0) return null;
-
-    const ratio = readStyleWidthRatio(trackBefore);
-    if (ratio == null) return null;
-
-    const duration = current / ratio;
-    return Number.isFinite(duration) && duration > current ? duration : null;
-  }
-
-  function rememberHoverDuration(duration) {
+  /**
+   * Remembers a duration hint for the buffer bar (no hover tooltip).
+   * @param {number} duration
+   */
+  function rememberDuration(duration) {
     const seconds = Number(duration);
     if (!Number.isFinite(seconds) || seconds <= 0) return;
-    cachedHoverDuration = seconds;
-  }
-
-  function resolveHoverDuration() {
-    const current =
-      window.StremioCustomPlayback?.getCurrentTime?.() ?? mpvCurrentTime ?? readTimeFromDom() ?? 0;
-    const apiDuration = window.StremioCustomPlayback?.getDuration?.();
-    const hintDuration = Number(window.__stremioPlaybackDurationHint);
-    const progressHint = Number(window.__stremioPlaybackProgressHint);
-    const candidates = [
-      apiDuration,
-      mpvDuration,
-      cachedHoverDuration,
-      Number.isFinite(hintDuration) && hintDuration > 0 ? hintDuration : null,
-      readDurationFromShellVideo(),
-      readDurationFromDom(),
-      inferDurationFromSeekThumb(),
-    ];
-    for (const candidate of candidates) {
-      const seconds = Number(candidate);
-      if (Number.isFinite(seconds) && seconds > 0) return seconds;
-    }
-    if (
-      Number.isFinite(current) &&
-      current > 0 &&
-      Number.isFinite(progressHint) &&
-      progressHint > 0.01 &&
-      progressHint < 0.995
-    ) {
-      const estimated = current / progressHint;
-      if (Number.isFinite(estimated) && estimated > current + 5) return estimated;
-    }
-    if (Number.isFinite(current) && current > 0) {
-      const fromThumb = inferDurationFromSeekThumb();
-      if (fromThumb != null) return fromThumb;
-    }
-    return 0;
+    mpvDuration = seconds;
   }
 
   function restoreStoredDurationHint() {
     const hintDuration = Number(window.__stremioPlaybackDurationHint);
     if (Number.isFinite(hintDuration) && hintDuration > 0) {
-      rememberHoverDuration(hintDuration);
+      rememberDuration(hintDuration);
       return;
     }
     try {
@@ -321,7 +206,7 @@
       if (!parsed || Date.now() - Number(parsed.at) > 120000) return;
       if (Number.isFinite(parsed.duration) && parsed.duration > 0) {
         window.__stremioPlaybackDurationHint = parsed.duration;
-        rememberHoverDuration(parsed.duration);
+        rememberDuration(parsed.duration);
       }
       if (Number.isFinite(parsed.progress) && parsed.progress > 0) {
         window.__stremioPlaybackProgressHint = parsed.progress;
@@ -351,8 +236,7 @@
       for (const candidate of candidates) {
         const seconds = Number(candidate);
         if (Number.isFinite(seconds) && seconds > 0) {
-          rememberHoverDuration(seconds);
-          mpvDuration = seconds;
+          rememberDuration(seconds);
           return;
         }
       }
@@ -373,37 +257,6 @@
     return (
       document.querySelector('[class*="seek-bar-container"] [class*="slider-container"]') || null
     );
-  }
-
-  function bindHoverPreview(slider) {
-    if (!slider || slider === hoverBoundSlider) return;
-    hoverBoundSlider = slider;
-    const tooltip = getHoverTooltip();
-
-    const hide = () => {
-      tooltip.style.display = 'none';
-    };
-
-    const showAt = (event) => {
-      const rect = slider.getBoundingClientRect();
-      if (rect.width <= 0) return hide();
-      const duration = resolveHoverDuration();
-      if (!Number.isFinite(duration) || duration <= 0) return hide();
-
-      const x = Math.max(rect.left, Math.min(event.clientX, rect.right));
-      const ratio = Math.max(0, Math.min(1, (x - rect.left) / rect.width));
-      const seconds = duration * ratio;
-
-      tooltip.textContent = formatTime(seconds);
-      tooltip.style.left = `${x}px`;
-      tooltip.style.top = `${rect.top}px`;
-      tooltip.style.display = 'block';
-    };
-
-    slider.addEventListener('mouseenter', showAt);
-    slider.addEventListener('mousemove', showAt);
-    slider.addEventListener('mouseleave', hide);
-    slider.addEventListener('pointerleave', hide);
   }
 
   function getPreloadSegment(slider) {
@@ -503,7 +356,6 @@
       return;
     }
     hookMpvMessages();
-    bindHoverPreview(getSeekSlider());
     updateBufferBar();
   }
 
@@ -519,7 +371,6 @@
   injectStyles();
   hookMpvMessages();
   document.getElementById('stremio-custom-seek-hover-preview')?.remove();
-  document.getElementById('stremio-custom-seek-hover-time')?.remove();
 
   window.addEventListener('hashchange', () => {
     if (isOnPlayerPage()) {
@@ -539,14 +390,14 @@
     scheduleCoreDurationPoll();
   });
   document.addEventListener('stremio-custom-duration-hint', (event) => {
-    rememberHoverDuration(event?.detail?.duration);
+    rememberDuration(event?.detail?.duration);
     const progress = Number(event?.detail?.progress);
     if (Number.isFinite(progress) && progress > 0) {
       window.__stremioPlaybackProgressHint = progress;
     }
   });
   document.addEventListener('stremio-custom-duration', (event) => {
-    rememberHoverDuration(event?.detail?.duration);
+    rememberDuration(event?.detail?.duration);
   });
   document.addEventListener('stremio-custom-bootstrap-ready', () => {
     if (isOnPlayerPage()) start();

@@ -1,4 +1,6 @@
 (function () {
+  // ContentLoading injects into every WebView frame; only the top frame may own bootstrap IPC.
+  if (window.self !== window.top) return;
   if (window.__stremioCustomBootstrap) return;
   window.__stremioCustomBootstrap = true;
 
@@ -233,7 +235,11 @@
   };
   const TMDB_NOTICE_KEY = 'stremio-custom-tmdb-notice-shown-v211d';
   const DEFAULTS_APPLIED_KEY = 'stremio-custom-defaults-applied-v211a';
-  const DEFAULT_DISABLED_PLUGIN_PATTERNS = [/slash[-_ ]?to[-_ ]?search/i];
+  const NATIVE_PLAYER_FEATURES_MIGRATED_KEY = 'stremio-custom-migrate-brightness-hover-v1';
+  const DEFAULT_DISABLED_PLUGIN_PATTERNS = [
+    /slash[-_ ]?to[-_ ]?search/i,
+    /cast[-_ ]?overlay/i,
+  ];
   const DYNAMIC_HERO_PLUGIN = 'interface/hero-div.plugin.js';
   const DYNAMIC_HERO_ENABLED_KEY = 'mystremio_dynamic_hero_enabled_v1';
   const DYNAMIC_HERO_METADATA = {
@@ -1034,11 +1040,33 @@
 
   async function migrateEnabledPlugins() {
     const enabled = getEnabledPlugins();
+    if (!enabled.length) return enabled;
+
+    let plugins = [];
+    try {
+      plugins = await api.listPlugins();
+    } catch (error) {
+      console.warn('[StremioCustom] listPlugins failed during migrate; keeping enabled list', error);
+      return enabled;
+    }
+    // Never wipe the enabled list when the disk inventory is briefly empty/unavailable.
+    if (!Array.isArray(plugins) || !plugins.length) return enabled;
+
     const migrated = [];
     for (const fileRef of enabled) {
-      const resolved = await resolvePluginRef(fileRef);
-      if (!resolved) continue;
-      migrated.push(resolved);
+      const normalized = String(fileRef || '').replace(/\\/g, '/');
+      if (!normalized) continue;
+      if (isHeroPluginRef(normalized)) {
+        migrated.push(DYNAMIC_HERO_PLUGIN);
+        continue;
+      }
+      if (plugins.includes(normalized)) {
+        migrated.push(normalized);
+        continue;
+      }
+      const baseName = normalized.split('/').pop();
+      const resolved = plugins.find((p) => p.split('/').pop() === baseName) || null;
+      if (resolved) migrated.push(resolved);
     }
     if (JSON.stringify(migrated) !== JSON.stringify(enabled)) setEnabledPlugins(migrated);
     return migrated;
@@ -1079,6 +1107,15 @@
     if (/seek[-_ ]?buttons/i.test(normalized) || /seek[-_ ]?buttons/i.test(baseName || '')) {
       window.__stremioSeekButtonsUnload?.();
     }
+    if (/brightness/i.test(normalized) || /brightness/i.test(baseName || '')) {
+      window.__stremioBrightnessUnload?.();
+    }
+    if (/hover[-_ ]?timestamps/i.test(normalized) || /hover[-_ ]?timestamps/i.test(baseName || '')) {
+      window.__stremioHoverTimestampsUnload?.();
+    }
+    if (/cast[-_ ]?overlay/i.test(normalized) || /cast[-_ ]?overlay/i.test(baseName || '')) {
+      window.__stremioCastOverlayUnload?.();
+    }
     let removed = false;
     const direct = document.getElementById(toScriptId(normalized));
     if (direct) {
@@ -1108,6 +1145,9 @@
     'interface/enhanced-titlebar.plugin.js',
     'player/tidb.plugin.js',
     'player/seek-buttons.plugin.js',
+    'player/hover-timestamps.plugin.js',
+    'player/brightness.plugin.js',
+    'player/cast-overlay.plugin.js',
   ]);
 
   const IDLE_DURING_PLAYBACK_PREFIXES = [
@@ -1168,9 +1208,12 @@
   async function ensureDefaultPluginsEnabled() {
     const all = await api.listPlugins();
     if (!Array.isArray(all) || !all.length) return;
-    if (localStorage.getItem(DEFAULTS_APPLIED_KEY) === 'true') return;
 
     const enabled = await migrateEnabledPlugins();
+    const defaultsApplied = localStorage.getItem(DEFAULTS_APPLIED_KEY) === 'true';
+    // Recover a wiped enabled list (race) even after defaults were marked applied.
+    if (defaultsApplied && enabled.length > 0) return;
+
     const next = [...enabled];
     let changed = false;
     for (const ref of all) {
@@ -1190,6 +1233,32 @@
       await ensurePluginsLoadedForRoute();
     }
     localStorage.setItem(DEFAULTS_APPLIED_KEY, 'true');
+    persistUserPreferences();
+  }
+
+  /**
+   * One-shot: enable brightness + hover-timestamps for existing users who already
+   * had defaults applied (those features were previously always-on natives).
+   * @returns {Promise<void>}
+   */
+  async function migrateNativePlayerFeaturesToPlugins() {
+    if (localStorage.getItem(NATIVE_PLAYER_FEATURES_MIGRATED_KEY) === 'true') return;
+    const refs = ['player/brightness.plugin.js', 'player/hover-timestamps.plugin.js'];
+    const enabled = await migrateEnabledPlugins();
+    const next = [...enabled];
+    let changed = false;
+    for (const ref of refs) {
+      const resolved = (await resolvePluginRef(ref)) || ref;
+      if (!isPluginEnabled(resolved, next)) {
+        next.push(resolved);
+        changed = true;
+      }
+    }
+    if (changed) {
+      setEnabledPlugins(next);
+      await ensurePluginsLoadedForRoute();
+    }
+    localStorage.setItem(NATIVE_PLAYER_FEATURES_MIGRATED_KEY, 'true');
     persistUserPreferences();
   }
 
@@ -1360,12 +1429,23 @@
       localStorage.setItem(DYNAMIC_HERO_ENABLED_KEY, '1');
     }
     await ensureDefaultPluginsEnabled();
+    await migrateNativePlayerFeaturesToPlugins();
     syncDynamicHeroEnabledFlag();
     scheduleAuthProfilePersistence();
-    pathsCache = await api.getPaths();
-    window.__stremioLanguageNames = await invoke('read-language-names');
+
+    // Theme/plugins before non-critical IPC so a getPaths/language timeout cannot skip them.
     await ensureThemeApplied();
     await ensurePluginsLoadedForRoute();
+
+    pathsCache = await api.getPaths().catch((error) => {
+      console.warn('[StremioCustom] getPaths failed:', error);
+      return null;
+    });
+    window.__stremioLanguageNames = await invoke('read-language-names').catch((error) => {
+      console.warn('[StremioCustom] read-language-names failed:', error);
+      return {};
+    });
+
     safeRun('settingsWatcher', () => window.StremioCustomSettings?.startSettingsWatcher?.(pluginApi));
     ensurePlayerGlassStyles();
     ensurePlayerTransparencyFix();

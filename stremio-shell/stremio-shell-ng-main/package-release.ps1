@@ -113,7 +113,10 @@ Inno Setup 6 not found. Install it from https://jrsoftware.org/isinfo.php
 
 $ChecksumPath = Join-Path $OutputDir "SHA256SUMS.txt"
 $hash = (Get-FileHash -Path $SetupPath -Algorithm SHA256).Hash.ToLowerInvariant()
-"$hash  $SetupName" | Set-Content -Path $ChecksumPath -Encoding UTF8
+# Write UTF-8 without BOM so the updater can parse the first hash cleanly.
+$checksumLine = "$hash  $SetupName"
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($ChecksumPath, ($checksumLine + [Environment]::NewLine), $utf8NoBom)
 
 Get-ChildItem $OutputDir -File | Where-Object {
     ($_.Name -like 'MyStremioSetup-v*_x64.exe' -and $_.Name -ne $SetupName) -or

@@ -1,6 +1,7 @@
 (function () {
   'use strict';
 
+  if (window.self !== window.top) return;
   if (window.__stremioCustomHeroLoading) return;
   window.__stremioCustomHeroLoading = true;
 
@@ -37,15 +38,27 @@
     return true;
   }
 
+  /**
+   * Ensures the hero slot has a loader with a horizontal progress bar only.
+   * @param {Element} slot
+   */
   function ensureSlotLoader(slot) {
-    if (slot.querySelector('[class*="hero-slot-loader"]')) return;
-    const loader = document.createElement('div');
-    loader.className = 'mystremio-hero-slot-loader';
-    loader.setAttribute('aria-hidden', 'true');
-    const spinner = document.createElement('div');
-    spinner.className = 'mystremio-hero-slot-spinner';
-    loader.appendChild(spinner);
-    slot.appendChild(loader);
+    let loader = slot.querySelector('[class*="hero-slot-loader"], .mystremio-hero-slot-loader');
+    if (!loader) {
+      loader = document.createElement('div');
+      loader.className = 'mystremio-hero-slot-loader';
+      loader.setAttribute('aria-hidden', 'true');
+      slot.appendChild(loader);
+    }
+
+    let bar = loader.querySelector('.mystremio-hero-slot-progress, [class*="hero-slot-progress"], [class*="hero-slot-spinner"]');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.className = 'mystremio-hero-slot-progress';
+      loader.appendChild(bar);
+    } else {
+      bar.classList.add('mystremio-hero-slot-progress');
+    }
   }
 
   function setSlotLoading(slot) {
@@ -76,10 +89,9 @@
       [class*="hero-slot"][data-state="loading"] [class*="hero-slot-loader"],
       [class*="hero-slot"][data-state="loading"] .mystremio-hero-slot-loader {
         display: flex !important;
-        flex-direction: column !important;
+        flex-direction: row !important;
         align-items: center !important;
         justify-content: center !important;
-        gap: 1rem !important;
         position: absolute !important;
         inset: 0 !important;
         z-index: 5 !important;
@@ -90,51 +102,52 @@
         background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 50%, #0c0c0c 100%) !important;
       }
 
-      [class*="hero-slot"][data-state="loading"] [class*="hero-slot-spinner"],
-      [class*="hero-slot"][data-state="loading"] .mystremio-hero-slot-spinner {
-        width: 42px !important;
-        height: 42px !important;
-        border-radius: 50% !important;
-        border: 3px solid rgba(255, 255, 255, 0.12) !important;
-        border-top-color: rgba(255, 255, 255, 0.85) !important;
-        animation: mystremio-hero-spin 0.9s linear infinite !important;
-      }
-
-      @keyframes mystremio-hero-spin {
-        to { transform: rotate(360deg); }
-      }
-
+      [class*="hero-slot"][data-state="loading"] [class*="hero-slot-loader"]::before,
       [class*="hero-slot"][data-state="loading"] [class*="hero-slot-loader"]::after,
+      [class*="hero-slot"][data-state="loading"] .mystremio-hero-slot-loader::before,
       [class*="hero-slot"][data-state="loading"] .mystremio-hero-slot-loader::after {
-        content: '' !important;
-        display: block !important;
-        width: min(320px, 70%) !important;
+        content: none !important;
+        display: none !important;
+        animation: none !important;
+      }
+
+      [class*="hero-slot"][data-state="loading"] .mystremio-hero-slot-progress,
+      [class*="hero-slot"][data-state="loading"] [class*="hero-slot-progress"],
+      [class*="hero-slot"][data-state="loading"] [class*="hero-slot-spinner"] {
+        position: relative !important;
+        width: min(320px, 70vw) !important;
         height: 4px !important;
+        border: none !important;
         border-radius: 999px !important;
         background: rgba(255, 255, 255, 0.12) !important;
         overflow: hidden !important;
-        position: relative !important;
+        flex: none !important;
+        animation: none !important;
+        transform: none !important;
       }
 
-      [class*="hero-slot"][data-state="loading"] [class*="hero-slot-loader"]::before,
-      [class*="hero-slot"][data-state="loading"] .mystremio-hero-slot-loader::before {
+      [class*="hero-slot"][data-state="loading"] .mystremio-hero-slot-progress::after,
+      [class*="hero-slot"][data-state="loading"] [class*="hero-slot-progress"]::after,
+      [class*="hero-slot"][data-state="loading"] [class*="hero-slot-spinner"]::after {
         content: '' !important;
         position: absolute !important;
-        width: min(320px, 70%) !important;
-        height: 4px !important;
-        border-radius: 999px !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 40% !important;
+        height: 100% !important;
+        border-radius: inherit !important;
         background: linear-gradient(
           90deg,
-          rgba(255, 255, 255, 0) 0%,
-          rgba(255, 255, 255, 0.85) 50%,
-          rgba(255, 255, 255, 0) 100%
+          rgba(255, 255, 255, 0.2) 0%,
+          rgba(255, 255, 255, 0.95) 50%,
+          rgba(255, 255, 255, 0.2) 100%
         ) !important;
-        animation: mystremio-hero-bar 1.2s ease-in-out infinite !important;
+        animation: mystremio-hero-bar 1.15s ease-in-out infinite !important;
       }
 
       @keyframes mystremio-hero-bar {
         0% { transform: translateX(-120%); }
-        100% { transform: translateX(120%); }
+        100% { transform: translateX(280%); }
       }
     `;
     (document.head || document.documentElement).appendChild(style);

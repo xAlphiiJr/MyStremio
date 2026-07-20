@@ -1,7 +1,7 @@
 /**
  * @name Intro Skip
  * @description Skip intros, recaps, credits, and previews using TheIntroDB and IntroDB APIs
- * @version 2.1.1
+ * @version 2.1.5
  * @author MyStremio
  */
 /* jshint esversion: 11, browser: true, devel: true */
@@ -10,7 +10,7 @@
 (function() {
 	"use strict";
 
-	const PLUGIN_VERSION = "2.1.1";
+	const PLUGIN_VERSION = "2.1.2";
 	const LOG_PREFIX = "[IntroSkip]";
 	const CONTRIBUTE_TOAST_ID = "tidb-contribute-toast";
 	const PLUGIN_ID = "tidb";
@@ -923,6 +923,7 @@
 				padding: 0.45rem 0.55rem;
 				font-size: 0.84rem;
 				margin-bottom: 0.55rem;
+				line-height: 1.2;
 			}
 			#${CONTRIBUTE_PANEL_ID} .tidb-contribute-segment-row {
 				display: flex;
@@ -949,6 +950,45 @@
 				display: grid;
 				gap: 0.55rem;
 				margin-bottom: 0.55rem;
+			}
+			#${CONTRIBUTE_PANEL_ID} .tidb-contribute-time-input-row {
+				display: flex;
+				align-items: stretch;
+				gap: 0.35rem;
+				margin-bottom: 0.55rem;
+			}
+			#${CONTRIBUTE_PANEL_ID} .tidb-contribute-time-input-row input[type="text"] {
+				flex: 1 1 auto;
+				min-width: 0;
+				width: auto;
+				height: 2.2rem;
+				margin-bottom: 0 !important;
+				padding: 0 0.55rem;
+			}
+			#${CONTRIBUTE_PANEL_ID} .tidb-contribute-pm {
+				flex: none;
+				align-self: stretch;
+				width: 2.2rem;
+				height: 2.2rem;
+				min-height: 2.2rem;
+				padding: 0;
+				margin: 0;
+				border-radius: 10px;
+				border: 1px solid rgba(255, 255, 255, 0.14);
+				background: rgba(0, 0, 0, 0.28);
+				color: rgba(255, 255, 255, 0.88);
+				font-size: 1.05rem;
+				font-weight: 600;
+				line-height: 1;
+				cursor: pointer;
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				box-sizing: border-box;
+			}
+			#${CONTRIBUTE_PANEL_ID} .tidb-contribute-pm:hover {
+				background: rgba(255, 255, 255, 0.12);
+				border-color: rgba(255, 255, 255, 0.2);
 			}
 			#${CONTRIBUTE_PANEL_ID} .tidb-contribute-chip-row {
 				display: flex;
@@ -2580,6 +2620,20 @@
 			if (kind) status.classList.add(kind);
 		}
 
+		/**
+		 * Native player menus use `.menu-layer { right: 4rem }` (2.5rem in narrow portrait).
+		 * @returns {number} inset in CSS pixels
+		 */
+		getNativeMenuRightInsetPx() {
+			const rootFont = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+			const narrowPortrait =
+				window.matchMedia("(orientation: portrait) and (max-width: 640px)").matches;
+			return Math.round((narrowPortrait ? 2.5 : 4) * rootFont);
+		}
+
+		/**
+		 * Places the contribute panel above the seek bar, right-aligned like native menus.
+		 */
 		positionContributePanel() {
 			const panel = document.getElementById(CONTRIBUTE_PANEL_ID);
 			if (!panel) return;
@@ -2588,16 +2642,11 @@
 			const panelHeight = panel.offsetHeight || 360;
 			const margin = 14;
 			const seekBar = document.querySelector('[class*="player-container"] [class*="seek-bar-container"]');
-			const buttonsContainer = document.querySelector('[class*="player-container"] [class*="control-bar-buttons-container"]');
-
-			let left = 12;
-			if (buttonsContainer) {
-				const rect = buttonsContainer.getBoundingClientRect();
-				left = Math.min(
-					Math.max(margin, rect.right - panelWidth),
-					window.innerWidth - panelWidth - margin
-				);
-			}
+			const rightInset = this.getNativeMenuRightInsetPx();
+			const left = Math.min(
+				Math.max(margin, window.innerWidth - panelWidth - rightInset),
+				window.innerWidth - panelWidth - margin
+			);
 
 			panel.style.left = `${left}px`;
 			panel.style.right = "auto";
@@ -2860,7 +2909,11 @@
 					<div class="tidb-contribute-time-block">
 						<div>
 							<label for="tidb-contribute-start">Start time</label>
-							<input id="tidb-contribute-start" data-tidb-start type="text" placeholder="e.g. 0:00 or 90" />
+							<div class="tidb-contribute-time-input-row">
+								<button type="button" class="tidb-contribute-pm" data-tidb-start-minus aria-label="Decrease start by 1 second">−</button>
+								<input id="tidb-contribute-start" data-tidb-start type="text" placeholder="e.g. 0:00 or 90" />
+								<button type="button" class="tidb-contribute-pm" data-tidb-start-plus aria-label="Increase start by 1 second">+</button>
+							</div>
 							<div class="tidb-contribute-chip-row">
 								<button type="button" class="tidb-contribute-chip" data-tidb-start-current>Current position</button>
 								<button type="button" class="tidb-contribute-chip" data-tidb-start-begin>Episode start</button>
@@ -2869,7 +2922,11 @@
 						</div>
 						<div>
 							<label for="tidb-contribute-end">End time</label>
-							<input id="tidb-contribute-end" data-tidb-end type="text" placeholder="empty = until episode end" />
+							<div class="tidb-contribute-time-input-row">
+								<button type="button" class="tidb-contribute-pm" data-tidb-end-minus aria-label="Decrease end by 1 second">−</button>
+								<input id="tidb-contribute-end" data-tidb-end type="text" placeholder="empty = until episode end" />
+								<button type="button" class="tidb-contribute-pm" data-tidb-end-plus aria-label="Increase end by 1 second">+</button>
+							</div>
 							<div class="tidb-contribute-chip-row">
 								<button type="button" class="tidb-contribute-chip" data-tidb-end-current>Current position</button>
 								<button type="button" class="tidb-contribute-chip" data-tidb-end-finish>Episode end</button>
@@ -2909,6 +2966,31 @@
 						});
 						this.applyContributeDefaults(this.contributeSelectedSegment, { resetMarkedStart: true });
 					});
+				});
+				/**
+				 * Adjusts a contribute time input by ±1 second.
+				 * @param {HTMLInputElement|null} input
+				 * @param {number} deltaSec
+				 */
+				const nudgeTimeInput = (input, deltaSec) => {
+					if (!input) return;
+					const current = parseTimeInput(input.value);
+					const base = current != null && Number.isFinite(current) ? current : 0;
+					const next = Math.max(0, base + deltaSec);
+					input.value = formatClockTime(next);
+					this.saveContributeFormDraft();
+				};
+				panel.querySelector("[data-tidb-start-minus]")?.addEventListener("click", () => {
+					nudgeTimeInput(this.getContributePanelFields()?.startInput, -1);
+				});
+				panel.querySelector("[data-tidb-start-plus]")?.addEventListener("click", () => {
+					nudgeTimeInput(this.getContributePanelFields()?.startInput, 1);
+				});
+				panel.querySelector("[data-tidb-end-minus]")?.addEventListener("click", () => {
+					nudgeTimeInput(this.getContributePanelFields()?.endInput, -1);
+				});
+				panel.querySelector("[data-tidb-end-plus]")?.addEventListener("click", () => {
+					nudgeTimeInput(this.getContributePanelFields()?.endInput, 1);
 				});
 				panel.querySelector("[data-tidb-start-current]").addEventListener("click", () => {
 					const fields = this.getContributePanelFields();
@@ -2961,6 +3043,9 @@
 			this.lockPlayerOverlay();
 			this.startContributeOverlayKeepAlive();
 			this.positionContributePanel();
+			requestAnimationFrame(() => {
+				if (this.contributePanelOpen) this.positionContributePanel();
+			});
 
 			if (!this.contributeOutsideHandler) {
 				this.contributeOutsideHandler = (event) => {

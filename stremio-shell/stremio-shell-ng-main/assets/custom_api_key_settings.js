@@ -10,9 +10,16 @@
   const KEY_HINTS = [
     { pattern: /tidb/i, key: 'tidb_api_key', base: 'tidb' },
     { pattern: /introdb/i, key: 'introdb_api_key', base: 'tidb' },
-    { pattern: /tmdb/i, key: 'tmdbApiKey', base: 'data-enrichment' },
     { pattern: /rpdb/i, key: 'rpdbApiKey', base: 'data-enrichment' },
+    { pattern: /tmdb/i, key: 'tmdbApiKey', base: 'data-enrichment' },
   ];
+
+  /** Intro Keep short "API Key"; metadata plugins keep the service name visible. */
+  const SHORT_API_KEY_LABEL_KEYS = new Set(['tidb_api_key', 'introdb_api_key']);
+  const SERVICE_API_KEY_LABELS = {
+    tmdbApiKey: 'TMDB API Key',
+    rpdbApiKey: 'RPDB API Key',
+  };
 
   const API_KEY_LINKS = {
     tidb_api_key: 'https://theintrodb.org/docs',
@@ -97,9 +104,13 @@
       .stremio-api-key-clear:hover {
         color: rgba(255, 255, 255, 0.62);
       }
-      .stremio-api-key-link {
+      .stremio-api-key-link,
+      .stremio-api-key-label-row [class*="api-key-link"],
+      [class*="plugin-setting-label-row"]:has([class*="api-key-link"]) [class*="api-key-link"],
+      [class*="plugin-setting-label-row"]:has(.stremio-api-key-link) .stremio-api-key-link {
         border: 0;
         padding: 0;
+        margin: 0.15rem 0 0.35rem;
         background: transparent;
         color: var(--secondary-accent-color, rgba(120, 180, 255, 0.95));
         font-size: 0.82rem;
@@ -111,26 +122,43 @@
         flex-shrink: 0;
         pointer-events: auto;
         touch-action: manipulation;
+        align-self: flex-start;
+        display: inline-flex;
       }
-      .stremio-api-key-link:hover {
+      .stremio-api-key-link:hover,
+      .stremio-api-key-label-row [class*="api-key-link"]:hover,
+      [class*="plugin-setting-label-row"]:has([class*="api-key-link"]) [class*="api-key-link"]:hover {
         opacity: 0.85;
       }
-      .stremio-api-key-label-row {
+      /*
+       * Native label rows put label + "Get API Key" on one line.
+       * Apply column layout via :has() immediately — do not wait for JS class injection.
+       */
+      .stremio-api-key-label-row,
+      [class*="plugin-setting-label-row"]:has([class*="api-key-link"]),
+      [class*="plugin-setting-label-row"]:has(.stremio-api-key-link) {
         display: flex !important;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 0.75rem;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        justify-content: flex-start !important;
+        gap: 0.1rem;
         width: 100%;
       }
-      .stremio-api-key-label-row [class*="plugin-setting-label"]:not([class*="row"]) {
-        flex: 1;
+      .stremio-api-key-label-row [class*="plugin-setting-label"]:not([class*="row"]),
+      [class*="plugin-setting-label-row"]:has([class*="api-key-link"]) [class*="plugin-setting-label"]:not([class*="row"]),
+      [class*="plugin-setting-label-row"]:has(.stremio-api-key-link) [class*="plugin-setting-label"]:not([class*="row"]) {
+        flex: none;
         min-width: 0;
         line-height: 1.35rem;
         white-space: nowrap;
+        width: 100%;
       }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
+
+  // Paint-correct layout before the settings panel mounts (avoids one-frame row flash).
+  injectStyles();
 
   function eyeOpenSvg() {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -145,6 +173,36 @@
     return String(labelEl?.textContent || '').trim();
   }
 
+  /**
+   * Resolves plugin base name from the surrounding plugin card title when present.
+   * @param {Element} row
+   * @returns {string|null}
+   */
+  function resolvePluginBaseFromCard(row) {
+    const card = row.closest(
+      '[class*="plugin-card"], [class*="plugin-item"], [class*="mystremio-plugin"], [data-plugin-base], [data-plugin-id]'
+    );
+    const fromAttr =
+      card?.getAttribute?.('data-plugin-base') ||
+      card?.getAttribute?.('data-plugin-id') ||
+      card?.dataset?.pluginBase ||
+      card?.dataset?.pluginId ||
+      '';
+    if (fromAttr) {
+      return String(fromAttr).replace(/\.plugin\.js$/i, '').split('/').pop() || null;
+    }
+
+    const title =
+      card?.querySelector?.(
+        '[class*="plugin-name"], [class*="plugin-title"], h2, h3, [class*="name-"]'
+      )?.textContent || '';
+    const normalized = String(title).trim().toLowerCase();
+    if (/cast\s*overlay/.test(normalized)) return 'cast-overlay';
+    if (/data\s*enrichment/.test(normalized)) return 'data-enrichment';
+    if (/intro\s*skip|tidb/.test(normalized)) return 'tidb';
+    return null;
+  }
+
   function resolveFieldMeta(input, row) {
     const base = input.dataset.pluginBase || row.dataset.apiKeyBase;
     const key = input.dataset.settingKey || row.dataset.apiKeySetting;
@@ -153,12 +211,31 @@
     }
 
     const label = readLabel(row);
+    const cardBase = resolvePluginBaseFromCard(row);
     for (const hint of KEY_HINTS) {
       if (hint.pattern.test(label)) {
-        return { base: hint.base, key: hint.key };
+        // Prefer the plugin card base so Cast Overlay TMDB key is not stored under data-enrichment.
+        return { base: cardBase || hint.base, key: hint.key };
       }
     }
+
+    if (cardBase && /api\s*key/i.test(label)) {
+      if (cardBase === 'cast-overlay') return { base: cardBase, key: 'tmdbApiKey' };
+      if (cardBase === 'data-enrichment') return { base: cardBase, key: 'tmdbApiKey' };
+    }
     return null;
+  }
+
+  /**
+   * @param {{ key: string }|null} meta
+   * @param {string} currentLabel
+   * @returns {string}
+   */
+  function desiredApiKeyLabel(meta, currentLabel) {
+    if (!meta?.key) return currentLabel;
+    if (SERVICE_API_KEY_LABELS[meta.key]) return SERVICE_API_KEY_LABELS[meta.key];
+    if (SHORT_API_KEY_LABEL_KEYS.has(meta.key)) return 'API Key';
+    return currentLabel;
   }
 
   function getRowParts(row) {
@@ -323,11 +400,18 @@
     );
   }
 
-  function ensureApiKeyLabelRow(row) {
+  function ensureApiKeyLabelRow(row, meta = null) {
     const labelEl = findLabelElement(row);
     if (!labelEl) return null;
 
-    labelEl.textContent = 'API Key';
+    const resolvedMeta =
+      meta ||
+      ({
+        key: row.dataset.apiKeySetting || '',
+        base: row.dataset.apiKeyBase || '',
+      });
+    const nextLabel = desiredApiKeyLabel(resolvedMeta, String(labelEl.textContent || '').trim());
+    if (nextLabel) labelEl.textContent = nextLabel;
 
     let labelRow = labelEl.parentElement;
     if (!labelRow) return null;
@@ -356,7 +440,11 @@
   }
 
   function findLabelRow(row) {
-    return ensureApiKeyLabelRow(row) || row.querySelector('[class*="plugin-setting-label-row"]');
+    const meta = {
+      key: row.dataset.apiKeySetting || '',
+      base: row.dataset.apiKeyBase || '',
+    };
+    return ensureApiKeyLabelRow(row, meta) || row.querySelector('[class*="plugin-setting-label-row"]');
   }
 
   function hasNativeApiKeyLink(row) {
@@ -373,7 +461,7 @@
     const url = API_KEY_LINKS[meta.key];
     if (!url) return;
 
-    const labelRow = ensureApiKeyLabelRow(row);
+    const labelRow = ensureApiKeyLabelRow(row, meta);
     if (!labelRow) return;
 
     if (hasNativeApiKeyLink(row) || labelRow.querySelector('.stremio-api-key-link')) {
@@ -410,7 +498,7 @@
 
     injectStyles();
     ensureRowStructure(input, row, meta);
-    ensureApiKeyLabelRow(row);
+    ensureApiKeyLabelRow(row, meta);
     ensureApiKeyLink(row, meta);
     bindRowEvents(row);
     syncRowUi(row);
@@ -427,15 +515,28 @@
   }
 
   let scanTimer = null;
+  let scanRaf = 0;
+
+  /**
+   * Scans on the next frame so newly mounted settings rows are enhanced before paint settles.
+   */
   function scheduleScan() {
+    if (scanRaf) cancelAnimationFrame(scanRaf);
+    scanRaf = requestAnimationFrame(() => {
+      scanRaf = 0;
+      scan();
+    });
     if (scanTimer) clearTimeout(scanTimer);
-    scanTimer = setTimeout(scan, 120);
+    // Catch late React commits that miss the first frame.
+    scanTimer = setTimeout(scan, 32);
   }
 
   const observer = new MutationObserver(scheduleScan);
   function startObserver() {
+    injectStyles();
     if (!document.body) return;
     observer.observe(document.body, { childList: true, subtree: true });
+    scan();
     scheduleScan();
   }
 

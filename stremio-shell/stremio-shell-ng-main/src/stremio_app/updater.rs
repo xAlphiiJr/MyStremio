@@ -38,6 +38,9 @@ struct GithubRelease {
 struct GithubAsset {
     name: String,
     browser_download_url: String,
+    /// GitHub may provide `digest: "sha256:…"` on release assets.
+    #[serde(default)]
+    digest: Option<String>,
 }
 
 impl Updater {
@@ -52,7 +55,10 @@ impl Updater {
     }
 
     pub fn check_for_update(&self) -> Result<Option<Update>, anyhow::Error> {
-        println!("Checking GitHub releases for MyStremio v{}", self.current_version);
+        println!(
+            "Checking GitHub releases for MyStremio v{}",
+            self.current_version
+        );
 
         let client = github_client()?;
         let release = fetch_release(&client, self.release_candidate)?;
@@ -68,29 +74,23 @@ impl Updater {
 
         let installer_asset = find_installer_asset(&release.assets, &version)
             .context("Release is missing MyStremioSetup-v*_x64.exe asset")?;
-        let checksums_asset = release
-            .assets
-            .iter()
-            .find(|asset| asset.name == "SHA256SUMS.txt")
-            .context("Release is missing SHA256SUMS.txt asset")?;
 
-        let checksums =
-            client.get(&checksums_asset.browser_download_url).send()?.text()?;
-        let expected_sha256 = parse_sha256sums(&checksums, &installer_asset.name)?;
+        let expected_sha256 = resolve_expected_sha256(&client, &release.assets, installer_asset)
+            .context("Could not resolve installer SHA256 checksum")?;
 
         let dest = download_installer(&client, installer_asset, &expected_sha256)?;
 
         println!("Update ready: v{version} ({})", dest.display());
-        Ok(Some(Update { version, file: dest }))
+        Ok(Some(Update {
+            version,
+            file: dest,
+        }))
     }
 }
 
 fn github_client() -> Result<Client, anyhow::Error> {
     let mut headers = HeaderMap::new();
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_static(GITHUB_USER_AGENT),
-    );
+    headers.insert(USER_AGENT, HeaderValue::from_static(GITHUB_USER_AGENT));
     headers.insert(
         ACCEPT,
         HeaderValue::from_static("application/vnd.github+json"),
@@ -142,20 +142,92 @@ fn find_installer_asset<'a>(
         })
 }
 
+/// Strips UTF-8 BOM and whitespace so PowerShell-generated SHA256SUMS files still parse.
+fn strip_bom_and_trim(value: &str) -> &str {
+    value.trim().trim_start_matches('\u{feff}').trim()
+}
+
+/// Parses a GitHub asset digest field (`sha256:…`) into a lowercase hex string.
+fn parse_asset_digest(digest: &str) -> Option<String> {
+    let cleaned = strip_bom_and_trim(digest);
+    let hash = cleaned
+        .strip_prefix("sha256:")
+        .or_else(|| cleaned.strip_prefix("SHA256:"))
+        .unwrap_or(cleaned);
+    let hash = hash.trim().to_ascii_lowercase();
+    if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(hash)
+    } else {
+        None
+    }
+}
+
 fn parse_sha256sums(content: &str, file_name: &str) -> Result<String, anyhow::Error> {
+    let content = strip_bom_and_trim(content);
     for line in content.lines() {
-        let line = line.trim();
+        let line = strip_bom_and_trim(line);
         if line.is_empty() {
             continue;
         }
         let mut parts = line.split_whitespace();
-        let hash = parts.next().context("Malformed SHA256SUMS line")?;
-        let name = parts.next().context("Malformed SHA256SUMS line")?;
+        let hash = strip_bom_and_trim(parts.next().context("Malformed SHA256SUMS line")?)
+            .to_ascii_lowercase();
+        let name = strip_bom_and_trim(parts.next().context("Malformed SHA256SUMS line")?);
         if name == file_name {
-            return Ok(hash.to_ascii_lowercase());
+            if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(anyhow!("Invalid SHA256 hash for {file_name} in SHA256SUMS.txt"));
+            }
+            return Ok(hash);
         }
     }
-    Err(anyhow!("Checksum not found for {file_name} in SHA256SUMS.txt"))
+    Err(anyhow!(
+        "Checksum not found for {file_name} in SHA256SUMS.txt"
+    ))
+}
+
+/// Prefer SHA256SUMS.txt; fall back to the installer asset `digest` from the Releases API.
+fn resolve_expected_sha256(
+    client: &Client,
+    assets: &[GithubAsset],
+    installer_asset: &GithubAsset,
+) -> Result<String, anyhow::Error> {
+    if let Some(checksums_asset) = assets.iter().find(|asset| asset.name == "SHA256SUMS.txt") {
+        match client
+            .get(&checksums_asset.browser_download_url)
+            .send()
+            .and_then(|response| response.error_for_status())
+            .and_then(|response| response.text())
+        {
+            Ok(checksums) => match parse_sha256sums(&checksums, &installer_asset.name) {
+                Ok(hash) => {
+                    println!("Using checksum from SHA256SUMS.txt");
+                    return Ok(hash);
+                }
+                Err(err) => {
+                    eprintln!("SHA256SUMS.txt parse failed: {err:#}");
+                }
+            },
+            Err(err) => {
+                eprintln!("Failed to download SHA256SUMS.txt: {err:#}");
+            }
+        }
+    } else {
+        eprintln!("Release is missing SHA256SUMS.txt; trying asset digest fallback");
+    }
+
+    if let Some(digest) = installer_asset
+        .digest
+        .as_deref()
+        .and_then(parse_asset_digest)
+    {
+        println!("Using checksum from GitHub asset digest");
+        return Ok(digest);
+    }
+
+    Err(anyhow!(
+        "No usable checksum for {} (SHA256SUMS.txt missing/invalid and asset digest unavailable)",
+        installer_asset.name
+    ))
 }
 
 fn download_installer(
@@ -172,9 +244,7 @@ fn download_installer(
         dest.display()
     );
 
-    let mut installer_response = client
-        .get(&installer_asset.browser_download_url)
-        .send()?;
+    let mut installer_response = client.get(&installer_asset.browser_download_url).send()?;
     let size = installer_response.content_length();
     let mut downloaded: u64 = 0;
     let mut sha256 = Sha256::new();
@@ -201,7 +271,9 @@ fn download_installer(
     let actual_sha256 = format!("{:x}", sha256.finalize());
     if actual_sha256 != expected_sha256 {
         std::fs::remove_file(&dest).ok();
-        return Err(anyhow!("Checksum verification failed for {file_name}"));
+        return Err(anyhow!(
+            "Checksum verification failed for {file_name} (expected {expected_sha256}, got {actual_sha256})"
+        ));
     }
 
     println!("Checksum verified.");

@@ -1,7 +1,7 @@
 /**
  * @name Stream UI
  * @description Unified stream-list UI: AfterCredits, WatchHub, ratings, accordions.
- * @version 2.0.0
+ * @version 2.0.5
  * @category player
  * @author MyStremio
  */
@@ -519,6 +519,8 @@
 
 .sui-ratings-row{display:flex;flex-wrap:wrap;gap:10px}
 .sui-rc-card{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:78px;padding:14px 16px 11px;border-radius:12px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);box-shadow:inset 0 1px 0 rgba(255,255,255,.07);backdrop-filter:blur(16px) saturate(150%)}
+.sui-rc-card.sui-rc-card-clickable{cursor:pointer;transition:background .18s,border-color .18s,transform .18s}
+.sui-rc-card.sui-rc-card-clickable:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.16);transform:translateY(-1px)}
 .sui-rc-top{display:flex;align-items:center;justify-content:center;gap:7px;min-height:28px;margin-bottom:7px}
 .sui-rc-icon{width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center}
 .sui-rc-icon svg{width:18px;height:18px;display:block}
@@ -903,12 +905,330 @@
     series: `<svg viewBox="0 0 24 24"><path fill="#93c5fd" d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h10v2H4v-2z"/></svg>`,
   };
 
-  function ratingCard(r) {
+  /**
+   * @returns {string|null}
+   */
+  function extractImdbIdFromPage() {
+    const match = (location.hash || location.href || '').match(/tt\d{7,8}/i);
+    return match ? match[0].toLowerCase() : null;
+  }
+
+  /**
+   * Cleans a meta title for external search URLs.
+   * @param {string} raw
+   * @returns {string}
+   */
+  function cleanMetaTitle(raw) {
+    return String(raw || '')
+      .replace(/\s+/g, ' ')
+      .replace(/\(\d{4}\)\s*$/, '')
+      .replace(/\bS\d+\s*E\d+\b.*$/i, '')
+      .replace(/\bSeason\s+\d+.*$/i, '')
+      .trim();
+  }
+
+  /**
+   * @returns {string}
+   */
+  function extractMetaTitleFromPage() {
+    const logoAlt = document
+      .querySelector(
+        '[class*="meta-details"] img[class*="logo"][alt], [class*="metainfo"] img[class*="logo"][alt], [class*="meta-info"] img[alt]'
+      )
+      ?.getAttribute('alt');
+    if (logoAlt && logoAlt.length > 1 && !/stremio|anonymous|placeholder/i.test(logoAlt)) {
+      return cleanMetaTitle(logoAlt);
+    }
+
+    const roots = [
+      document.querySelector('[class*="meta-details-container"]'),
+      document.querySelector('[class*="meta-details"]'),
+      document.querySelector('[class*="metainfo-container"]'),
+      document.querySelector('[class*="meta-info-container"]'),
+    ].filter(Boolean);
+
+    const selectors = [
+      '[class*="title-name"]',
+      '[class*="name-container"] [class*="name-"]',
+      'h1',
+      '[class*="meta-name"]',
+    ];
+    for (const root of roots.length ? roots : [document]) {
+      for (const selector of selectors) {
+        const text = root.querySelector?.(selector)?.textContent?.trim();
+        if (!text) continue;
+        if (/^(available on|ratings?|after credits|streams?)/i.test(text)) continue;
+        return cleanMetaTitle(text);
+      }
+    }
+    return '';
+  }
+
+  /**
+   * @returns {Promise<string|null>}
+   */
+  async function getTmdbApiKeyForRatings() {
+    const client = window.StremioCustomAPI || window.StremioEnhancedAPI;
+    if (!client?.getSetting) return null;
+    try {
+      for (const base of ['data-enrichment', 'cast-overlay']) {
+        const key = await client.getSetting(base, 'tmdbApiKey');
+        if (key && String(key).trim()) return String(key).trim();
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /**
+   * Loads TMDB find-by-IMDb payload (cached per page open).
+   * @param {string} imdbId
+   * @returns {Promise<object|null>}
+   */
+  async function fetchTmdbFindByImdb(imdbId) {
+    if (!imdbId) return null;
+    if (window.__suiTmdbFindCache?.imdbId === imdbId) {
+      return window.__suiTmdbFindCache.data || null;
+    }
+    const apiKey = await getTmdbApiKeyForRatings();
+    if (!apiKey) return null;
+    try {
+      const response = await fetch(
+        `https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${encodeURIComponent(apiKey)}&external_source=imdb_id`
+      );
+      if (!response.ok) return null;
+      const data = await response.json();
+      window.__suiTmdbFindCache = { imdbId, data };
+      return data;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * Resolves a display title from TMDB when the meta page DOM title is missing.
+   * @param {string|null} imdbId
+   * @returns {Promise<string>}
+   */
+  async function resolveTitleFromTmdb(imdbId) {
+    const data = await fetchTmdbFindByImdb(imdbId);
+    if (!data) return '';
+    const tv = data.tv_results?.[0];
+    const movie = data.movie_results?.[0];
+    return cleanMetaTitle(tv?.name || movie?.title || tv?.original_name || movie?.original_title || '');
+  }
+
+  /**
+   * Resolves the Rotten Tomatoes title page via Wikidata (IMDb → RT id / P1258).
+   * @param {string|null} imdbId
+   * @returns {Promise<string|null>}
+   */
+  async function resolveRtUrlFromWikidata(imdbId) {
+    if (!imdbId || !/^tt\d+$/i.test(imdbId)) return null;
+    if (!window.__suiRtUrlCache) window.__suiRtUrlCache = {};
+    if (Object.prototype.hasOwnProperty.call(window.__suiRtUrlCache, imdbId)) {
+      return window.__suiRtUrlCache[imdbId];
+    }
+
+    const query =
+      `SELECT ?rt WHERE { ?item wdt:P345 "${imdbId}". OPTIONAL { ?item wdt:P1258 ?rt. } } LIMIT 1`;
+    const endpoint =
+      `https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(query)}`;
+    try {
+      const response = await fetch(endpoint, {
+        headers: { Accept: 'application/sparql-results+json' },
+      });
+      if (!response.ok) {
+        window.__suiRtUrlCache[imdbId] = null;
+        return null;
+      }
+      const data = await response.json();
+      const raw = String(data?.results?.bindings?.[0]?.rt?.value || '').trim();
+      if (!raw) {
+        window.__suiRtUrlCache[imdbId] = null;
+        return null;
+      }
+      const url = /^https?:\/\//i.test(raw)
+        ? raw
+        : `https://www.rottentomatoes.com/${raw.replace(/^\//, '')}`;
+      window.__suiRtUrlCache[imdbId] = url;
+      return url;
+    } catch (_) {
+      window.__suiRtUrlCache[imdbId] = null;
+      return null;
+    }
+  }
+
+  /**
+   * Resolves a TMDB title page via find-by-IMDb (search by tt-id is unreliable).
+   * @param {string|null} imdbId
+   * @param {string} title
+   * @returns {Promise<string|null>}
+   */
+  async function resolveTmdbTitleUrl(imdbId, title) {
+    const data = await fetchTmdbFindByImdb(imdbId);
+    if (data?.tv_results?.[0]?.id) {
+      return `https://www.themoviedb.org/tv/${data.tv_results[0].id}`;
+    }
+    if (data?.movie_results?.[0]?.id) {
+      return `https://www.themoviedb.org/movie/${data.movie_results[0].id}`;
+    }
+    if (title) return `https://www.themoviedb.org/search?query=${encodeURIComponent(title)}`;
+    return null;
+  }
+
+  /**
+   * Builds a deep-link URL for a rating source website (sync sources only).
+   * @param {string} ratingKey
+   * @param {{ imdbId: string|null, title: string }} ctx
+   * @returns {string|null}
+   */
+  function buildRatingSourceUrl(ratingKey, ctx) {
+    const imdbId = ctx.imdbId;
+    const title = ctx.title;
+    switch (ratingKey) {
+      case 'imdb':
+      case 'episode':
+      case 'series':
+        return imdbId ? `https://www.imdb.com/title/${imdbId}/` : null;
+      case 'rt':
+        // Search fallback only — prefer resolveRtUrlFromWikidata in openRatingSource.
+        return title ? `https://www.rottentomatoes.com/search?search=${encodeURIComponent(title)}` : null;
+      case 'metacritic':
+      case 'mcusers':
+        return title ? `https://www.metacritic.com/search/${encodeURIComponent(title)}/` : null;
+      case 'fsk':
+        return title
+          ? `https://www.google.com/search?q=${encodeURIComponent(`${title} FSK`)}`
+          : null;
+      case 'mpaa':
+        return imdbId ? `https://www.imdb.com/title/${imdbId}/parentalguide` : null;
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Opens an external URL via the shell API when available.
+   * @param {string} url
+   * @returns {boolean}
+   */
+  function openExternalUrl(url) {
+    if (!url) return false;
+    const client = window.StremioCustomAPI || window.StremioEnhancedAPI;
+    if (client?.openExternalUrl) {
+      Promise.resolve(client.openExternalUrl(url)).catch(() => {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      });
+      return true;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return true;
+  }
+
+  /**
+   * Resolves and opens the correct website for a rating card.
+   * @param {string} ratingKey
+   * @param {{ imdbId: string|null, title: string }} ctx
+   * @returns {Promise<boolean>}
+   */
+  async function openRatingSource(ratingKey, ctx) {
+    let title = ctx.title;
+    if (!title && ctx.imdbId && (ratingKey === 'rt' || ratingKey === 'metacritic' || ratingKey === 'mcusers' || ratingKey === 'fsk')) {
+      title = await resolveTitleFromTmdb(ctx.imdbId);
+    }
+    const resolvedCtx = { imdbId: ctx.imdbId, title };
+
+    if (ratingKey === 'tmdb') {
+      const url = await resolveTmdbTitleUrl(resolvedCtx.imdbId, resolvedCtx.title);
+      return url ? openExternalUrl(url) : false;
+    }
+    if (ratingKey === 'rt') {
+      const rtUrl = await resolveRtUrlFromWikidata(resolvedCtx.imdbId);
+      if (rtUrl) return openExternalUrl(rtUrl);
+    }
+    const url = buildRatingSourceUrl(ratingKey, resolvedCtx);
+    return url ? openExternalUrl(url) : false;
+  }
+
+  /**
+   * Builds a rating card. When `sourceKey` is set, the card is clickable.
+   * Aggregator cards also carry `data-sui-rating-key` for per-source websites.
+   * @param {{ kind?: string, key?: string, value: string, label: string, votes?: string }} r
+   * @param {string|null} [sourceKey]
+   * @returns {string}
+   */
+  function ratingCard(r, sourceKey) {
+    const clickable = sourceKey ? ' sui-rc-card-clickable' : '';
+    const dataAttr = [
+      sourceKey ? `data-sui-stream-src="${esc(sourceKey)}"` : '',
+      r.key ? `data-sui-rating-key="${esc(r.key)}"` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const attrs = dataAttr ? ` ${dataAttr}` : '';
     if (r.kind === 'age') {
-      return `<div class="sui-rc-card"><div class="sui-rc-top"><span class="sui-rc-age-box">${esc(r.value)}</span></div><div class="sui-rc-label">${esc(r.label)}</div></div>`;
+      return `<div class="sui-rc-card${clickable}"${attrs} role="${sourceKey ? 'button' : 'group'}" tabindex="${sourceKey ? '0' : '-1'}"><div class="sui-rc-top"><span class="sui-rc-age-box">${esc(r.value)}</span></div><div class="sui-rc-label">${esc(r.label)}</div></div>`;
     }
     const votes = r.votes ? `<div class="sui-rc-votes">${esc(r.votes)}</div>` : '';
-    return `<div class="sui-rc-card"><div class="sui-rc-top"><span class="sui-rc-icon">${RATING_ICONS[r.key] || RATING_ICONS.imdb}</span><span class="sui-rc-value">${esc(r.value)}</span></div><div class="sui-rc-label">${esc(r.label)}</div>${votes}</div>`;
+    return `<div class="sui-rc-card${clickable}"${attrs} role="${sourceKey ? 'button' : 'group'}" tabindex="${sourceKey ? '0' : '-1'}"><div class="sui-rc-top"><span class="sui-rc-icon">${RATING_ICONS[r.key] || RATING_ICONS.imdb}</span><span class="sui-rc-value">${esc(r.value)}</span></div><div class="sui-rc-label">${esc(r.label)}</div>${votes}</div>`;
+  }
+
+  /**
+   * Activates the original stream link/button that backs a rating card.
+   * @param {Element|null|undefined} streamEl
+   */
+  function activateSourceStream(streamEl) {
+    if (!streamEl) return;
+    const target =
+      streamEl.matches?.('a,button,[role="button"]')
+        ? streamEl
+        : streamEl.querySelector?.('a,button,[role="button"]') || streamEl;
+    try {
+      target.click();
+    } catch (_) {
+      target.dispatchEvent?.(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    }
+  }
+
+  /**
+   * Wires rating cards to per-source websites. Aggregator cards never fall back to
+   * the hidden stream click (that URL is often a wrong external deep-link).
+   * @param {Element} root
+   * @param {Element[]} aggStreams
+   * @param {Element[]} imdbStreams
+   */
+  function bindRatingCardClicks(root, aggStreams, imdbStreams) {
+    const sourceMap = {
+      agg: aggStreams[0] || null,
+      imdb: imdbStreams[0] || null,
+    };
+    const ctx = {
+      imdbId: extractImdbIdFromPage(),
+      title: extractMetaTitleFromPage(),
+    };
+    root.querySelectorAll('[data-sui-stream-src]').forEach((card) => {
+      if (card.dataset.suiClickBound === '1') return;
+      card.dataset.suiClickBound = '1';
+      const activate = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const streamSrc = card.getAttribute('data-sui-stream-src');
+        const ratingKey = card.getAttribute('data-sui-rating-key') || '';
+        if (ratingKey) {
+          void openRatingSource(ratingKey, ctx).then((opened) => {
+            if (opened) return;
+            // Only IMDb-ratings addon may fall back to its stream row.
+            if (streamSrc === 'imdb') activateSourceStream(sourceMap.imdb || null);
+          });
+          return;
+        }
+        if (streamSrc === 'imdb') activateSourceStream(sourceMap.imdb || null);
+      };
+      card.addEventListener('click', activate);
+      card.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') activate(event);
+      });
+    });
   }
 
   function ratingPanelHTML({ title, titleStacked, iconClass, iconChar, cards, panelClass }) {
@@ -998,12 +1318,14 @@
       document.getElementById(ROOT)?.remove();
 
       const panels = [];
+      const aggSource = aggStreams[0] ? 'agg' : null;
+      const imdbSource = imdbStreams[0] ? 'imdb' : null;
       if (state.ratings && aggParsed.length) {
         panels.push(ratingPanelHTML({
           title: 'Ratings',
           iconClass: 'purple',
           iconChar: '★',
-          cards: aggParsed.map(ratingCard).join(''),
+          cards: aggParsed.map((r) => ratingCard(r, aggSource)).join(''),
           panelClass: 'sui-ratings-main',
         }));
       }
@@ -1012,7 +1334,7 @@
           titleStacked: ['Episode', 'Rating'],
           iconClass: 'gold',
           iconChar: '★',
-          cards: imdbParsed.map(ratingCard).join(''),
+          cards: imdbParsed.map((r) => ratingCard(r, imdbSource)).join(''),
           panelClass: 'sui-ratings-side',
         }));
       }
@@ -1021,6 +1343,7 @@
       root.id = ROOT;
       root.innerHTML = `<div class="sui-ratings-bundle-row${panels.length > 1 ? ' has-both' : ''}">${panels.join('')}</div>`;
       box.insertBefore(root, getUiInsertAfterWatchHub(box));
+      bindRatingCardClicks(root, aggStreams, imdbStreams);
       hideAll(allStreams);
 
       if (!hideObs) {
