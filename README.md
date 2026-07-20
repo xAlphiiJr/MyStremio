@@ -259,7 +259,7 @@ The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle
 
 ## 🔒 Privacy and local data
 
-- API keys, personal setting sand library structure are stored locally in `%APPDATA%\MyStremio\`.
+- API keys, personal settings and library structure are stored locally in `%APPDATA%\MyStremio\`.
 - Cinebye login uses your Stremio session at runtime.
 - Discord Rich Presence only sends data when enabled and connected.
 
