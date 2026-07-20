@@ -159,12 +159,10 @@ Built in timestamps when hovering the seek bar in the player.
 ## 🛠️ Patch Notes
 ### 2.3.1
 
-- **Cast Overlay** — Optional player cast bubble with TMDB photos; TV series use TMDB Series Cast (`aggregate_credits`).
+- **NEW Cast Overlay Plugin** — Optional player cast bubble with TMDB photos; TV series use TMDB Series Cast (`aggregate_credits`).
 - **Data Enrichment cast** — TV detail cast also uses `aggregate_credits` so Series Cast matches TMDB instead of a tiny credits subset.
-- **Rating links** — Stream UI rating cards open the correct source pages; Rotten Tomatoes resolves the title page via Wikidata (IMDb → RT).
-- **API key settings** — Label and “Get API Key” stack immediately (no brief side-by-side flash).
-- **Player plugin menus** — Cast and Intro Submission panels use the same right inset as native Audio/Subtitles (`right: 4rem`).
-- **Startup reliability** — Themes/plugins load more reliably when the Web UI re-injects into frames.
+- **Rating links** — Stream UI rating cards now clickable and open the correct source pages.
+- **Intro Skip Plugin** — Added +/- buttons to allow for small corrections before submitting.
 
 ### 2.3.0
 
