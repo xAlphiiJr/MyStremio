@@ -155,6 +155,7 @@ Built in plugin that adds a cast section directly into the player.
 
 - **Central API Keys** — Shared API keys (TMDB, RPDB, TheIntroDB, IntroDB, …) live under **Settings → MyStremio → API Keys**, discovered from installed plugin schemas; plugin cards show Set/Missing instead of duplicate inputs.
 - **Player navigation fix** — Fixed the black screen after Episode → Next (Detail streams) → Back by syncing shell leave-cleanup with HashRouter `pushState`/`replaceState` (opaque UI restored when leaving the player; abandoned dead `#/player` routes no longer stick).
+- **Stream re-open fix** — Re-clicking the same stream after Back no longer bounces to the episode list; dead-player protection only applies to history Back, not stream clicks.
 
 ### 2.3.1
 
