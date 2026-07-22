@@ -124,7 +124,7 @@ MyStremio offers some qualitiy of life changes available as plugins so you can e
 
 #### ⏱️ Skip Intro Plugin
 
-Built in plugin that allows to receive and contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone. You have to set your personal API Key in the settings in order to use the submit feature!
+Built in plugin that allows to receive and contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone. You have to set your personal API Key in the settings in order to use the submit feature! Since 2.3.3 AniSkip has been integrated into the Skip Intro Plugin!
 
 #### ⏩ Seek Buttons Plugin
 
@@ -141,6 +141,10 @@ Built in plugin that adds timestamps when hovering the seek bar in the player.
 #### 👤 Cast Overlay Plugin
 
 Built in plugin that adds a cast section directly into the player.
+
+#### 🎇 Anime4K Plugin
+
+Built in shader plugin by [bloc97/Anime4K]((https://github.com/bloc97/Anime4K) designed for anime. If enabled you can access the different shaders dircetly from the player. You can pick the shader quality in the plugin settings.
 
 ---
 
