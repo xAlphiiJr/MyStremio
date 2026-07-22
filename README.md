@@ -144,7 +144,7 @@ Built in plugin that adds a cast section directly into the player.
 
 #### 🎇 Anime4K Plugin
 
-Built in shader plugin by [bloc97/Anime4K]((https://github.com/bloc97/Anime4K) designed for anime. If enabled you can access the different shaders dircetly from the player. You can pick the shader quality in the plugin settings.
+Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) designed for anime. If enabled you can access the different shaders dircetly from the player. You can pick the shader quality in the plugin settings.
 
 ---
 
@@ -323,6 +323,7 @@ MyStremio includes parts of the following independent community projects:
 - [REVENGE977/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced)
 - [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme)
 - [Bo0ii/StreamGo](https://github.com/Bo0ii/StreamGo)
+- [bloc97/Anime4K](https://github.com/bloc97/Anime4K)
 - [TheIntroDB](https://theintrodb.org/)
 - [IntroDB](https://introdb.app/)
 
