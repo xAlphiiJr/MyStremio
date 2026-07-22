@@ -169,9 +169,13 @@ Built in plugin that adds a cast section directly into the player.
 
 ### 2.3.4
 
-- **Nav menu icons** — Settings, Addons, and Help icons no longer disappear after opening the profile menu.
-- **Updater branding** — Update banner now says MyStremio instead of Stremio.
-- **Anime4K** — Is now adjustable via button inside the player. Shader quality (S/M/L/VL/UL) selectable in plugin settings, default L.
+- **Nav menu icons** — Settings, Addons, and Help icons no longer disappear after opening the profile menu
+- **Updater** — Update banner now says MyStremio instead of Stremio and sends requests less frequently
+- **Anime4K** — Is now adjustable via button inside the player. Shader quality (S/M/L/VL/UL) selectable in plugin settings, default L
+- **Stream UI** — Fixed performance issues caused by Stream UI plugin. Fixed an issue where it would place a second folder into the first one on usenet addons
+- **Discord Rich Presence** — Fixed an issue where it would not display current page correctly
+- **Library** — Harded library updating after title change
+
 
 
 
