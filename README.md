@@ -153,7 +153,10 @@ Built in plugin that adds a cast section directly into the player.
 ## 🛠️ Patch Notes
 ### 2.3.3
 
-- **Player window chrome** — Stream sessions run borderless; fullscreen enter/exit is stable; maximized size is preserved (no shrink, no screen overhang).
+- **AniSkip** — Integrated to Intro Skip plugin
+- **Anime4k** — Plugin added
+- **shell/loading polish** — Plugin and Player loading,Transparency transitions and stream start more robust
+- **Glass icon** — Replaced original Stremio logo with glass icon
 
 ### 2.3.2
 
