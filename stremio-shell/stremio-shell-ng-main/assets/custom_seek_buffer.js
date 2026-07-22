@@ -372,7 +372,7 @@
   hookMpvMessages();
   document.getElementById('stremio-custom-seek-hover-preview')?.remove();
 
-  window.addEventListener('hashchange', () => {
+  document.addEventListener('stremio-custom-route-change', () => {
     if (isOnPlayerPage()) {
       restoreStoredDurationHint();
       scheduleCoreDurationPoll();
@@ -380,6 +380,9 @@
     } else {
       stopLoop();
     }
+  });
+  document.addEventListener('stremio-custom-playback-stopped', () => {
+    stopLoop();
   });
   document.addEventListener('stremio-custom-cache-cleared', () => {
     cacheAheadSec = 0;

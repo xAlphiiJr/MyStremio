@@ -127,7 +127,7 @@
   if (!window.__stremioCustomPlayerGlassBootstrapped) {
     window.__stremioCustomPlayerGlassBootstrapped = true;
     ensurePlayerGlassStyles();
-    window.addEventListener('hashchange', () => {
+    document.addEventListener('stremio-custom-route-change', () => {
       ensurePlayerGlassStyles();
       setTimeout(ensurePlayerGlassStyles, 300);
       setTimeout(ensurePlayerGlassStyles, 1500);

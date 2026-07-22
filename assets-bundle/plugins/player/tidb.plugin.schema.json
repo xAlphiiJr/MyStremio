@@ -26,6 +26,13 @@
     "type": "input"
   },
   {
+    "defaultValue": true,
+    "description": "Load opening/ending/recap skip times from AniSkip (best with Kitsu titles). Fetch-only — no submit.",
+    "key": "use_aniskip",
+    "label": "AniSkip",
+    "type": "toggle"
+  },
+  {
     "defaultValue": "",
     "description": "Get your free API key at themoviedb.org/settings/api. Used to resolve TMDB IDs when submitting segments.",
     "key": "tmdbApiKey",

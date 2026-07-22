@@ -279,6 +279,7 @@
   const TMDB_NOTICE_KEY = 'stremio-custom-tmdb-notice-shown-v211d';
   const DEFAULTS_APPLIED_KEY = 'stremio-custom-defaults-applied-v211a';
   const NATIVE_PLAYER_FEATURES_MIGRATED_KEY = 'stremio-custom-migrate-brightness-hover-v1';
+  const ANIME4K_PLUGIN_MIGRATED_KEY = 'stremio-custom-migrate-anime4k-v1';
   const DEFAULT_DISABLED_PLUGIN_PATTERNS = [
     /slash[-_ ]?to[-_ ]?search/i,
     /cast[-_ ]?overlay/i,
@@ -967,6 +968,14 @@
     }
   `;
 
+  function hasLivePlaybackStream() {
+    try {
+      return Boolean(window.StremioCustomPlayback?.getMpvSnapshot?.()?.hasStream);
+    } catch (_) {
+      return false;
+    }
+  }
+
   function ensureOpaqueShellBackground() {
     if (
       typeof window.__stremioCustomIsColdStartPlayerBlocked === 'function' &&
@@ -975,7 +984,10 @@
       window.__stremioCustomStartupGuardEnsure?.();
       return;
     }
-    if (isPlayerRoute()) {
+    // Opaque until MPV is actually shown (VIDEO phase). Punching transparency while
+    // still on the loading poster leaves white edges — worse in fullscreen.
+    const mpvVisible = document.documentElement.classList.contains('mystremio-mpv-visible');
+    if (isPlayerRoute() && hasLivePlaybackStream() && mpvVisible) {
       document.getElementById(OPAQUE_UI_STYLE_ID)?.remove();
       return;
     }
@@ -1001,7 +1013,9 @@
       return;
     }
     ensureOpaqueShellBackground();
-    if (!isPlayerRoute()) {
+    const mpvVisible = html.classList.contains('mystremio-mpv-visible');
+    const livePlayer = isPlayerRoute() && hasLivePlaybackStream() && mpvVisible;
+    if (!livePlayer) {
       document.getElementById(PLAYER_FIX_STYLE_ID)?.remove();
       html.classList.remove(PLAYER_ROUTE_CLASS);
       return;
@@ -1159,6 +1173,18 @@
     if (/cast[-_ ]?overlay/i.test(normalized) || /cast[-_ ]?overlay/i.test(baseName || '')) {
       window.__stremioCastOverlayUnload?.();
     }
+    if (/anime4k/i.test(normalized) || /anime4k/i.test(baseName || '')) {
+      window.__stremioAnime4kSuspend?.();
+    }
+    if (/stream[-_ ]?ui/i.test(normalized) || /stream[-_ ]?ui/i.test(baseName || '')) {
+      window.__stremioStreamUiUnload?.();
+    }
+    if (/meta[-_ ]?hover/i.test(normalized) || /meta[-_ ]?hover/i.test(baseName || '')) {
+      window.__stremioMetaHoverUnload?.();
+    }
+    if (/context[-_ ]?menu/i.test(normalized) || /context[-_ ]?menu/i.test(baseName || '')) {
+      window.__stremioContextMenuUnload?.();
+    }
     let removed = false;
     const direct = document.getElementById(toScriptId(normalized));
     if (direct) {
@@ -1191,6 +1217,7 @@
     'player/hover-timestamps.plugin.js',
     'player/brightness.plugin.js',
     'player/cast-overlay.plugin.js',
+    'player/anime4k.plugin.js',
   ]);
 
   const IDLE_DURING_PLAYBACK_PREFIXES = [
@@ -1228,12 +1255,42 @@
     if (document.getElementById('stremio-custom-playback-guard')) return;
     const script = document.createElement('script');
     script.id = 'stremio-custom-playback-guard';
-    script.textContent = `(function(){function isPlaybackRoute(){return /#\\/player/.test(location.hash||'');}function emit(){document.dispatchEvent(new CustomEvent('stremio-custom-playback-route',{detail:{active:isPlaybackRoute()}}));}window.stremioCustomIsPlaybackRoute=isPlaybackRoute;window.stremioCustomSuspendBackground=function(){return isPlaybackRoute();};window.addEventListener('hashchange',emit);document.addEventListener('stremio-custom-route-change',emit);})();`;
+    script.textContent = `(function(){function isPlaybackRoute(){return /#\\/player/.test(location.hash||'');}function emit(){document.dispatchEvent(new CustomEvent('stremio-custom-playback-route',{detail:{active:isPlaybackRoute()}}));}window.stremioCustomIsPlaybackRoute=isPlaybackRoute;window.stremioCustomSuspendBackground=function(){return isPlaybackRoute();};document.addEventListener('stremio-custom-route-change',emit);})();`;
     (document.head || document.documentElement).appendChild(script);
     script.remove();
   }
 
   let lastPlaybackActive = null;
+
+  /**
+   * Stops player-only plugin timers/observers/locks while off the player route.
+   * Do NOT include Stream UI / Meta-Hover here — those must stay alive on detail/board.
+   * Soft-suspend for those plugins is self-managed via their own route listeners.
+   */
+  function suspendPlayerPluginRuntime() {
+    const hooks = [
+      '__stremioSeekButtonsUnload',
+      '__stremioBrightnessUnload',
+      '__stremioCastOverlayUnload',
+      '__stremioHoverTimestampsUnload',
+      '__stremioTidbSuspend',
+      '__stremioAnime4kSuspend',
+    ];
+    for (const name of hooks) {
+      try {
+        const fn = window[name];
+        if (typeof fn === 'function') fn();
+      } catch (error) {
+        console.warn('[StremioCustom] Player plugin suspend failed:', name, error);
+      }
+    }
+    document.documentElement.classList.remove(
+      'mystremio-brightness-overlay-lock',
+      'mystremio-cast-overlay-lock',
+      'tidb-contribute-overlay-lock'
+    );
+  }
+
   async function syncPluginsToRoute() {
     const playbackActive = isPlayerRoute();
     if (playbackActive === lastPlaybackActive) return;
@@ -1244,6 +1301,7 @@
         if (isIdleDuringPlayback(pluginRef)) await unloadPluginResolved(pluginRef);
       }
     } else {
+      suspendPlayerPluginRuntime();
       await ensurePluginsLoadedForRoute();
     }
   }
@@ -1302,6 +1360,25 @@
       await ensurePluginsLoadedForRoute();
     }
     localStorage.setItem(NATIVE_PLAYER_FEATURES_MIGRATED_KEY, 'true');
+    persistUserPreferences();
+  }
+
+  /**
+   * One-shot: enable Anime4K for existing installs that already applied defaults.
+   * @returns {Promise<void>}
+   */
+  async function migrateAnime4kPluginEnabled() {
+    if (localStorage.getItem(ANIME4K_PLUGIN_MIGRATED_KEY) === 'true') return;
+    const ref = 'player/anime4k.plugin.js';
+    const enabled = await migrateEnabledPlugins();
+    const next = [...enabled];
+    const resolved = (await resolvePluginRef(ref)) || ref;
+    if (!isPluginEnabled(resolved, next)) {
+      next.push(resolved);
+      setEnabledPlugins(next);
+      await ensurePluginsLoadedForRoute();
+    }
+    localStorage.setItem(ANIME4K_PLUGIN_MIGRATED_KEY, 'true');
     persistUserPreferences();
   }
 
@@ -1473,6 +1550,7 @@
     }
     await ensureDefaultPluginsEnabled();
     await migrateNativePlayerFeaturesToPlugins();
+    await migrateAnime4kPluginEnabled();
     syncDynamicHeroEnabledFlag();
     scheduleAuthProfilePersistence();
 
@@ -1542,11 +1620,20 @@
   }
   /**
    * Keep shell transparency / theme in sync with HashRouter navigations.
-   * HashRouter uses pushState/replaceState (no native hashchange) — also listen
-   * to stremio-custom-route-change from custom_route_change.js.
+   * Prefer stremio-custom-route-change (covers pushState + hashchange); do not
+   * also bind native hashchange or handlers run twice.
    */
+  let routeWasPlayer = isPlayerRoute();
+
   function onShellRouteChange() {
     ensurePlayerTransparencyFix();
+    const onPlayer = isPlayerRoute();
+    // Only tear down player-plugin runtime when leaving the player — not on every
+    // board/detail hop (Stream UI / seek/brightness must stay usable on re-entry).
+    if (routeWasPlayer && !onPlayer) {
+      suspendPlayerPluginRuntime();
+    }
+    routeWasPlayer = onPlayer;
     if (isOnSettingsPage()) {
       setTimeout(() => {
         safeRun('settingsCheck', () => window.StremioCustomSettings?.checkSettings?.({
@@ -1577,8 +1664,15 @@
     syncPluginsToRoute();
   }
 
-  window.addEventListener('hashchange', onShellRouteChange);
   document.addEventListener('stremio-custom-route-change', onShellRouteChange);
+  document.addEventListener('stremio-custom-stream-started', () => {
+    ensurePlayerTransparencyFix();
+  });
+  document.addEventListener('stremio-custom-playback-stopped', () => {
+    ensurePlayerTransparencyFix();
+    suspendPlayerPluginRuntime();
+    routeWasPlayer = false;
+  });
   document.addEventListener('stremio-custom-playback-route', (event) => {
     if (event?.detail?.active) {
       ensurePlayerTransparencyFix();
@@ -1597,7 +1691,6 @@
     }, 1200);
   }
 
-  window.addEventListener('hashchange', scheduleMaintenance);
   document.addEventListener('stremio-custom-route-change', scheduleMaintenance);
   setInterval(() => {
     if (typeof window.stremioCustomSuspendBackground === 'function' && window.stremioCustomSuspendBackground()) {

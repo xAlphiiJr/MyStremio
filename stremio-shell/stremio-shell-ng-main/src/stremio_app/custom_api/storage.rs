@@ -410,6 +410,7 @@ fn default_preferences() -> Value {
             "defaultsApplied": false
         },
         "uiScale": 100,
+        "uiScaleAdaptedMonitors": [],
         "apiKeys": {}
     })
 }
@@ -550,6 +551,7 @@ fn normalize_preferences(value: Value) -> Value {
         .map(str::to_string)
         .unwrap_or_default();
     let ui_scale = normalize_ui_scale_percent(value.get("uiScale"));
+    let ui_scale_adapted_monitors = normalize_ui_scale_adapted_monitors(value.get("uiScaleAdaptedMonitors"));
     let api_keys = super::api_keys::normalize_api_keys(value.get("apiKeys"));
 
     json!({
@@ -565,6 +567,7 @@ fn normalize_preferences(value: Value) -> Value {
         "onboarding": onboarding,
         "authProfile": auth_profile,
         "uiScale": ui_scale,
+        "uiScaleAdaptedMonitors": ui_scale_adapted_monitors,
         "apiKeys": api_keys
     })
 }
@@ -807,4 +810,60 @@ pub fn save_ui_scale_percent(percent: u32) -> u32 {
         save_user_preferences(&prefs);
     }
     normalized
+}
+
+/// Normalizes the list of monitor device keys that already received one-shot UI scale adapt.
+fn normalize_ui_scale_adapted_monitors(value: Option<&Value>) -> Vec<String> {
+    let Some(arr) = value.and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in arr {
+        let Some(raw) = entry.as_str() else {
+            continue;
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !out.iter().any(|existing| existing == trimmed) {
+            out.push(trimmed.to_string());
+        }
+    }
+    out
+}
+
+/// One-shot: set `uiScale` to `windows_percent` and mark `monitor_key` as adapted.
+///
+/// Returns `Some(normalized)` when this monitor had not been adapted yet; `None` if already known.
+///
+/// # Arguments
+/// * `monitor_key` - Device name from `MONITORINFOEX` (e.g. `\\.\DISPLAY1`).
+/// * `windows_percent` - Windows DPI percent for that monitor (will be snapped to 75–200).
+pub fn adapt_ui_scale_for_new_monitor(monitor_key: &str, windows_percent: u32) -> Option<u32> {
+    let key = monitor_key.trim();
+    if key.is_empty() {
+        return None;
+    }
+
+    let mut prefs = read_user_preferences();
+    let adapted = normalize_ui_scale_adapted_monitors(prefs.get("uiScaleAdaptedMonitors"));
+    if adapted.iter().any(|existing| existing == key) {
+        return None;
+    }
+
+    let normalized = normalize_ui_scale_percent(Some(&json!(windows_percent)));
+    let mut next_adapted = adapted;
+    next_adapted.push(key.to_string());
+
+    if let Some(obj) = prefs.as_object_mut() {
+        obj.insert("uiScale".to_string(), json!(normalized));
+        obj.insert(
+            "uiScaleAdaptedMonitors".to_string(),
+            json!(next_adapted),
+        );
+        save_user_preferences(&prefs);
+    }
+
+    Some(normalized)
 }

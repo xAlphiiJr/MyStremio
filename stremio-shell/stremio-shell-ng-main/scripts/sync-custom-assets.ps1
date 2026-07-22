@@ -1,4 +1,4 @@
-# Copies plugins and themes from project sources into the shell release folder.
+﻿# Copies plugins and themes from project sources into the shell release folder.
 # No local AppData fallback is allowed for release safety.
 param(
     [string]$SourceRoot = "",
@@ -362,4 +362,9 @@ for ($i = 0; $i -lt $PluginTargets.Count; $i++) {
     Remove-DeprecatedAssets -PluginsDir $pluginTarget -ThemesDir $themeTarget
 }
 
+
+$ShellProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$ShaderSource = Join-Path $ShellProjectRoot "shaders"
+$ShaderTarget = Join-Path $ReleaseDir "shaders"
+Copy-TreeIfExists -Source $ShaderSource -Destination $ShaderTarget
 Write-Host "Custom assets synced."

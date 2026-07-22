@@ -793,87 +793,81 @@
 
 
 	function teardown() {
-
 		window.__stremioSeekButtonsReady = false;
-
 		window.__stremioSeekButtonsVersion = "";
-
-		document.getElementById(GROUP_ID)?.remove();
-
+		suspendRuntime();
 		document.getElementById(STYLE_ID)?.remove();
-
-		if (buttonsObserver) {
-
-			buttonsObserver.disconnect();
-
-			buttonsObserver = null;
-
-		}
-
-		if (buttonsInterval) {
-
-			clearInterval(buttonsInterval);
-
-			buttonsInterval = null;
-
-		}
-
 	}
 
+	/**
+	 * Stops observers/intervals while off the player route without unloading the plugin.
+	 */
+	function suspendRuntime() {
+		document.getElementById(GROUP_ID)?.remove();
+		if (buttonsObserver) {
+			buttonsObserver.disconnect();
+			buttonsObserver = null;
+		}
+		if (buttonsInterval) {
+			clearInterval(buttonsInterval);
+			buttonsInterval = null;
+		}
+	}
 
+	/**
+	 * Re-attaches control-bar-scoped watchers when returning to the player.
+	 */
+	function ensureRuntime() {
+		if (!isSeekButtonsEnabled() || !isPlayerRoute()) {
+			suspendRuntime();
+			return;
+		}
+		ensureButtons();
+		if (buttonsObserver && buttonsInterval) return;
 
-	window.__stremioSeekButtonsUnload = teardown;
+		if (!buttonsObserver) {
+			const target =
+				document.querySelector('[class*="player-container"] [class*="control-bar-buttons-container"]') ||
+				document.querySelector('[class*="player-container"]') ||
+				document.body;
+			buttonsObserver = new MutationObserver(() => {
+				if (!isSeekButtonsEnabled() || !isPlayerRoute()) {
+					suspendRuntime();
+					return;
+				}
+				ensureButtons();
+			});
+			buttonsObserver.observe(target, { childList: true, subtree: true });
+		}
 
+		if (!buttonsInterval) {
+			buttonsInterval = setInterval(() => {
+				if (!isSeekButtonsEnabled() || !isPlayerRoute()) {
+					suspendRuntime();
+					return;
+				}
+				ensureButtons();
+			}, 2500);
+		}
+	}
 
+	window.__stremioSeekButtonsUnload = suspendRuntime;
 
 	function initObservers() {
+		ensureRuntime();
 
-		ensureButtons();
-
-		buttonsObserver = new MutationObserver(() => {
-
-			if (!isSeekButtonsEnabled()) {
-
-				teardown();
-
-				return;
-
-			}
-
-			ensureButtons();
-
+		document.addEventListener("stremio-custom-route-change", () => {
+			ensureRuntime();
 		});
-
-		buttonsObserver.observe(document.body, { childList: true, subtree: true });
-
-		window.addEventListener("hashchange", () => {
-
-			if (!isSeekButtonsEnabled()) {
-
-				teardown();
-
-				return;
-
-			}
-
-			ensureButtons();
-
+		document.addEventListener("stremio-custom-playback-route", () => {
+			ensureRuntime();
 		});
-
-		buttonsInterval = setInterval(() => {
-
-			if (!isSeekButtonsEnabled()) {
-
-				teardown();
-
-				return;
-
-			}
-
-			ensureButtons();
-
-		}, 1200);
-
+		document.addEventListener("stremio-custom-playback-stopped", () => {
+			suspendRuntime();
+		});
+		document.addEventListener("stremio-custom-stream-started", () => {
+			ensureRuntime();
+		});
 	}
 
 

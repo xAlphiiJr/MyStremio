@@ -481,22 +481,43 @@ class ContextMenuFix {
     destroy() {
         if (this.observer) {
             this.observer.disconnect();
+            this.observer = null;
         }
         // Clean up any remaining portals
         document.querySelectorAll('.context-menu-portal').forEach(el => el.remove());
     }
 }
 
-if (document.body) {
-    new ContextMenuFix();
-} else {
-    const checkBody = () => {
-        if (document.body) {
-            new ContextMenuFix();
-        } else {
-            setTimeout(checkBody, 50);
-        }
+(function bootContextMenuFix() {
+    /** @type {ContextMenuFix|null} */
+    let instance = null;
+
+    function ensureInstance() {
+        if (instance) return instance;
+        if (!document.body) return null;
+        instance = new ContextMenuFix();
+        return instance;
+    }
+
+    /**
+     * Soft teardown when the plugin is unloaded (keeps running on player for season menus).
+     */
+    window.__stremioContextMenuUnload = function () {
+        instance?.destroy();
+        instance = null;
     };
-    checkBody();
-}
+
+    if (document.body) {
+        ensureInstance();
+    } else {
+        const checkBody = () => {
+            if (document.body) {
+                ensureInstance();
+            } else {
+                setTimeout(checkBody, 50);
+            }
+        };
+        checkBody();
+    }
+})();
 

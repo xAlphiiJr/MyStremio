@@ -16,7 +16,8 @@ pub struct SplashImage {
 }
 
 impl SplashImage {
-    const BG_COLOR: [u8; 3] = [27, 17, 38];
+    /// Liquid Glass theme background (`--background: rgb(20, 20, 20)`).
+    const BG_COLOR: [u8; 3] = [20, 20, 20];
     pub fn visible(&self) -> bool {
         self.splash.visible()
     }

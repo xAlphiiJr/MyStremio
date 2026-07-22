@@ -1,0 +1,9 @@
+[
+  {
+    "key": "mode",
+    "type": "input",
+    "label": "Mode",
+    "description": "Off disables shaders. A ≈ 1080p, B ≈ 720p, C ≈ 480p. A+A / B+B / C+A are heavier. Mode chips are shown in the panel (no dropdown).",
+    "defaultValue": "A"
+  }
+]

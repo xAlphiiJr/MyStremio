@@ -312,13 +312,14 @@
 
   window.__stremioCustomAudioSyncEnsure = scheduleAudioSync;
 
-  window.addEventListener('hashchange', () => {
+  document.addEventListener('stremio-custom-route-change', () => {
     lastTrackList = null;
     lastAppliedTrackId = null;
     setTimeout(scheduleAudioSync, 50);
     setTimeout(scheduleAudioSync, 1500);
     setTimeout(scheduleAudioSync, 4000);
   });
+  document.addEventListener('stremio-custom-playback-stopped', scheduleAudioSync);
 
   document.addEventListener('stremio-custom-bootstrap-ready', scheduleAudioSync);
   hookShellIncoming();

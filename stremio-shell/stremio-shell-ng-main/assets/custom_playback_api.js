@@ -39,6 +39,16 @@
   let startupBaselineTime = null;
   let playbackAdvanced = false;
   let startupRecoveryCount = 0;
+  /**
+   * Playback owner states (logical):
+   * idle | loading | playing | paused | leaving
+   * Leave always pause→grace→stop; new path / re-entry cancels leave and unpauses.
+   */
+  /** Cancels a pending leave-stop when re-entering player / new loadfile arrives. */
+  let leaveTeardownGen = 0;
+  let leaveStopPending = false;
+  /** Grace before hard stop so next-episode loadfile is not killed mid-transition. */
+  const LEAVE_STOP_GRACE_MS = 280;
   const STARTUP_RECOVERY_MAX = 5;
   const STARTUP_RECOVERY_WINDOW_MS = 45000;
   const shimmedVideos = new WeakSet();
@@ -533,6 +543,9 @@
 
   function onStreamPathChanged(streamPath) {
     if (!streamPath || streamPath === currentStreamPath) return;
+    // New load cancels any pending leave-stop (next episode / quick re-entry).
+    leaveStopPending = false;
+    leaveTeardownGen += 1;
     currentStreamPath = streamPath;
     streamStartedAt = Date.now();
     preloadBoostApplied = false;
@@ -551,6 +564,10 @@
         detail: { path: streamPath },
       })
     );
+    window.__stremioCustomPlayerTransparencyEnsure?.();
+    // Path often arrives after early session nudges; clear leave-pause residue and re-nudge.
+    playShellPlayback();
+    scheduleSessionNudge();
   }
 
   function nudgePlaybackAtCurrentTime() {
@@ -618,18 +635,62 @@
   }
 
   function onPlayerSessionStart() {
+    leaveStopPending = false;
+    leaveTeardownGen += 1;
     hookShellMessages();
     ensureShellVideo();
     requestMpvObservations();
     startPolling();
+    // Clear pause residue from a prior leave so the first loadfile is not born paused.
+    playShellPlayback();
     scheduleSessionNudge();
     applyStoredDurationHint();
     void pollCorePlayerDuration();
     window.__stremioCustomPlayerTransparencyEnsure?.();
   }
 
+  /**
+   * Industry-standard leave: pause immediately, then stop after a short grace
+   * (ShellVideo unload → mpv stop). Grace protects next-episode transitions.
+   * After stop, clear MPV pause so the next loadfile is not stuck on frame 0.
+   */
+  function teardownPlaybackOnLeave() {
+    if (window.__stremioCustomPipMode) return;
+
+    stopPolling();
+    document.querySelector(`video[${VIDEO_ATTR}]`)?.remove();
+
+    if (!currentStreamPath) {
+      resetPlaybackState();
+      window.__stremioCustomPlayerTransparencyEnsure?.();
+      return;
+    }
+
+    pauseShellPlayback();
+    if (leaveStopPending) return;
+
+    leaveStopPending = true;
+    const gen = ++leaveTeardownGen;
+
+    window.setTimeout(() => {
+      leaveStopPending = false;
+      if (gen !== leaveTeardownGen) return;
+      if (isPlayerRoute()) return;
+      if (window.__stremioCustomPipMode) return;
+
+      sendMpvCommand(['stop']);
+      // MPV pause often survives stop; clear it for the next idle→loadfile cycle.
+      sendMpvSetProp('pause', false);
+      mpvPause = false;
+      resetPlaybackState();
+      document.dispatchEvent(new CustomEvent('stremio-custom-playback-stopped'));
+      window.__stremioCustomPlayerTransparencyEnsure?.();
+    }, LEAVE_STOP_GRACE_MS);
+  }
+
   function onPlayerSessionEnd() {
     sessionNudgeGen += 1;
+    teardownPlaybackOnLeave();
   }
 
   function runPlaybackRecovery() {
@@ -865,9 +926,23 @@
 
     ensureShellVideo();
 
+    const mpvFresh = lastMpvTimeAt > 0 && Date.now() - lastMpvTimeAt < 2500;
+    // Healthy live playback: skip DOM reads / recovery; keep light sync only.
+    if (
+      mpvFresh &&
+      playbackAdvanced &&
+      Number.isFinite(shimState.duration) &&
+      shimState.duration > 0 &&
+      !mpvPausedForCache
+    ) {
+      maybeBoostPreload();
+      dispatchVideoEvent('progress');
+      syncShellVideoState();
+      return;
+    }
+
     const domTime = readTimeFromDom();
     if (domTime != null) {
-      const mpvFresh = lastMpvTimeAt > 0 && Date.now() - lastMpvTimeAt < 2500;
       if (!mpvFresh || domTime > shimState.currentTime + 1.5) {
         updateCurrentTime(domTime, 'dom');
       }
@@ -889,6 +964,7 @@
     maybeBoostPreload();
     dispatchVideoEvent('progress');
     syncShellVideoState();
+    runStartupPlaybackRecovery();
     runPlaybackRecovery();
   }
 
@@ -925,19 +1001,21 @@
 
   function ensurePlaybackApi() {
     if (!isPlayerRoute()) {
-      if (!window.__stremioCustomPipMode) {
-        stopPolling();
-        resetPlaybackState();
-        document.querySelector(`video[${VIDEO_ATTR}]`)?.remove();
-      }
+      teardownPlaybackOnLeave();
       return;
     }
 
+    const wasLeaving = leaveStopPending;
+    leaveStopPending = false;
+    leaveTeardownGen += 1;
     hookShellMessages();
     ensureShellVideo();
     requestMpvObservations();
     startPolling();
     syncShellVideoState();
+    // Only clear pause residue when we cancelled an in-flight leave-stop.
+    if (wasLeaving) playShellPlayback();
+    window.__stremioCustomPlayerTransparencyEnsure?.();
   }
 
   window.StremioCustomPlayback = {
@@ -959,6 +1037,7 @@
     isAutoPlaySuppressed,
     onPlayerSessionStart,
     onPlayerSessionEnd,
+    stopPlayback: teardownPlaybackOnLeave,
     nudgePlayback: () => playShellPlayback(),
     isPresentationReady: isVideoGateOpen,
     seekTo: (seconds) => {
@@ -981,7 +1060,6 @@
     applyPreloadSettings();
   });
 
-  window.addEventListener('hashchange', ensurePlaybackApi);
   document.addEventListener('stremio-custom-route-change', ensurePlaybackApi);
   document.addEventListener('stremio-custom-playback-route', ensurePlaybackApi);
   document.addEventListener('stremio-custom-bootstrap-ready', ensurePlaybackApi);

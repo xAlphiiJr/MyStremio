@@ -176,19 +176,38 @@
   }
 
   function tick() {
-    if (!isBoardRoute()) return;
+    if (!isBoardRoute()) {
+      stopHeroInterval();
+      return;
+    }
+    ensureHeroInterval();
     ensureStyles();
     markLoadingSlots();
     clearLoadingWhenReady();
   }
 
+  /**
+   * Stops the board hero poll while off the board route.
+   */
+  function stopHeroInterval() {
+    if (!window.__stremioCustomHeroLoadingInterval) return;
+    window.clearInterval(window.__stremioCustomHeroLoadingInterval);
+    window.__stremioCustomHeroLoadingInterval = null;
+  }
+
+  /**
+   * Starts the hero poll only while the board is active.
+   */
+  function ensureHeroInterval() {
+    if (window.__stremioCustomHeroLoadingInterval) return;
+    window.__stremioCustomHeroLoadingInterval = window.setInterval(tick, 400);
+  }
+
   window.__stremioCustomHeroLoadingEnsure = tick;
 
   tick();
-  window.addEventListener('hashchange', () => window.setTimeout(tick, 50));
+  document.addEventListener('stremio-custom-route-change', () => window.setTimeout(tick, 50));
   document.addEventListener('DOMContentLoaded', tick);
   window.addEventListener('load', tick);
-  if (!window.__stremioCustomHeroLoadingInterval) {
-    window.__stremioCustomHeroLoadingInterval = window.setInterval(tick, 400);
-  }
+  if (isBoardRoute()) ensureHeroInterval();
 })();

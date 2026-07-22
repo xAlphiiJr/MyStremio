@@ -27,16 +27,42 @@
   const VIEWPORT_MAINTAIN_MS = 5000;
 
   let phase = Phase.IDLE;
-  let sessionId = 0;
-  let loadStartedAt = 0;
   let pendingSession = false;
   let maxTimer = null;
   let viewportTimers = [];
   let pollTimer = null;
   let lastViewportMaintainAt = 0;
   let brandObserver = null;
+  let shellBorderlessMsgId = 1;
+  let shellBorderlessEnabled = false;
 
   let artwork = { background: null, logo: null, imdbId: null };
+
+  /**
+   * Ask the native shell to strip or restore window chrome (caption/frame).
+   * Keeps window size; avoids MPV flashing framed borders during load.
+   * @param {boolean} enabled
+   * @param {boolean} [force] Re-send even if local flag matches (reconcile after maximize).
+   */
+  function setShellBorderless(enabled, force) {
+    const next = Boolean(enabled);
+    if (!force && next === shellBorderlessEnabled) return;
+    shellBorderlessEnabled = next;
+    try {
+      if (!window.chrome?.webview?.postMessage) {
+        shellBorderlessEnabled = !next;
+        return;
+      }
+      window.chrome.webview.postMessage(
+        JSON.stringify({
+          id: shellBorderlessMsgId++,
+          args: ['win-set-borderless', { enabled: next }],
+        })
+      );
+    } catch (_) {
+      shellBorderlessEnabled = !next;
+    }
+  }
 
   function isPlayerRoute() {
     return /#\/player/.test(location.hash || '');
@@ -102,6 +128,13 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
+      html.${SESSION_CLASS} [class*="player-container"],
+      html.${SESSION_CLASS} [class*="player-container"] [class*="video-container"],
+      html.${SESSION_CLASS} [class*="player-container"] [class*="rendering"],
+      html.${SESSION_CLASS} [class*="player-container"] [class*="shell-video"] {
+        outline: none !important;
+        border-color: transparent !important;
+      }
       html.${SESSION_CLASS}.${MPV_VISIBLE_CLASS} [class*="player-container"] {
         background: transparent !important;
         background-color: transparent !important;
@@ -308,10 +341,11 @@
       stopBrandObserver();
       scheduleViewportPunch();
     } else if (next === Phase.LOADING) {
+      // Stay opaque while loading — punching here exposes white HWND/WebView edges
+      // especially when the user enters fullscreen during the poster phase.
       html.classList.remove(MPV_VISIBLE_CLASS);
       applySeriesBranding();
       startBrandObserver();
-      punchMpvViewport();
     } else {
       html.classList.remove(MPV_VISIBLE_CLASS);
       stopBrandObserver();
@@ -386,15 +420,15 @@
     pendingSession = false;
 
     if (phase === Phase.VIDEO) {
+      setShellBorderless(true, true);
       scheduleViewportPunch();
       return;
     }
 
-    sessionId += 1;
-    loadStartedAt = Date.now();
     clearMaxTimer();
 
     injectSessionStyles();
+    setShellBorderless(true, true);
     setPhase(Phase.LOADING);
     startPoll();
 
@@ -416,6 +450,7 @@
     setPhase(Phase.IDLE);
     pendingSession = false;
     artwork = { background: null, logo: null, imdbId: null };
+    setShellBorderless(false);
     window.StremioCustomPlayback?.onPlayerSessionEnd?.();
   }
 
@@ -429,7 +464,6 @@
       return;
     }
     if (phase === Phase.VIDEO) scheduleViewportPunch();
-    else punchMpvViewport();
   }
 
   function onPlayerLeave(options = {}) {
@@ -457,7 +491,6 @@
     else onPlayerEnter();
   }
 
-  window.addEventListener('hashchange', onRouteChangeForSession);
   document.addEventListener('stremio-custom-route-change', onRouteChangeForSession);
 
   document.addEventListener('stremio-custom-bootstrap-ready', () => {

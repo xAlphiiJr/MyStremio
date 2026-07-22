@@ -157,15 +157,36 @@
     return parsed.stringMode ? JSON.stringify(parsed.data) : parsed.data;
   }
 
+  /**
+   * Rewrites volume set-props to stored defaults outside a user gesture.
+   * Mute is never rewritten — every mute set-prop is treated as user/UI intent.
+   * @param {unknown[]} pair
+   * @returns {unknown[]}
+   */
   function rewriteMpvSetPropPair(pair) {
-    if (!Array.isArray(pair) || pair.length < 2 || !shouldApplyDefaults()) return pair;
+    if (!Array.isArray(pair) || pair.length < 2) return pair;
 
-    if (pair[0] === 'volume' && store.level != null) {
-      return ['volume', store.level];
+    if (pair[0] === 'mute') {
+      const muted = normalizeMute(pair[1]);
+      if (muted != null) {
+        markUserVolumeGesture();
+        commitVolume(null, muted);
+      }
+      return pair;
     }
-    if (pair[0] === 'mute' && store.muted != null) {
-      return ['mute', store.muted ? 'yes' : 'no'];
+
+    if (pair[0] === 'volume') {
+      const level = clampLevel(pair[1]);
+      if (level != null && isUserVolumeGesture()) {
+        commitVolume(level, null);
+        return pair;
+      }
+      if (shouldApplyDefaults() && store.level != null) {
+        return ['volume', store.level];
+      }
+      return pair;
     }
+
     return pair;
   }
 
@@ -192,20 +213,20 @@
     }
 
     const change = args[1];
-    if (change.name === 'volume' && store.level != null) {
+    // Never rewrite live mute — UI must track MPV truth. Volume defaults only.
+    if (change.name === 'volume' && store.level != null && !isUserVolumeGesture()) {
       change.data = store.level;
-      return serializeShellWire(parsed);
-    }
-    if (change.name === 'mute' && store.muted != null) {
-      change.data = store.muted ? 'yes' : 'no';
       return serializeShellWire(parsed);
     }
 
     return raw;
   }
 
+  /**
+   * Persists mute/volume from any outgoing set-prop (gesture optional for mute).
+   * @param {unknown} raw
+   */
   function captureFromShellOutgoing(raw) {
-    if (!isUserVolumeGesture()) return;
     const parsed = parseShellWire(raw);
     if (!parsed) return;
 
@@ -213,14 +234,18 @@
     if (args[0] !== 'mpv-set-prop' || !Array.isArray(args[1])) return;
 
     const [prop, value] = args[1];
-    if (prop === 'volume') {
-      const level = clampLevel(value);
-      if (level != null) commitVolume(level, null);
-      return;
-    }
     if (prop === 'mute') {
       const muted = normalizeMute(value);
-      if (muted != null) commitVolume(null, muted);
+      if (muted != null) {
+        markUserVolumeGesture();
+        commitVolume(null, muted);
+      }
+      return;
+    }
+    if (prop === 'volume') {
+      if (!isUserVolumeGesture()) return;
+      const level = clampLevel(value);
+      if (level != null) commitVolume(level, null);
     }
   }
 
@@ -248,14 +273,16 @@
   function captureFromUserUi() {
     if (!/#\/player/.test(location.hash || '')) return;
     const level = readVolumeFromDomSlider();
-    const muted = readMutedFromDom();
+    // Mute is owned by outgoing mpv-set-prop — aria-labels lag and can undo mute.
     if (level != null) commitVolume(level, null);
-    if (muted != null) commitVolume(null, muted);
   }
 
   function bindVolumeUiWatch() {
     if (window.__stremioCustomVolumeUiBound) return;
     window.__stremioCustomVolumeUiBound = true;
+
+    const VOLUME_UI_SELECTOR =
+      '[class*="volume-change-indicator"], [class*="volume-slider"], [class*="volume-button"], [class*="control-bar-button"][title*="Mute" i], [class*="control-bar-button"][title*="Unmute" i], [class*="control-bar-button"][title*="Stumm" i], [class*="control-bar-button"][aria-label*="Mute" i], [class*="control-bar-button"][aria-label*="Unmute" i], [class*="control-bar-button"][aria-label*="Stumm" i]';
 
     const onUserGesture = () => {
       markUserVolumeGesture();
@@ -267,7 +294,7 @@
     document.addEventListener(
       'pointerdown',
       (event) => {
-        if (!event.target?.closest?.('[class*="volume-change-indicator"], [class*="volume-slider"]')) return;
+        if (!event.target?.closest?.(VOLUME_UI_SELECTOR)) return;
         markUserVolumeGesture();
       },
       true
@@ -276,7 +303,7 @@
     document.addEventListener(
       'pointerup',
       (event) => {
-        if (!event.target?.closest?.('[class*="volume-change-indicator"], [class*="volume-slider"]')) return;
+        if (!event.target?.closest?.(VOLUME_UI_SELECTOR)) return;
         onUserGesture();
       },
       true
@@ -285,7 +312,7 @@
     document.addEventListener(
       'click',
       (event) => {
-        if (!event.target?.closest?.('[class*="volume-change-indicator"], [class*="volume-slider"]')) return;
+        if (!event.target?.closest?.(VOLUME_UI_SELECTOR)) return;
         onUserGesture();
       },
       true

@@ -418,6 +418,16 @@
     scheduleSettingsCheck,
   };
 
+  /**
+   * Keep dropdown + localStorage in sync when the shell adapts scale for a new monitor.
+   */
+  document.addEventListener('stremio-custom-ui-scale-changed', (event) => {
+    const percent = normalizePercent(event?.detail?.percent);
+    writeStoredPercent(percent);
+    activeController?.setValue(percent);
+    helpers().persistUserPreferences?.();
+  });
+
   document.addEventListener('stremio-custom-bootstrap-ready', () => {
     startSettingsWatcher();
   });

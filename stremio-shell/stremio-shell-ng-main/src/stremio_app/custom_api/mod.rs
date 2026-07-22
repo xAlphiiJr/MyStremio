@@ -1,3 +1,4 @@
+mod aniskip_proxy;
 mod api_keys;
 mod introdb_proxy;
 mod paths;
@@ -5,8 +6,8 @@ mod storage;
 
 use crate::stremio_app::discord_presence;
 use paths::{
-    bundled_plugins_dir, bundled_themes_dir, ensure_asset_dirs, ensure_webview_user_data_dir,
-    plugins_dir, themes_dir,
+    bundled_plugins_dir, bundled_root, bundled_themes_dir, ensure_asset_dirs,
+    ensure_webview_user_data_dir, plugins_dir, themes_dir,
 };
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
@@ -43,6 +44,8 @@ pub fn request_ui_scale_apply() {
 pub fn read_ui_scale() -> u32 {
     read_ui_scale_percent()
 }
+
+pub use storage::adapt_ui_scale_for_new_monitor;
 
 pub fn complete_pip_toggle(active: bool) {
     if let Some(lock) = PIP_RESPONSE_TX.get() {
@@ -82,6 +85,7 @@ pub fn handle_request(message: &Value) -> Option<String> {
             "themesPath": themes_dir().to_string_lossy(),
             "bundledPluginsPath": bundled_plugins_dir().to_string_lossy(),
             "bundledThemesPath": bundled_themes_dir().to_string_lossy(),
+            "shadersPath": bundled_root().join("shaders").to_string_lossy(),
         }),
         "open-folder" => {
             let folder = params
@@ -294,6 +298,39 @@ pub fn handle_request(message: &Value) -> Option<String> {
             let body = params.get("body").cloned().unwrap_or(Value::Null);
             match introdb_proxy::submit_segment(api_key, &body) {
                 Ok(payload) => json!(payload),
+                Err(error) => return Some(error_response(id, &error)),
+            }
+        }
+        "aniskip-get-skip-times" => {
+            let mal_id = params.get("malId").and_then(|v| v.as_u64()).unwrap_or(0);
+            let episode = params.get("episode").and_then(|v| v.as_u64()).unwrap_or(0);
+            let episode_length = params
+                .get("episodeLength")
+                .and_then(|v| v.as_f64())
+                .filter(|v| *v > 0.0);
+            match aniskip_proxy::get_skip_times(mal_id, episode, episode_length) {
+                Ok(payload) => json!(payload),
+                Err(error) => return Some(error_response(id, &error)),
+            }
+        }
+        "aniskip-resolve-mal-kitsu" => {
+            let kitsu_id = params.get("kitsuId").and_then(|v| v.as_u64()).unwrap_or(0);
+            match aniskip_proxy::resolve_mal_from_kitsu(kitsu_id) {
+                Ok(mal_id) => json!({ "malId": mal_id }),
+                Err(error) => return Some(error_response(id, &error)),
+            }
+        }
+        "aniskip-resolve-mal-jikan" => {
+            let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            match aniskip_proxy::resolve_mal_from_jikan(title) {
+                Ok(mal_id) => json!({ "malId": mal_id }),
+                Err(error) => return Some(error_response(id, &error)),
+            }
+        }
+        "aniskip-resolve-mal-kitsu-title" => {
+            let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            match aniskip_proxy::resolve_mal_from_kitsu_title(title) {
+                Ok(mal_id) => json!({ "malId": mal_id }),
                 Err(error) => return Some(error_response(id, &error)),
             }
         }

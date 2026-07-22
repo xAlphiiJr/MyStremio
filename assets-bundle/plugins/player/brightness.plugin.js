@@ -39,6 +39,7 @@
   let outsideHandler = null;
   let keyHandler = null;
   let overlayTimer = null;
+  let overlayObserver = null;
   let dismissGuardUntil = 0;
   let ensureTimer = null;
   let lastAppliedPercent = null;
@@ -634,19 +635,43 @@
 
   function unlockPlayerOverlay() {
     document.documentElement.classList.remove(OVERLAY_LOCK_CLASS);
+    stopOverlayKeepAlive();
+  }
+
+  /**
+   * Keeps overlayVisible while the brightness panel is open without a 350ms poll.
+   * Reacts to player-container class churn (Stremio overlayHidden) via MutationObserver.
+   */
+  function stopOverlayKeepAlive() {
     if (overlayTimer) {
       window.clearInterval(overlayTimer);
       overlayTimer = null;
     }
+    if (overlayObserver) {
+      overlayObserver.disconnect();
+      overlayObserver = null;
+    }
   }
 
   function startOverlayKeepAlive() {
-    if (overlayTimer) return;
-    overlayTimer = window.setInterval(() => {
-      if (!panelOpen) return;
+    stopOverlayKeepAlive();
+    if (!panelOpen) return;
+    lockPlayerOverlay();
+    positionPanel();
+    const playerContainer = document.querySelector('[class*="player-container"]');
+    if (!playerContainer) return;
+    overlayObserver = new MutationObserver(() => {
+      if (!panelOpen) {
+        stopOverlayKeepAlive();
+        return;
+      }
       lockPlayerOverlay();
       positionPanel();
-    }, 350);
+    });
+    overlayObserver.observe(playerContainer, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
   }
 
   function isOutsidePointer(event) {
@@ -861,21 +886,37 @@
       window.clearTimeout(ensureTimer);
       ensureTimer = null;
     }
-    if (overlayTimer) {
-      window.clearInterval(overlayTimer);
-      overlayTimer = null;
-    }
+    stopOverlayKeepAlive();
     document.documentElement.classList.remove(OVERLAY_LOCK_CLASS);
     document.documentElement.classList.remove(SLIDER_ACTIVE_CLASS);
     window.__stremioBrightnessPluginReady = false;
   }
 
+  /**
+   * Soft leave: stop timers/observers/UI without destroying the plugin bootstrap.
+   */
+  function suspendRuntime() {
+    closePanel();
+    removeUi();
+    stopOverlayKeepAlive();
+    if (layoutObserver) {
+      layoutObserver.disconnect();
+      layoutObserver = null;
+    }
+    if (ensureTimer) {
+      window.clearTimeout(ensureTimer);
+      ensureTimer = null;
+    }
+    document.documentElement.classList.remove(OVERLAY_LOCK_CLASS);
+    document.documentElement.classList.remove(SLIDER_ACTIVE_CLASS);
+  }
+
   window.__stremioBrightnessUnload = function () {
-    teardownDisabled();
+    suspendRuntime();
   };
 
   if (!isBrightnessEnabled()) {
-    window.__stremioBrightnessUnload();
+    teardownDisabled();
     return;
   }
 
@@ -885,18 +926,28 @@
   if (!window.__stremioBrightnessBootstrapped) {
     window.__stremioBrightnessBootstrapped = true;
     ensureAll();
-    window.addEventListener('hashchange', () => {
+    document.addEventListener('stremio-custom-playback-route', scheduleEnsure);
+    document.addEventListener('stremio-custom-bootstrap-ready', scheduleEnsure);
+    document.addEventListener('stremio-custom-route-change', () => {
+      if (!isPlayerRoute()) {
+        suspendRuntime();
+        return;
+      }
       scheduleEnsure();
+      bindLayoutObserver();
       window.setTimeout(ensureAll, 300);
       window.setTimeout(ensureAll, 1200);
     });
-    document.addEventListener('stremio-custom-playback-route', scheduleEnsure);
-    document.addEventListener('stremio-custom-bootstrap-ready', scheduleEnsure);
+    document.addEventListener('stremio-custom-playback-stopped', () => {
+      suspendRuntime();
+    });
     document.addEventListener('stremio-custom-stream-started', () => {
       window.setTimeout(() => {
         resetMpvTone();
         setBrightness(readStoredPercent(), false);
       }, 120);
+      scheduleEnsure();
+      bindLayoutObserver();
     });
     window.addEventListener('resize', () => {
       if (panelOpen) positionPanel();

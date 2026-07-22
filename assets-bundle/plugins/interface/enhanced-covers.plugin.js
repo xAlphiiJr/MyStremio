@@ -365,8 +365,8 @@
     checkReady();
   }
 
-  // Handle navigation changes
-  window.addEventListener("hashchange", () => {
+  // Handle navigation changes (HashRouter via route bus)
+  document.addEventListener("stremio-custom-route-change", () => {
     injectStyles();
     setTimeout(replaceCover, 500);
     setTimeout(replaceCover, 1500);

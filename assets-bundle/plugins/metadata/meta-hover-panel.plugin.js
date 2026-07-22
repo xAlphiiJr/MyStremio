@@ -1336,39 +1336,46 @@
     positionPanel(activePanel, activeAnchor.getBoundingClientRect());
   }
 
-  function init() {
-    if (window.__MetaHoverPanelLoaded) return;
-    window.__MetaHoverPanelLoaded = true;
+  let catalogObserver = null;
+  let runtimeBound = false;
+  let resizeHandler = null;
 
-    injectStyles();
+  /**
+   * @returns {boolean}
+   */
+  function isMetaHoverRoute() {
+    const hash = location.hash || '';
+    if (/#\/player/.test(hash)) return false;
+    if (/#\/settings/.test(hash)) return false;
+    return true;
+  }
+
+  /**
+   * Disconnects body observer and clears hover UI while off board/catalog.
+   */
+  function suspendRuntime() {
+    clearHoverState();
+    if (catalogObserver) {
+      catalogObserver.disconnect();
+      catalogObserver = null;
+    }
+  }
+
+  /**
+   * Re-attaches catalog observer when back on board/library routes.
+   */
+  function ensureRuntime() {
+    if (!isMetaHoverRoute()) {
+      suspendRuntime();
+      return;
+    }
     annotateMetaItems();
-
-    document.addEventListener('mousemove', handlePointerMove, { passive: true });
-    document.addEventListener('pointerdown', handlePointerDown, true);
-    document.addEventListener('mouseleave', clearHoverState);
-    window.addEventListener('scroll', handleScroll, true);
-    window.addEventListener('resize', () => {
-      if (!activePanel) return;
-      if (!activeAnchor?.isConnected || !isAnchorVisible(activeAnchor)) {
-        clearHoverState();
+    if (catalogObserver) return;
+    catalogObserver = new MutationObserver((mutations) => {
+      if (!isMetaHoverRoute()) {
+        suspendRuntime();
         return;
       }
-      repositionActivePanel();
-    });
-    window.addEventListener('hashchange', () => {
-      invalidateCatalogCache();
-      clearHoverState();
-    });
-    window.addEventListener('popstate', () => {
-      invalidateCatalogCache();
-      clearHoverState();
-    });
-    window.addEventListener('blur', clearHoverState);
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) clearHoverState();
-    });
-
-    const observer = new MutationObserver((mutations) => {
       if (isCatalogMutation(mutations)) {
         invalidateCatalogCache();
         clearHoverState();
@@ -1388,8 +1395,46 @@
       }
       annotateMetaItems();
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    catalogObserver.observe(document.body, { childList: true, subtree: true });
+  }
 
+  window.__stremioMetaHoverUnload = suspendRuntime;
+
+  function init() {
+    if (window.__MetaHoverPanelLoaded) return;
+    window.__MetaHoverPanelLoaded = true;
+
+    injectStyles();
+
+    if (!runtimeBound) {
+      runtimeBound = true;
+      document.addEventListener('mousemove', handlePointerMove, { passive: true });
+      document.addEventListener('pointerdown', handlePointerDown, true);
+      document.addEventListener('mouseleave', clearHoverState);
+      window.addEventListener('scroll', handleScroll, true);
+      resizeHandler = () => {
+        if (!activePanel) return;
+        if (!activeAnchor?.isConnected || !isAnchorVisible(activeAnchor)) {
+          clearHoverState();
+          return;
+        }
+        repositionActivePanel();
+      };
+      window.addEventListener('resize', resizeHandler);
+      document.addEventListener('stremio-custom-route-change', () => {
+        invalidateCatalogCache();
+        clearHoverState();
+        ensureRuntime();
+      });
+      window.addEventListener('blur', clearHoverState);
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) clearHoverState();
+      });
+      document.addEventListener('stremio-custom-playback-route', ensureRuntime);
+      document.addEventListener('stremio-custom-playback-stopped', ensureRuntime);
+    }
+
+    ensureRuntime();
     console.info('[MetaHoverPanel] Ready');
   }
 

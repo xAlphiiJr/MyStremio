@@ -374,6 +374,14 @@
   overflow:hidden!important;pointer-events:none!important;border:none!important
 }
 
+/* Hide raw native stream rows until Stream UI has built once (or pending timeout). */
+html.sui-pending [class*="streams-container-"] > a[class*="stream-container-"],
+html.sui-pending [class*="streams-container-"] > button[class*="stream-container-"]{
+  visibility:hidden!important;height:0!important;min-height:0!important;
+  margin:0!important;padding:0!important;overflow:hidden!important;
+  border:none!important;pointer-events:none!important
+}
+
 .sui-aio-group{
   display:block;margin:0 10px 10px 6px;border-radius:16px;overflow:hidden;
   background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);
@@ -1858,10 +1866,83 @@
     state.lastBox = null;
   }
 
+  const PENDING_CLASS = 'sui-pending';
+  /** Fail-open quickly so users never stare at a blank streams panel. */
+  const PENDING_TIMEOUT_MS = 1500;
+  let tickInterval = null;
+  let streamsObserver = null;
+  let streamsObserveRaf = 0;
+  let pendingTimer = null;
+  let firstBuildDone = false;
+
+  /**
+   * @returns {boolean}
+   */
+  function isStreamUiRoute() {
+    // Hash only — do not treat leftover streams-list DOM on the board as "on route".
+    return /#\/detail|#\/meta/.test(location.hash || '');
+  }
+
+  /**
+   * Hides native stream rows until Stream UI finishes its first build (or timeout).
+   */
+  function markStreamsPending() {
+    if (!isStreamUiRoute()) return;
+    firstBuildDone = false;
+    document.documentElement.classList.add(PENDING_CLASS);
+    if (pendingTimer) window.clearTimeout(pendingTimer);
+    pendingTimer = window.setTimeout(() => {
+      pendingTimer = null;
+      clearStreamsPending();
+    }, PENDING_TIMEOUT_MS);
+  }
+
+  /**
+   * Reveals native stream rows (after build or timeout).
+   */
+  function clearStreamsPending() {
+    document.documentElement.classList.remove(PENDING_CLASS);
+    if (pendingTimer) {
+      window.clearTimeout(pendingTimer);
+      pendingTimer = null;
+    }
+  }
+
+  /**
+   * Observes the document for streams-list changes so the first build does not
+   * wait for the 900ms poll.
+   */
+  function bindStreamsObserver() {
+    if (streamsObserver) return;
+    const target = document.body || document.documentElement;
+    streamsObserver = new MutationObserver(() => {
+      if (!isStreamUiRoute()) return;
+      if (streamsObserveRaf) return;
+      streamsObserveRaf = window.requestAnimationFrame(() => {
+        streamsObserveRaf = 0;
+        tick();
+      });
+    });
+    streamsObserver.observe(target, { childList: true, subtree: true });
+  }
+
+  /**
+   * Disconnects the streams MutationObserver.
+   */
+  function unbindStreamsObserver() {
+    if (streamsObserveRaf) {
+      window.cancelAnimationFrame(streamsObserveRaf);
+      streamsObserveRaf = 0;
+    }
+    if (!streamsObserver) return;
+    streamsObserver.disconnect();
+    streamsObserver = null;
+  }
+
   function tick() {
     if (window.stremioCustomSuspendBackground?.()) return;
     if (Date.now() < state.pauseUntil) return;
-    if (!/#\/detail|#\/meta/.test(location.hash || '') && !document.querySelector('[class*="streams-list-"]')) {
+    if (!isStreamUiRoute() && !document.querySelector('[class*="streams-list-"]')) {
       return;
     }
 
@@ -1869,6 +1950,7 @@
     if (contentKey !== state.contentKey) {
       teardownAll(true);
       state.contentKey = contentKey;
+      if (isStreamUiRoute()) markStreamsPending();
     }
 
     if (!state.ready) return;
@@ -1894,7 +1976,59 @@
 
     if (state.torrent || state.usenet) accordions.build(box);
     else accordions.teardown();
+
+    if (!firstBuildDone && isStreamUiRoute()) {
+      const hasCustomUi = Boolean(
+        box.querySelector('.sui-aio-group') ||
+          document.getElementById('sui-ratings-bundle') ||
+          document.getElementById('sui-watchhub-root') ||
+          document.getElementById('sui-aftercredits-root')
+      );
+      const list = document.querySelector('[class*="streams-list-"]');
+      const listText = String(list?.textContent || '');
+      const failedOrEmpty =
+        /no streams|keine streams|error|failed|nicht gefunden/i.test(listText) ||
+        (!streamsLoading() && getTopLevelStreamLinks(box).length === 0);
+      if (hasCustomUi || !streamsLoading() || failedOrEmpty) {
+        firstBuildDone = true;
+        clearStreamsPending();
+      }
+    }
   }
+
+  /**
+   * Stops the poll + DOM work while off meta/detail (or on player).
+   */
+  function suspendRuntime() {
+    if (tickInterval) {
+      window.clearInterval(tickInterval);
+      tickInterval = null;
+    }
+    unbindStreamsObserver();
+    clearStreamsPending();
+    firstBuildDone = false;
+    teardownAll(true);
+  }
+
+  /**
+   * Restarts the poll when back on a streams-list route.
+   */
+  function ensureRuntime() {
+    const onRoute = isStreamUiRoute();
+    const suspendBg = Boolean(window.stremioCustomSuspendBackground?.());
+    if (!onRoute || suspendBg) {
+      suspendRuntime();
+      return;
+    }
+    if (!firstBuildDone) markStreamsPending();
+    bindStreamsObserver();
+    if (!tickInterval) {
+      tickInterval = window.setInterval(tick, 900);
+    }
+    tick();
+  }
+
+  window.__stremioStreamUiUnload = suspendRuntime;
 
   async function init() {
     injectCSS();
@@ -1921,11 +2055,16 @@
       a.onSettingsSaved(async () => {
         await loadSettings();
         teardownAll(true);
+        firstBuildDone = false;
+        if (isStreamUiRoute()) markStreamsPending();
         tick();
       });
     }
 
-    setInterval(tick, 900);
+    document.addEventListener('stremio-custom-route-change', ensureRuntime);
+    document.addEventListener('stremio-custom-playback-route', ensureRuntime);
+    document.addEventListener('stremio-custom-playback-stopped', ensureRuntime);
+    ensureRuntime();
   }
 
   init();

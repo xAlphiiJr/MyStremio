@@ -41,6 +41,7 @@ pub struct MainWindow {
     pub release_candidate: bool,
     pub autoupdater_setup_file: Arc<Mutex<Option<PathBuf>>>,
     pub requested_fullscreen: Arc<Mutex<Option<bool>>>,
+    pub requested_borderless: Arc<Mutex<Option<bool>>>,
     pub saved_window_style: RefCell<WindowStyle>,
     #[nwg_resource]
     pub embed: nwg::EmbedResource,
@@ -77,6 +78,9 @@ pub struct MainWindow {
     #[nwg_control]
     #[nwg_events(OnNotice: [Self::on_toggle_fullscreen_notice] )]
     pub toggle_fullscreen_notice: nwg::Notice,
+    #[nwg_control]
+    #[nwg_events(OnNotice: [Self::on_toggle_borderless_notice] )]
+    pub toggle_borderless_notice: nwg::Notice,
     #[nwg_control]
     #[nwg_events(OnNotice: [nwg::stop_thread_dispatch()] )]
     pub quit_notice: nwg::Notice,
@@ -139,6 +143,7 @@ impl MainWindow {
         self.webview.dev_tools.set(self.dev_tools).ok();
         if let Some(hwnd) = self.window.handle.hwnd() {
             if let Ok(mut saved_style) = self.saved_window_style.try_borrow_mut() {
+                saved_style.set_dark_window_background(hwnd);
                 saved_style.set_title_bar_color(hwnd);
                 if let Some(window_settings) = WindowSettings::load() {
                     saved_style
@@ -252,6 +257,7 @@ impl MainWindow {
         }); // thread
 
         let toggle_fullscreen_sender = self.toggle_fullscreen_notice.sender();
+        let toggle_borderless_sender = self.toggle_borderless_notice.sender();
         let toggle_pip_sender = self.toggle_pip_notice.sender();
         let (pip_response_tx, pip_response_rx) = flume::bounded::<bool>(1);
         custom_api::register_pip_response_sender(pip_response_tx);
@@ -268,6 +274,7 @@ impl MainWindow {
         let focus_sender = self.focus_notice.sender();
         let autoupdater_setup_mutex = self.autoupdater_setup_file.clone();
         let requested_fullscreen = self.requested_fullscreen.clone();
+        let requested_borderless = self.requested_borderless.clone();
         thread::spawn(move || loop {
             let Ok(raw) = web_rx.recv() else {
                 break;
@@ -320,6 +327,16 @@ impl MainWindow {
                         {
                             *requested_fullscreen.lock().unwrap() = Some(fullscreen);
                             toggle_fullscreen_sender.notice();
+                        }
+                    }
+                    Some("win-set-borderless") => {
+                        if let Some(enabled) = msg
+                            .get_params()
+                            .and_then(|params| params.get("enabled"))
+                            .and_then(|value| value.as_bool())
+                        {
+                            *requested_borderless.lock().unwrap() = Some(enabled);
+                            toggle_borderless_sender.notice();
                         }
                     }
                     Some("quit") => quit_sender.notice(),
@@ -497,23 +514,40 @@ impl MainWindow {
     fn on_toggle_fullscreen_notice(&self) {
         if let Some(hwnd) = self.window.handle.hwnd() {
             if let Ok(mut saved_style) = self.saved_window_style.try_borrow_mut() {
-                let requested = self.requested_fullscreen.lock().unwrap().take();
-                let current = saved_style.full_screen;
-                // Some WEBVIEW2 fullscreen-change events arrive with stale value; if that happens
-                // we flip relative to current state so one click still exits/enters fullscreen.
-                let target = match requested {
-                    Some(value) if value == current => !current,
-                    Some(value) => value,
-                    None => !current,
-                };
-                saved_style.set_full_screen(hwnd, target);
-                self.tray.tray_topmost.set_enabled(!saved_style.full_screen);
-                self.tray
-                    .tray_topmost
-                    .set_checked((saved_style.ex_style as u32 & WS_EX_TOPMOST) == WS_EX_TOPMOST);
+                // Coalesce to the latest explicit target. Never toggle on empty notice —
+                // a second notice after take() used to invert FS and cancel the click.
+                let target = self.requested_fullscreen.lock().unwrap().take();
+                if let Some(target) = target {
+                    saved_style.set_full_screen(hwnd, target);
+                    self.tray.tray_topmost.set_enabled(!saved_style.full_screen);
+                    self.tray
+                        .tray_topmost
+                        .set_checked((saved_style.ex_style as u32 & WS_EX_TOPMOST) == WS_EX_TOPMOST);
+                }
             }
+            // Client area changes when chrome is stripped — keep WebView bounds in sync.
+            self.webview.fit_to_window(Some(hwnd));
         }
         self.transmit_window_visibility_change();
+    }
+
+    /**
+     * Applies a pending `win-set-borderless` request on the UI thread.
+     *
+     * Strips or restores window chrome without changing window size so MPV
+     * video cannot flash framed borders during player load.
+     */
+    fn on_toggle_borderless_notice(&self) {
+        if let Some(hwnd) = self.window.handle.hwnd() {
+            if let Ok(mut saved_style) = self.saved_window_style.try_borrow_mut() {
+                if let Some(enabled) = self.requested_borderless.lock().unwrap().take() {
+                    saved_style.set_borderless(hwnd, enabled);
+                }
+            }
+            // Critical: removing caption grows the client rect; without this, a white
+            // ring of HWND background remains around the (still smaller) WebView2.
+            self.webview.fit_to_window(Some(hwnd));
+        }
     }
     fn on_hide_splash_notice(&self) {
         self.splash_screen.hide();

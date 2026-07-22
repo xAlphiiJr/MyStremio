@@ -5,7 +5,7 @@ use flume::{Receiver, Sender};
 use libmpv2::{events::Event, events::EventContext, Format, Mpv, SetData};
 use native_windows_gui::{self as nwg, PartialUi};
 use std::{
-    sync::Arc,
+    sync::{Arc, Mutex},
     thread::{self, JoinHandle},
 };
 use winapi::shared::windef::HWND;
@@ -14,6 +14,9 @@ use crate::stremio_app::stremio_player::{
     CmdVal, InMsg, InMsgArgs, InMsgFn, MpvCmd, PlayerEnded, PlayerEvent, PlayerProprChange,
     PlayerResponse, PropKey, PropVal,
 };
+
+/// Last `glsl-shaders` value applied via `mpv-set-prop` (re-applied after each loadfile).
+static LAST_GLSL_SHADERS: Mutex<String> = Mutex::new(String::new());
 
 struct ObserveProperty {
     name: String,
@@ -71,6 +74,11 @@ fn create_shareable_mpv(window_handle: HWND) -> Arc<Mpv> {
         set_property!("title", "MyStremio");
         set_property!("audio-client-name", "MyStremio");
         set_property!("terminal", "yes");
+        // Optional VO hardeners — must NOT use expect(); invalid/unsupported
+        // options panic the whole shell before a window appears.
+        let _ = initializer.set_property("border", "no");
+        let _ = initializer.set_property("force-window", "no");
+        let _ = initializer.set_property("background", "#000000");
         #[cfg(debug_assertions)]
         set_property!("msg-level", "all=no,cplayer=debug");
         #[cfg(not(debug_assertions))]
@@ -109,6 +117,24 @@ fn apply_stored_player_volume(mpv: &Mpv) {
     }
     if let Some(muted) = stored.get("muted").and_then(|value| value.as_bool()) {
         let _ = mpv.set_property("mute", muted);
+    }
+}
+
+/// Re-apply the last Anime4K / GLSL shader chain after a new file is loaded.
+fn apply_stored_glsl_shaders(mpv: &Mpv) {
+    let value = match LAST_GLSL_SHADERS.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => return,
+    };
+    if let Err(error) = mpv.set_property("glsl-shaders", value) {
+        eprintln!("cannot re-apply glsl-shaders after loadfile: '{error:#}'");
+    }
+}
+
+/// Remember the last `glsl-shaders` string so loadfile can restore it.
+fn remember_glsl_shaders(value: &str) {
+    if let Ok(mut guard) = LAST_GLSL_SHADERS.lock() {
+        *guard = value.to_string();
     }
 }
 
@@ -195,7 +221,8 @@ fn create_message_thread(
         };
 
         let send_command = |cmd: &CmdVal| {
-            if cmd_is_loadfile(cmd) {
+            let is_loadfile = cmd_is_loadfile(cmd);
+            if is_loadfile {
                 apply_stored_player_volume(&mpv);
             }
             let cmd = cmd.clone();
@@ -233,6 +260,9 @@ fn create_message_thread(
             };
             if let Err(error) = mpv.command(&name.to_string(), &args) {
                 eprintln!("failed to execute MPV command: '{error:#}'")
+            }
+            if is_loadfile {
+                apply_stored_glsl_shaders(&mpv);
             }
         };
 
@@ -283,6 +313,9 @@ fn create_message_thread(
                     } else {
                         value
                     };
+                    if name.to_string() == "glsl-shaders" {
+                        remember_glsl_shaders(&value);
+                    }
                     set_property(name, value, &mpv);
                 }
                 InMsg(InMsgFn::MpvCommand, InMsgArgs::Cmd(cmd)) => {

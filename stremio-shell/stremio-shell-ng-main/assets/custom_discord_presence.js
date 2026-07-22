@@ -215,7 +215,11 @@
     tick();
   }
 
-  window.addEventListener('hashchange', onRouteChange);
+  document.addEventListener('stremio-custom-route-change', onRouteChange);
+  document.addEventListener('stremio-custom-playback-stopped', () => {
+    lastPayload = '';
+    tick();
+  });
   window.addEventListener('storage', (event) => {
     if (
       event.key === ENABLED_KEY ||

@@ -1,6 +1,7 @@
 {
   "use_theintrodb": true,
   "use_introdb": true,
+  "use_aniskip": true,
   "tidb_api_key": "",
   "introdb_api_key": ""
 }

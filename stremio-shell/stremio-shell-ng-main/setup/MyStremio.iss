@@ -1,4 +1,4 @@
-; MyStremio installer (Inno Setup 6)
+﻿; MyStremio installer (Inno Setup 6)
 
 #define MyAppName "MyStremio"
 #define MyAppExeName "mystremio-shell.exe"
@@ -118,6 +118,7 @@ Source: "{#ReleaseDir}swscale-5.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleaseDir}vcruntime140.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleaseDir}vcruntime140_1.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ReleaseDir}plugins\*"; DestDir: "{app}\plugins"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#ReleaseDir}shaders\*"; DestDir: "{app}\shaders"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#ReleaseDir}themes\*"; DestDir: "{app}\themes"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#ReleaseDir}webui\*"; DestDir: "{app}\webui"; Flags: ignoreversion recursesubdirs createallsubdirs
 

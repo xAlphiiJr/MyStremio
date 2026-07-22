@@ -398,7 +398,7 @@
     }
   });
 
-  window.addEventListener('hashchange', () => {
+  document.addEventListener('stremio-custom-route-change', () => {
     lastTrackList = null;
     lastAppliedTrackId = null;
     disableAttempts = 0;
@@ -407,6 +407,7 @@
     setTimeout(scheduleSubtitleSync, 1500);
     setTimeout(scheduleSubtitleSync, 4000);
   });
+  document.addEventListener('stremio-custom-playback-stopped', scheduleSubtitleSync);
 
   document.addEventListener('stremio-custom-bootstrap-ready', scheduleSubtitleSync);
   hookShellIncoming();

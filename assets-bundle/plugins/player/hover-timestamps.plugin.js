@@ -39,10 +39,15 @@
     hoverBoundSlider = null;
   }
 
-  window.__stremioHoverTimestampsUnload = teardown;
+  window.__stremioHoverTimestampsUnload = function () {
+    try {
+      if (typeof stopLoop === 'function') stopLoop();
+    } catch (_) {}
+    teardown();
+  };
 
   if (!isPluginEnabled()) {
-    teardown();
+    window.__stremioHoverTimestampsUnload();
     return;
   }
 
@@ -450,7 +455,7 @@
   injectStyles();
   hookMpvMessages();
 
-  window.addEventListener('hashchange', () => {
+  document.addEventListener('stremio-custom-route-change', () => {
     if (isOnPlayerPage()) {
       restoreStoredDurationHint();
       scheduleCoreDurationPoll();
@@ -458,6 +463,9 @@
     } else {
       stopLoop();
     }
+  });
+  document.addEventListener('stremio-custom-playback-stopped', () => {
+    stopLoop();
   });
   document.addEventListener('stremio-custom-stream-started', () => {
     restoreStoredDurationHint();

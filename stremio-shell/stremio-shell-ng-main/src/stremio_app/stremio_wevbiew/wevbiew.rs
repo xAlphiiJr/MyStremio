@@ -73,7 +73,6 @@ impl PartialUi for WebView {
         let tx_drag_drop = tx.clone();
         let tx_media = tx.clone();
         let (tx_web, rx_web) = flume::unbounded();
-        let tx_fs = tx_web.clone();
         data.channel = RefCell::new(Some((tx, rx_web)));
 
         let parent = parent.expect("No parent window").into();
@@ -130,11 +129,13 @@ impl PartialUi for WebView {
                 env.create_controller(hwnd, move |controller| {
                         let controller = controller.expect("Cannot obtain webview controller");
                         if let Ok(controller2) = controller.get_controller2() {
+                            // Transparent, but RGB must be dark: WebView2 can fringe
+                            // sub-pixel edges with the RGB channels even when alpha is 0.
                             controller2
                                 .put_default_background_color(webview2_sys::Color {
-                                    r: 255,
-                                    g: 255,
-                                    b: 255,
+                                    r: 20,
+                                    g: 20,
+                                    b: 20,
                                     a: 0,
                                 })
                                 .ok();
@@ -214,12 +215,9 @@ impl PartialUi for WebView {
                             }
                             Ok(())
                         }).expect("Cannot add D&D handler");
-                        webview.add_contains_full_screen_element_changed(move |wv| {
-                            if let Ok(visibility) = wv.get_contains_full_screen_element() {
-                                tx_fs.send(ipc::RPCResponse::response_message(Some(json!(["win-set-visibility" , {"fullscreen": visibility}])))).ok();
-                            }
-                            Ok(())
-                        }).expect("Cannot add full screen element changed");
+                        // ContainsFullScreenElement backup intentionally omitted:
+                        // custom JS owns win-set-visibility; a second RPC from that
+                        // callback raced with the explicit request and cancelled FS.
 
                         let controller_zoom = controller_clone.clone();
                         webview

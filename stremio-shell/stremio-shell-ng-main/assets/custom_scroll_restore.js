@@ -448,6 +448,7 @@
   );
 
   window.addEventListener('hashchange', onRouteChange);
+  document.addEventListener('stremio-custom-route-change', onRouteChange);
   window.addEventListener('popstate', onRouteChange);
   window.addEventListener('pageshow', (event) => {
     if (event.persisted && isBoardRoute()) {
@@ -467,11 +468,12 @@
     applyActiveRestore(el);
   });
 
+  // Route bus covers HashRouter pushState; keep a slow safety poll only as backup.
   hashWatchTimer = window.setInterval(() => {
     if (location.hash !== lastHash) {
       onRouteChange();
     }
-  }, 250);
+  }, 2000);
 
   if (isBoardRoute()) {
     enterBoardRoute(false);

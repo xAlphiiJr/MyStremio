@@ -33,6 +33,7 @@
   let layoutObserver = null;
   let uiWatcher = null;
   let overlayTimer = null;
+  let overlayObserver = null;
   let dismissGuardUntil = 0;
   let fetchGeneration = 0;
   const castCache = new Map();
@@ -485,19 +486,42 @@
 
   function unlockPlayerOverlay() {
     document.documentElement.classList.remove(OVERLAY_LOCK_CLASS);
+    stopOverlayKeepAlive();
+  }
+
+  /**
+   * Keeps cast overlay visible without a 350ms poll while the panel is open.
+   */
+  function stopOverlayKeepAlive() {
     if (overlayTimer) {
       window.clearInterval(overlayTimer);
       overlayTimer = null;
     }
+    if (overlayObserver) {
+      overlayObserver.disconnect();
+      overlayObserver = null;
+    }
   }
 
   function startOverlayKeepAlive() {
-    if (overlayTimer) return;
-    overlayTimer = window.setInterval(() => {
-      if (!overlayOpen) return;
+    stopOverlayKeepAlive();
+    if (!overlayOpen) return;
+    lockPlayerOverlay();
+    positionCastBubble();
+    const playerContainer = document.querySelector('[class*="player-container"]');
+    if (!playerContainer) return;
+    overlayObserver = new MutationObserver(() => {
+      if (!overlayOpen) {
+        stopOverlayKeepAlive();
+        return;
+      }
       lockPlayerOverlay();
       positionCastBubble();
-    }, 350);
+    });
+    overlayObserver.observe(playerContainer, {
+      attributes: true,
+      attributeFilter: ['class'],
+    });
   }
 
   function armDismissGuard() {
@@ -847,8 +871,12 @@
         teardown();
         return;
       }
-      if (isPlayerRoute()) ensureButton();
-    }, 1200);
+      if (!isPlayerRoute()) {
+        stopUiWatcher();
+        return;
+      }
+      ensureButton();
+    }, 2500);
   }
 
   function stopUiWatcher() {
@@ -857,11 +885,14 @@
     uiWatcher = null;
   }
 
-  function teardown() {
+  /**
+   * Soft leave: stop watchers/UI without destroying bootstrap listeners.
+   */
+  function suspendRuntime() {
     closeOverlay();
     removeUi();
     unlockPlayerOverlay();
-    document.getElementById(STYLE_ID)?.remove();
+    stopUiWatcher();
     if (layoutObserver) {
       layoutObserver.disconnect();
       layoutObserver = null;
@@ -870,11 +901,15 @@
       window.clearTimeout(ensureTimer);
       ensureTimer = null;
     }
-    stopUiWatcher();
+  }
+
+  function teardown() {
+    suspendRuntime();
+    document.getElementById(STYLE_ID)?.remove();
     window.__stremioCastOverlayReady = false;
   }
 
-  window.__stremioCastOverlayUnload = teardown;
+  window.__stremioCastOverlayUnload = suspendRuntime;
 
   if (!isCastOverlayEnabled()) {
     teardown();
@@ -887,16 +922,30 @@
   if (!window.__stremioCastOverlayBootstrapped) {
     window.__stremioCastOverlayBootstrapped = true;
     ensureAll();
-    window.addEventListener('hashchange', () => {
-      if (overlayOpen) closeOverlay();
-      scheduleEnsure();
-      window.setTimeout(ensureAll, 300);
-    });
     window.addEventListener('resize', () => {
       if (overlayOpen) positionCastBubble();
     });
     document.addEventListener('stremio-custom-playback-route', scheduleEnsure);
     document.addEventListener('stremio-custom-bootstrap-ready', scheduleEnsure);
+    document.addEventListener('stremio-custom-route-change', () => {
+      if (!isPlayerRoute()) {
+        suspendRuntime();
+        return;
+      }
+      if (overlayOpen) closeOverlay();
+      scheduleEnsure();
+      bindLayoutObserver();
+      startUiWatcher();
+      window.setTimeout(ensureAll, 300);
+    });
+    document.addEventListener('stremio-custom-playback-stopped', () => {
+      suspendRuntime();
+    });
+    document.addEventListener('stremio-custom-stream-started', () => {
+      scheduleEnsure();
+      bindLayoutObserver();
+      startUiWatcher();
+    });
     bindLayoutObserver();
     startUiWatcher();
   }

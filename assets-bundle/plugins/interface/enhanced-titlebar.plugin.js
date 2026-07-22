@@ -628,7 +628,7 @@ function init() {
     true,
   );
 
-  window.addEventListener("hashchange", () => {
+  document.addEventListener("stremio-custom-route-change", () => {
     if (isLibraryPage()) {
       restoreLibraryNativeTitlebars();
       return;

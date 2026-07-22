@@ -7,8 +7,6 @@
   let fullscreenObserver = null;
   let fullscreenStateInitialized = false;
   let webviewMessageHookInstalled = false;
-  let fullscreenIntent = null;
-  let fullscreenIntentAt = 0;
 
   function isFullscreenControl(element) {
     return Boolean(
@@ -77,7 +75,6 @@
     }, 500);
   }
 
-  window.__stremioCustomEnsureShellAppReady = ensureShellAppReady;
   window.__stremioCustomScheduleShellAppReadyFallback = scheduleShellAppReadyFallback;
 
   function inferFullscreenFromUi() {
@@ -156,6 +153,31 @@
     updateFullscreenButtonUi();
   }
 
+  let shellFullscreenMsgId = 1;
+
+  /**
+   * Ask the native shell to enter/leave monitor fullscreen (WS_OVERLAPPEDWINDOW clear).
+   * Must not rely on HTML ContainsFullScreenElement alone — that left caption buttons visible.
+   * @param {boolean} enabled
+   */
+  function requestShellFullscreen(enabled) {
+    const payload = JSON.stringify({
+      id: shellFullscreenMsgId++,
+      args: ['win-set-visibility', { fullscreen: Boolean(enabled) }],
+    });
+    try {
+      if (window.chrome?.webview?.postMessage) {
+        window.chrome.webview.postMessage(payload);
+        return;
+      }
+      if (window.qt?.webChannelTransport?.send) {
+        window.qt.webChannelTransport.send(payload);
+      }
+    } catch (error) {
+      console.warn('[StremioCustom] win-set-visibility failed:', error);
+    }
+  }
+
   function extractRpcArgs(payload) {
     if (!payload || typeof payload !== 'object') return null;
     if (Array.isArray(payload.args)) return payload.args;
@@ -172,25 +194,17 @@
     return null;
   }
 
+  /**
+   * Shell `win-visibility-changed` is the source of truth for fullscreen UI.
+   * Optimistic local toggles are reconciled here so desync cannot stick.
+   * @param {MessageEvent|object} event
+   */
   function handleIncomingFullscreenMessage(event) {
     const payload = parseWebViewPayload(event);
     const args = extractRpcArgs(payload);
     if (!Array.isArray(args) || args.length < 2) return;
     if (args[0] !== 'win-visibility-changed') return;
-    const next = Boolean(args[1]?.isFullscreen);
-    // Only trust shell fullscreen updates that correspond to a recent
-    // user fullscreen intent. This prevents delayed stale events from
-    // flipping the button label back to the opposite state.
-    if (fullscreenIntent == null) {
-      return;
-    }
-    if (Date.now() - fullscreenIntentAt > 2500) {
-      fullscreenIntent = null;
-      return;
-    }
-    if (next !== fullscreenIntent) return;
-    fullscreenIntent = null;
-    syncFullscreenState(next);
+    syncFullscreenState(Boolean(args[1]?.isFullscreen));
   }
 
   function ensureFullscreenMessageHook() {
@@ -256,14 +270,27 @@
   });
   window.addEventListener('load', ensureShellHandshake);
   window.addEventListener('load', ensureFullscreenUiSync);
+  /**
+   * Block stock webui handlers so only one `win-set-visibility` RPC is sent.
+   * @param {Event} event
+   */
+  function stopStockFullscreenHandlers(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === 'function') {
+      event.stopImmediatePropagation();
+    }
+  }
+
   document.addEventListener(
     'click',
     (event) => {
       if (!isFullscreenControl(event.target)) return;
+      stopStockFullscreenHandlers(event);
       const expected = !fullscreenActive;
-      fullscreenIntent = expected;
-      fullscreenIntentAt = Date.now();
+      // Optimistic UI; shell confirmation via win-visibility-changed reconciles.
       syncFullscreenState(expected);
+      requestShellFullscreen(expected);
       window.setTimeout(() => ensureFullscreenUiSync(), 120);
     },
     true
@@ -271,10 +298,18 @@
   document.addEventListener(
     'keydown',
     (event) => {
-      if (event.key === 'F11' || event.key === 'Escape') {
+      if (event.key === 'F11') {
+        stopStockFullscreenHandlers(event);
         const expected = !fullscreenActive;
-        fullscreenIntent = expected;
-        fullscreenIntentAt = Date.now();
+        syncFullscreenState(expected);
+        requestShellFullscreen(expected);
+        window.setTimeout(() => ensureFullscreenUiSync(), 120);
+        return;
+      }
+      if (event.key === 'Escape' && fullscreenActive) {
+        stopStockFullscreenHandlers(event);
+        syncFullscreenState(false);
+        requestShellFullscreen(false);
         window.setTimeout(() => ensureFullscreenUiSync(), 120);
       }
     },

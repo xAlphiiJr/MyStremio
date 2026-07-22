@@ -264,8 +264,17 @@
     wrapVolumePersistEnsure();
     scheduleHookRefresh();
   });
-  window.addEventListener('hashchange', () => {
-    if (isPlayerRoute()) scheduleHookRefresh();
+  document.addEventListener('stremio-custom-route-change', () => {
+    if (!isPlayerRoute()) {
+      leftMouseDown = false;
+      stopEnforce();
+      return;
+    }
+    scheduleHookRefresh();
+  });
+  document.addEventListener('stremio-custom-playback-stopped', () => {
+    leftMouseDown = false;
+    stopEnforce();
   });
 
   window.__stremioDisableHoldSpeedEnsure = scheduleHookRefresh;

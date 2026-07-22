@@ -387,7 +387,7 @@
                 this.lastHash = newHash;
             };
             
-            window.addEventListener('hashchange', handleHashChange);
+            document.addEventListener('stremio-custom-route-change', handleHashChange);
         }
 
         setupObserver() {

@@ -2,7 +2,7 @@
 
 **MyStremio** is a personalized Windows desktop client built on the Stremio shell stack.
 It combines UI upgrades, player improvements, plugins/themes and library tools in one installer.
-Current release: **2.3.2**
+Current release: **2.3.3**
 
 > **Disclaimer:** MyStremio is an independent community project and is not affiliated with official Stremio.
 
@@ -151,6 +151,10 @@ Built in plugin that adds a cast section directly into the player.
 ---
 
 ## 🛠️ Patch Notes
+### 2.3.3
+
+- **Player window chrome** — Stream sessions run borderless; fullscreen enter/exit is stable; maximized size is preserved (no shrink, no screen overhang).
+
 ### 2.3.2
 
 - **Central API Keys** — Shared API keys (TMDB, RPDB, TheIntroDB, IntroDB, …) live under **Settings → MyStremio → API Keys**, discovered from installed plugin schemas; plugin cards show Set/Missing instead of duplicate inputs.
@@ -207,7 +211,7 @@ Built in plugin that adds a cast section directly into the player.
 ## 💾 Installation
 
 1. Download the latest installer from this repository's **Releases** page.
-2. Run `MyStremioSetup-v2.3.2_x64.exe` (or the latest version).
+2. Run `MyStremioSetup-v2.3.3_x64.exe` (or the latest version).
 3. The installer sets up:
   - App binaries (`mystremio-shell.exe`, streaming server, FFmpeg, libmpv)
   - Bundled plugins and themes
@@ -245,7 +249,7 @@ cd stremio-shell\stremio-shell-ng-main
 .\package-release.ps1
 ```
 
-Output: `release\MyStremioSetup-v2.3.2_x64.exe`
+Output: `release\MyStremioSetup-v2.3.3_x64.exe`
 
 The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle. To rebuild the Web UI from source, clone [stremio-web](https://github.com/Stremio/stremio-web) into `.tmp/stremio-web`, apply MyStremio patches, then run the build script again.
 

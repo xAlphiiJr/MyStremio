@@ -1,7 +1,7 @@
 /**
  * @name Intro Skip
- * @description Skip intros, recaps, credits, and previews using TheIntroDB and IntroDB APIs
- * @version 2.1.5
+ * @description Skip intros, recaps, credits, and previews using TheIntroDB, IntroDB, and AniSkip
+ * @version 2.2.0
  * @author MyStremio
  */
 /* jshint esversion: 11, browser: true, devel: true */
@@ -10,7 +10,7 @@
 (function() {
 	"use strict";
 
-	const PLUGIN_VERSION = "2.1.2";
+	const PLUGIN_VERSION = "2.2.0";
 	const LOG_PREFIX = "[IntroSkip]";
 	const CONTRIBUTE_TOAST_ID = "tidb-contribute-toast";
 	const PLUGIN_ID = "tidb";
@@ -29,11 +29,17 @@
 	const INTRODB_API_KEY_SETTING = "introdb_api_key";
 	const USE_THEINTRODB_SETTING = "use_theintrodb";
 	const USE_INTRODB_SETTING = "use_introdb";
+	const USE_ANISKIP_SETTING = "use_aniskip";
 	const ANALYTICS_SETTING = "anonymous_usage_reporting";
 	const PLUGIN_USER_AGENT = "MyStremio Intro Skip Plugin";
 	const SUBMIT_TARGET_THEINTRODB = "theintrodb";
 	const SUBMIT_TARGET_INTRODB = "introdb";
 	const SUBMIT_TARGET_BOTH = "both";
+	const ANISKIP_TYPE_MAP = {
+		op: "intro",
+		ed: "credits",
+		recap: "recap"
+	};
 
 	const THEMES = {
 		default: {
@@ -379,6 +385,82 @@
 			);
 		}
 		return merged;
+	}
+
+	/**
+	 * Merge a third provider map into an already-merged segment map.
+	 *
+	 * @param {Record<string, Array<{start: number, end: number|null}>>} baseSegments
+	 * @param {Record<string, Array<{start: number, end: number|null}>>} extraSegments
+	 * @returns {Record<string, Array<{start: number, end: number|null}>>}
+	 */
+	function mergeExtraProviderSegments(baseSegments, extraSegments) {
+		return mergeProviderSegments(baseSegments || emptySegments(), extraSegments || emptySegments());
+	}
+
+	/**
+	 * Extract a numeric Kitsu anime ID from a catalog / episode id.
+	 *
+	 * @param {string|null|undefined} value
+	 * @returns {number|null}
+	 */
+	function extractKitsuId(value) {
+		if (!value) return null;
+		const match = String(value).match(/(?:^|:|\/|\\)kitsu:(\d+)/i);
+		if (!match) return null;
+		const id = Number(match[1]);
+		return Number.isFinite(id) && id > 0 ? id : null;
+	}
+
+	/**
+	 * Extract a MyAnimeList ID from meta links / ids when present.
+	 *
+	 * @param {object|null|undefined} meta
+	 * @returns {number|null}
+	 */
+	function extractMalIdFromMeta(meta) {
+		if (!meta) return null;
+		const candidates = [meta.mal_id, meta.malId, meta.id];
+		if (Array.isArray(meta.links)) {
+			for (const link of meta.links) {
+				candidates.push(link.url, link.name, link.id);
+			}
+		}
+		if (Array.isArray(meta.extra)) {
+			for (const item of meta.extra) {
+				candidates.push(item.id, item.url, item.name);
+			}
+		}
+		for (const candidate of candidates) {
+			if (candidate == null) continue;
+			const str = String(candidate);
+			const malUrl = str.match(/myanimelist\.net\/anime\/(\d+)/i);
+			if (malUrl) {
+				const id = Number(malUrl[1]);
+				if (Number.isFinite(id) && id > 0) return id;
+			}
+			const malPrefix = str.match(/(?:^|:|\/|\\)mal:(\d+)/i);
+			if (malPrefix) {
+				const id = Number(malPrefix[1]);
+				if (Number.isFinite(id) && id > 0) return id;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Call a shell-side AniSkip helper (bypasses browser CORS).
+	 *
+	 * @param {string} method
+	 * @param {object} params
+	 * @returns {Promise<*>}
+	 */
+	async function invokeAniSkipProxy(method, params) {
+		const api = window.StremioCustomAPI || window.StremioEnhancedAPI;
+		if (!api || typeof api.invoke !== "function") {
+			throw new Error("AniSkip proxy is unavailable in this shell.");
+		}
+		return api.invoke(method, params);
 	}
 
 	/**
@@ -1106,6 +1188,7 @@
 			this.introDbApiKey = "";
 			this.useTheIntroDb = true;
 			this.useIntroDb = true;
+			this.useAniSkip = true;
 			this.analyticsEnabled = true;
 			this.theme = "glass";
 			this.segmentButtonVisibility = Object.fromEntries(SEGMENT_TYPES.map((type) => [type, true]));
@@ -1155,7 +1238,7 @@
 				subtree: true
 			});
 			this._checkTimer = setInterval(() => this.checkPlaybackChange(), 700);
-			window.addEventListener("hashchange", () => {
+			document.addEventListener("stremio-custom-route-change", () => {
 				this._lastSeenUrl = null;
 				setTimeout(() => {
 					this.checkPlaybackChange();
@@ -1226,6 +1309,14 @@
 						description:
 							"Copy your API key from introdb.app (format: idb_…). Required for IntroDB submissions.",
 						defaultValue: ""
+					},
+					{
+						key: USE_ANISKIP_SETTING,
+						type: "toggle",
+						label: "AniSkip",
+						description:
+							"Load opening/ending/recap skip times from AniSkip (best with Kitsu titles). Fetch-only — no submit.",
+						defaultValue: true
 					}
 				];
 
@@ -1290,6 +1381,7 @@
 			this.theme = resolveThemeName();
 			this.useTheIntroDb = normalizeToggleValue(await this.getSetting(USE_THEINTRODB_SETTING));
 			this.useIntroDb = normalizeToggleValue(await this.getSetting(USE_INTRODB_SETTING));
+			this.useAniSkip = normalizeToggleValue(await this.getSetting(USE_ANISKIP_SETTING));
 			this.userApiKey = normalizeTheIntroDbApiKey(await this.getSetting(TIDB_API_KEY_SETTING));
 			this.introDbApiKey = normalizeIntroDbApiKey(await this.getSetting(INTRODB_API_KEY_SETTING));
 			this.analyticsEnabled = normalizeToggleValue(await this.getSetting(ANALYTICS_SETTING));
@@ -1474,8 +1566,16 @@
 			return this.useIntroDb !== false;
 		}
 
+		isAniSkipServiceEnabled() {
+			return this.useAniSkip !== false;
+		}
+
 		canLoadFromAnyProvider() {
-			return this.isTheIntroDbServiceEnabled() || this.isIntroDbServiceEnabled();
+			return (
+				this.isTheIntroDbServiceEnabled() ||
+				this.isIntroDbServiceEnabled() ||
+				this.isAniSkipServiceEnabled()
+			);
 		}
 
 		canSubmitToTheIntroDb() {
@@ -2095,6 +2195,103 @@
 			}
 		}
 
+		/**
+		 * Resolve a MAL ID for AniSkip (meta links → Kitsu mappings → Jikan title search).
+		 *
+		 * @param {object} options
+		 * @param {string|null} options.episodeId
+		 * @param {object|null} options.meta
+		 * @param {string|null} options.title
+		 * @returns {Promise<number|null>}
+		 */
+		async resolveMalIdForAniSkip(options) {
+			const meta = options.meta || null;
+			const fromMeta = extractMalIdFromMeta(meta);
+			if (fromMeta) return fromMeta;
+
+			const kitsuId =
+				extractKitsuId(options.episodeId) ||
+				extractKitsuId(meta && meta.id) ||
+				extractKitsuId(this.seriesImdbId) ||
+				null;
+			if (kitsuId) {
+				try {
+					const payload = await invokeAniSkipProxy("aniskip-resolve-mal-kitsu", {
+						kitsuId
+					});
+					const malId = Number(payload && payload.malId);
+					if (Number.isFinite(malId) && malId > 0) return malId;
+				} catch (error) {
+					console.warn(`${LOG_PREFIX} Kitsu→MAL resolve failed:`, error);
+				}
+			}
+
+			const title = String(options.title || (meta && meta.name) || this.title || "").trim();
+			if (!title) return null;
+
+			try {
+				const payload = await invokeAniSkipProxy("aniskip-resolve-mal-jikan", { title });
+				const malId = Number(payload && payload.malId);
+				if (Number.isFinite(malId) && malId > 0) return malId;
+			} catch (error) {
+				console.warn(`${LOG_PREFIX} Jikan→MAL resolve failed:`, error);
+			}
+
+			try {
+				const payload = await invokeAniSkipProxy("aniskip-resolve-mal-kitsu-title", {
+					title
+				});
+				const malId = Number(payload && payload.malId);
+				if (Number.isFinite(malId) && malId > 0) return malId;
+			} catch (error) {
+				console.warn(`${LOG_PREFIX} Kitsu-title→MAL resolve failed:`, error);
+			}
+			return null;
+		}
+
+		/**
+		 * Fetch AniSkip segments (seconds) and map op/ed/recap into Intro Skip types.
+		 *
+		 * @param {number} malId
+		 * @param {number} episode
+		 * @param {number|null} [episodeLengthSecs]
+		 * @returns {Promise<Record<string, Array<{start: number, end: number|null}>>>}
+		 */
+		async fetchAniSkipSegments(malId, episode, episodeLengthSecs) {
+			if (!malId || !episode) return emptySegments();
+			try {
+				const params = { malId, episode };
+				if (Number.isFinite(episodeLengthSecs) && episodeLengthSecs > 0) {
+					params.episodeLength = episodeLengthSecs;
+				}
+				const payload = await invokeAniSkipProxy("aniskip-get-skip-times", params);
+				const segments = emptySegments();
+				if (!payload || payload.found !== true || !Array.isArray(payload.results)) {
+					return segments;
+				}
+				for (const entry of payload.results) {
+					const skipType = String(
+						entry.skipType || entry.skip_type || ""
+					).toLowerCase();
+					const mapped = ANISKIP_TYPE_MAP[skipType];
+					if (!mapped) continue;
+					const interval = entry.interval || {};
+					const start = Number(
+						interval.startTime != null ? interval.startTime : interval.start_time
+					);
+					const end = Number(
+						interval.endTime != null ? interval.endTime : interval.end_time
+					);
+					if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+					segments[mapped].push({ start, end });
+				}
+				return segments;
+			} catch (error) {
+				console.warn(`${LOG_PREFIX} AniSkip segment fetch failed:`, error);
+				return emptySegments();
+			}
+		}
+
 		async fetchData() {
 			const video = this.video;
 			const episodeId = this.episodeId;
@@ -2135,15 +2332,26 @@
 					const durationMs = getVideoDurationMs(video);
 					this._lastFetchedDurationMs = durationMs;
 
-					if (!imdbId && !tmdbFromId) {
-						console.warn(`${LOG_PREFIX} No valid IMDB/TMDB id in episodeId: ${episodeId}`);
+					const loadTheIntroDb =
+						this.isTheIntroDbServiceEnabled() && Boolean(imdbId || tmdbFromId);
+					const loadIntroDb = this.isIntroDbServiceEnabled() && isTvShow && imdbId;
+					const loadAniSkip = this.isAniSkipServiceEnabled();
+
+					if (!loadTheIntroDb && !loadIntroDb && !loadAniSkip) {
+						console.warn(
+							`${LOG_PREFIX} No provider can load for episode ${episodeId} (missing IMDB/TMDB and AniSkip off)`
+						);
 						return null;
 					}
 
-					const loadTheIntroDb = this.isTheIntroDbServiceEnabled();
-					const loadIntroDb = this.isIntroDbServiceEnabled() && isTvShow && imdbId;
+					const aniSkipEpisode =
+						isPlausibleEpisode(episode)
+							? episode
+							: isPlausibleEpisode(this.playbackEpisode)
+								? this.playbackEpisode
+								: null;
 
-					const [theIntroDbResult, introDbResult] = await Promise.allSettled([
+					const [theIntroDbResult, introDbResult, aniSkipResult] = await Promise.allSettled([
 						loadTheIntroDb
 							? this.fetchTheIntroDbSegments({
 								imdbId,
@@ -2156,6 +2364,36 @@
 							: Promise.resolve({ segments: emptySegments(), tmdbId: null }),
 						loadIntroDb
 							? this.fetchIntroDbSegments(imdbId, season, episode)
+							: Promise.resolve(emptySegments()),
+						loadAniSkip && aniSkipEpisode
+							? (async () => {
+								const meta =
+									(this._lastStateContext &&
+										this._lastStateContext.metaItem &&
+										this._lastStateContext.metaItem.content) ||
+									null;
+								const malId = await this.resolveMalIdForAniSkip({
+									episodeId,
+									meta,
+									title: this.title
+								});
+								if (!malId) {
+									console.log(`${LOG_PREFIX} AniSkip: could not resolve MAL id`);
+									return emptySegments();
+								}
+								console.log(
+									`${LOG_PREFIX} AniSkip: fetching MAL ${malId} episode ${aniSkipEpisode}`
+								);
+								const durationSecs =
+									Number.isFinite(durationMs) && durationMs > 0
+										? durationMs / 1000
+										: null;
+								return this.fetchAniSkipSegments(
+									malId,
+									aniSkipEpisode,
+									durationSecs
+								);
+							})()
 							: Promise.resolve(emptySegments())
 					]);
 
@@ -2169,6 +2407,8 @@
 							: { segments: emptySegments(), tmdbId: null };
 					const introDbSegments =
 						introDbResult.status === "fulfilled" ? introDbResult.value : emptySegments();
+					const aniSkipSegments =
+						aniSkipResult.status === "fulfilled" ? aniSkipResult.value : emptySegments();
 
 					if (theIntroDbPayload.tmdbId) {
 						this.resolvedTmdbId = theIntroDbPayload.tmdbId;
@@ -2177,7 +2417,10 @@
 						if (resolved) this.resolvedTmdbId = resolved;
 					}
 
-					this.segments = mergeProviderSegments(theIntroDbPayload.segments, introDbSegments);
+					this.segments = mergeExtraProviderSegments(
+						mergeProviderSegments(theIntroDbPayload.segments, introDbSegments),
+						aniSkipSegments
+					);
 
 					for (const segmentType of SEGMENT_TYPES) {
 						if (this.segments[segmentType].length > 0) {
@@ -2747,19 +2990,39 @@
 
 		unlockPlayerOverlay() {
 			document.documentElement.classList.remove(CONTRIBUTE_OVERLAY_LOCK_CLASS);
+			this.stopContributeOverlayKeepAlive();
+		}
+
+		stopContributeOverlayKeepAlive() {
 			if (this.contributeOverlayTimer) {
 				window.clearInterval(this.contributeOverlayTimer);
 				this.contributeOverlayTimer = null;
 			}
+			if (this.contributeOverlayObserver) {
+				this.contributeOverlayObserver.disconnect();
+				this.contributeOverlayObserver = null;
+			}
 		}
 
 		startContributeOverlayKeepAlive() {
-			if (this.contributeOverlayTimer) return;
-			this.contributeOverlayTimer = window.setInterval(() => {
-				if (!this.contributePanelOpen) return;
+			this.stopContributeOverlayKeepAlive();
+			if (!this.contributePanelOpen) return;
+			this.lockPlayerOverlay();
+			this.positionContributePanel();
+			const playerContainer = document.querySelector('[class*="player-container"]');
+			if (!playerContainer) return;
+			this.contributeOverlayObserver = new MutationObserver(() => {
+				if (!this.contributePanelOpen) {
+					this.stopContributeOverlayKeepAlive();
+					return;
+				}
 				this.lockPlayerOverlay();
 				this.positionContributePanel();
-			}, 350);
+			});
+			this.contributeOverlayObserver.observe(playerContainer, {
+				attributes: true,
+				attributeFilter: ['class'],
+			});
 		}
 
 		saveContributeFormDraft() {
@@ -3531,6 +3794,47 @@
 	}
 
 	window.tidbPlugin = new IntroSkipPlugin();
+	window.__stremioTidbSuspend = function () {
+		try {
+			const plugin = window.tidbPlugin;
+			if (!plugin) return;
+			plugin.closeContributePanel?.();
+			plugin.unlockPlayerOverlay?.();
+			plugin.stopContributeOverlayKeepAlive?.();
+			plugin.cleanup?.();
+			plugin.stopContributeUiWatcher?.();
+			if (plugin.contributeOverlayTimer) {
+				window.clearInterval(plugin.contributeOverlayTimer);
+				plugin.contributeOverlayTimer = null;
+			}
+			if (plugin.contributeOverlayObserver) {
+				plugin.contributeOverlayObserver.disconnect();
+				plugin.contributeOverlayObserver = null;
+			}
+			if (plugin.segmentWatcher) {
+				window.clearInterval(plugin.segmentWatcher);
+				plugin.segmentWatcher = null;
+			}
+			if (plugin._checkTimer) {
+				window.clearInterval(plugin._checkTimer);
+				plugin._checkTimer = null;
+			}
+		} catch (_) {}
+	};
+	document.addEventListener('stremio-custom-playback-stopped', () => {
+		window.__stremioTidbSuspend?.();
+	});
+	document.addEventListener('stremio-custom-route-change', () => {
+		if (!/#\/player/.test(location.hash || '')) {
+			window.__stremioTidbSuspend?.();
+			return;
+		}
+		const plugin = window.tidbPlugin;
+		if (plugin && !plugin._checkTimer) {
+			plugin._checkTimer = setInterval(() => plugin.checkPlaybackChange?.(), 700);
+		}
+		plugin?.startContributeUiWatcher?.();
+	});
 	if (!window.__tidbBeforeUnloadInstalled) {
 		window.__tidbBeforeUnloadInstalled = true;
 		window.addEventListener("beforeunload", () => {
