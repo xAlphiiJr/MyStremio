@@ -92,6 +92,9 @@ function Test-WebUiAlreadyPatched {
     # Hero fallback patch removes every FALLBACK_TITLES.map(...) usage.
     if (Select-String -Path $mainJs.FullName -Pattern 'FALLBACK_TITLES\.map' -Quiet) { return $false }
 
+    # Updater banner rebranded to MyStremio.
+    if (-not (Select-String -Path $mainJs.FullName -Pattern 'A new version of MyStremio is available' -Quiet)) { return $false }
+
     return $true
 }
 
@@ -175,6 +178,14 @@ function Repair-WebUiLanguageEmbeds {
         Invoke-WebUiPython $heroPatchScript $mainJs.FullName
         if ($LASTEXITCODE -ne 0) {
             Write-Warning "Hero fallback patch reported exit code $LASTEXITCODE (continuing build)"
+        }
+    }
+
+    $updaterBrandingScript = Join-Path $ScriptRoot "fix-webui-updater-branding.py"
+    if (Test-Path $updaterBrandingScript) {
+        Invoke-WebUiPython $updaterBrandingScript $mainJs.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Updater branding patch failed with exit code $LASTEXITCODE"
         }
     }
 

@@ -10,7 +10,7 @@ use semver::{Version, VersionReq};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::stremio_app::constants::{GITHUB_REPO, GITHUB_USER_AGENT};
+use crate::stremio_app::constants::{APP_DATA_DIR, GITHUB_REPO, GITHUB_USER_AGENT};
 
 #[derive(Debug, Clone)]
 pub struct Update {
@@ -236,7 +236,31 @@ fn download_installer(
     expected_sha256: &str,
 ) -> Result<PathBuf, anyhow::Error> {
     let file_name = installer_asset.name.clone();
-    let dest = std::env::temp_dir().join(&file_name);
+    // Prefer AppData cache over TEMP so AV sees fewer ephemeral EXE drops.
+    let cache_dir = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join(APP_DATA_DIR)
+        .join("updates");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let dest = cache_dir.join(&file_name);
+    let temp_dest = std::env::temp_dir().join(&file_name);
+
+    if dest.is_file() && file_sha256(&dest).as_deref() == Some(expected_sha256) {
+        println!(
+            "Reusing cached installer (checksum match): {}",
+            dest.display()
+        );
+        return Ok(dest);
+    }
+    if temp_dest.is_file() && file_sha256(&temp_dest).as_deref() == Some(expected_sha256) {
+        println!(
+            "Reusing temp installer (checksum match): {}",
+            temp_dest.display()
+        );
+        let _ = std::fs::copy(&temp_dest, &dest);
+        return Ok(if dest.is_file() { dest } else { temp_dest });
+    }
 
     println!(
         "Downloading {} to {}",
@@ -278,4 +302,19 @@ fn download_installer(
 
     println!("Checksum verified.");
     Ok(dest)
+}
+
+/// Computes the lowercase hex SHA-256 of a file on disk.
+fn file_sha256(path: &PathBuf) -> Option<String> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Some(format!("{:x}", hasher.finalize()))
 }

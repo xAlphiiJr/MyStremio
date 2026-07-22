@@ -80,8 +80,34 @@
 
   function streamsLoading() {
     const list = document.querySelector('[class*="streams-list-"]');
-    return !!list && /still loading|addons are loading/i.test(list.textContent || '');
+    if (!list) return false;
+    // Prefer a loading indicator node — avoid materializing the whole list textContent.
+    const hint =
+      list.querySelector('[class*="loading"], [class*="spinner"], [class*="addon-loading"]') ||
+      list.querySelector('[class*="message-container-"], [class*="info-message"]');
+    const sample = String(hint?.textContent || list.getAttribute('data-loading') || '').slice(0, 200);
+    if (/still loading|addons are loading/i.test(sample)) return true;
+    // Fallback: only check the first few direct message children, not the full tree.
+    for (const child of list.children) {
+      if (child.nodeType !== 1) continue;
+      if (child.classList?.contains?.('sui-aio-group')) continue;
+      const t = String(child.textContent || '').slice(0, 120);
+      if (/still loading|addons are loading/i.test(t)) return true;
+    }
+    return false;
   }
+
+  /**
+   * True while Stream UI is allowed to mutate the streams list (detail/meta only).
+   * @returns {boolean}
+   */
+  function canRunStreamUiWork() {
+    if (window.stremioCustomSuspendBackground?.()) return false;
+    return /#\/detail|#\/meta/.test(location.hash || '');
+  }
+
+  /** Bumped on suspend so deferred timers/rAF cannot resurrect work after unload. */
+  let runtimeGeneration = 0;
 
   function esc(t) {
     const d = document.createElement('span');
@@ -258,7 +284,8 @@
     const name = getDirectAddonTitle(el) || resolveTorrentAddonName(el, box);
     if (WATCHHUB_ADDON_RE.test(name || '') || isWatchHubStream(el)) return false;
     if (!name || isExcludedAddon(name)) return false;
-    if (state.usenet && isUsenetStream(el, box) && !isTorrentStream(el, box)) return false;
+    // Usenet wins exclusively — Easynews rows often also match torrent heuristics (1080p + GB).
+    if (state.usenet && (KNOWN_USENET_ADDON_RE.test(name) || isUsenetStream(el, box))) return false;
     if (KNOWN_TORRENT_ADDON_RE.test(name)) return true;
     return isTorrentStream(el, box);
   }
@@ -278,6 +305,8 @@
     if (WATCHHUB_ADDON_RE.test(name)) return false;
     if (streams.some((el) => isWatchHubStream(el))) return false;
     if (!streams.length) return false;
+    if (KNOWN_USENET_ADDON_RE.test(name)) return false;
+    if (state.usenet && streams.some((el) => isUsenetStream(el, box))) return false;
     if (KNOWN_TORRENT_ADDON_RE.test(name)) return true;
     return streams.some((el) => isTorrentStream(el, box));
   }
@@ -384,9 +413,8 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
 
 .sui-aio-group{
   display:block;margin:0 10px 10px 6px;border-radius:16px;overflow:hidden;
-  background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 10px 32px rgba(0,0,0,.22);
-  backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%);
   transition:border-color .2s,box-shadow .2s;animation:suiIn .35s ease-out
 }
 .sui-aio-group.open{border-color:rgba(255,255,255,.11);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 12px 36px rgba(0,0,0,.28)}
@@ -411,9 +439,8 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
 }
 .sui-aio-caret{flex:none;font-size:10px;color:rgba(255,255,255,.35);transition:transform .25s,color .2s}
 .sui-aio-group.open .sui-aio-caret{transform:rotate(180deg);color:rgba(255,255,255,.55)}
-.sui-aio-body{overflow:hidden;max-height:0;opacity:0;transition:max-height .35s ease,opacity .2s;pointer-events:none}
-.sui-aio-group.open .sui-aio-body{max-height:12000px;opacity:1;pointer-events:auto;padding:4px 8px 8px}
-.sui-aio-group:not(.open) .sui-aio-body > *{display:none!important;visibility:hidden!important;height:0!important;overflow:hidden!important}
+.sui-aio-body{display:none;pointer-events:none}
+.sui-aio-group.open .sui-aio-body{display:block;pointer-events:auto;padding:4px 8px 8px}
 .sui-aio-group.open .sui-aio-body > a,
 .sui-aio-group.open .sui-aio-body > [class*="stream-container"]{display:flex!important;visibility:visible!important;height:auto!important}
 
@@ -461,18 +488,16 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
 .sui-ratings-bundle-row.has-both .sui-rc-age-box{font-size:.95rem;padding:5px 7px;min-width:34px}
 .sui-ratings-panel{
   min-width:0;padding:10px 12px 10px;border-radius:16px;
-  background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 10px 32px rgba(0,0,0,.22);
-  backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%)
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 10px 32px rgba(0,0,0,.22)
 }
 .sui-ratings-panel.sui-ratings-main{flex:1 1 auto;max-width:100%;min-width:0}
 .sui-ratings-panel.sui-ratings-side{flex:0 0 auto;width:max-content;max-width:36%;min-width:0;align-self:flex-start}
 .sui-ratings-bundle-row .sui-ratings-panel:only-child{flex:1 1 100%!important;max-width:100%!important}
 #sui-watchhub-root{
   padding:14px 14px 12px;border-radius:16px;
-  background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 10px 32px rgba(0,0,0,.22);
-  backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%)
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 10px 32px rgba(0,0,0,.22)
 }
 #sui-watchhub-root .sui-watchhub-header{
   display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;
@@ -491,16 +516,15 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
   transform:rotate(180deg);color:rgba(255,255,255,.55);
 }
 #sui-watchhub-root .sui-watchhub-body{
-  overflow:hidden;max-height:0;opacity:0;pointer-events:none;transition:max-height .35s ease,opacity .2s;
+  display:none;pointer-events:none;
 }
 #sui-watchhub-root.open .sui-watchhub-body{
-  max-height:6000px;opacity:1;pointer-events:auto;margin-top:8px;
+  display:block;pointer-events:auto;margin-top:8px;
 }
 #sui-aftercredits-root{
   padding:14px 14px 12px;border-radius:16px;
-  background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 10px 32px rgba(0,0,0,.22);
-  backdrop-filter:blur(18px) saturate(150%);-webkit-backdrop-filter:blur(18px) saturate(150%)
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 10px 32px rgba(0,0,0,.22)
 }
 .sui-ac-list{display:flex;flex-direction:column;gap:6px}
 .sui-ac-message{
@@ -526,7 +550,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
 .sui-panel-sub{font-size:11px;color:rgba(255,255,255,.38);margin-top:2px}
 
 .sui-ratings-row{display:flex;flex-wrap:wrap;gap:10px}
-.sui-rc-card{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:78px;padding:14px 16px 11px;border-radius:12px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);box-shadow:inset 0 1px 0 rgba(255,255,255,.07);backdrop-filter:blur(16px) saturate(150%)}
+.sui-rc-card{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:78px;padding:14px 16px 11px;border-radius:12px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);box-shadow:inset 0 1px 0 rgba(255,255,255,.07)}
 .sui-rc-card.sui-rc-card-clickable{cursor:pointer;transition:background .18s,border-color .18s,transform .18s}
 .sui-rc-card.sui-rc-card-clickable:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.16);transform:translateY(-1px)}
 .sui-rc-top{display:flex;align-items:center;justify-content:center;gap:7px;min-height:28px;margin-bottom:7px}
@@ -603,6 +627,9 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     let lastSig = '';
     let timer = null;
     let obs = null;
+    let mutTimer = null;
+    let observedBox = null;
+    let observeGen = 0;
 
     function unpack(group) {
       const body = group.querySelector('.sui-aio-body');
@@ -612,7 +639,9 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
         return;
       }
       for (const stream of Array.from(body.children)) {
-        if (stream.nodeType === 1) parent.insertBefore(stream, group);
+        if (stream.nodeType === 1 && !stream.classList?.contains?.('sui-aio-group')) {
+          parent.insertBefore(stream, group);
+        }
       }
       group.remove();
     }
@@ -624,6 +653,11 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
         obs.disconnect();
         obs = null;
       }
+      observedBox = null;
+      if (mutTimer) {
+        clearTimeout(mutTimer);
+        mutTimer = null;
+      }
       if (timer) {
         clearTimeout(timer);
         timer = null;
@@ -634,13 +668,38 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       return [];
     }
 
+    /**
+     * Collect torrent + usenet groups with one-stream-one-group (usenet first).
+     * @param {Element} box
+     * @returns {Array<object>}
+     */
     function collectAllGroups(box) {
+      const claimed = new WeakSet();
       const groups = [];
-      if (state.torrent) {
-        groups.push(...collectTorrentGroups(box).map((g) => ({ ...g, type: 'torrent', icon: '▶' })));
-      }
+
+      const claimStreams = (streams) => {
+        const kept = [];
+        for (const el of streams) {
+          if (!el || claimed.has(el)) continue;
+          claimed.add(el);
+          kept.push(el);
+        }
+        return kept;
+      };
+
       if (state.usenet) {
-        groups.push(...collectUsenetGroups(box).map((g) => ({ ...g, type: 'usenet', icon: '📰' })));
+        for (const g of collectUsenetGroups(box)) {
+          const streams = claimStreams(g.streams);
+          if (!streams.length) continue;
+          groups.push({ ...g, streams, type: 'usenet', icon: '📰' });
+        }
+      }
+      if (state.torrent) {
+        for (const g of collectTorrentGroups(box)) {
+          const streams = claimStreams(g.streams);
+          if (!streams.length) continue;
+          groups.push({ ...g, streams, type: 'torrent', icon: '▶' });
+        }
       }
       groups.push(...collectWatchHubGroups(box));
       groups.sort((a, b) => (a.firstIdx ?? 0) - (b.firstIdx ?? 0));
@@ -717,16 +776,44 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       return count === 1 ? '1 stream found' : `${count} streams found`;
     }
 
+    function streamNodesInBody(body) {
+      if (!body) return [];
+      return Array.from(body.children).filter(
+        (n) =>
+          n.nodeType === 1 &&
+          !n.classList.contains('sui-aio-group') &&
+          n.matches?.('a[class*="stream-container-"], button[class*="stream-container-"]')
+      );
+    }
+
     function updateAccordionCounts() {
       document.querySelectorAll(ALL_SEL).forEach((acc) => {
         const body = acc.querySelector('.sui-aio-body');
-        const count = body ? Array.from(body.children).filter((n) => n.nodeType === 1).length : 0;
+        const count = streamNodesInBody(body).length;
         const type = acc.getAttribute('data-sui-acc') || '';
         const badge = acc.querySelector('.sui-aio-badge');
         const sub = acc.querySelector('.sui-aio-sub');
         if (badge) badge.textContent = String(count);
         if (sub) sub.textContent = accordionSubLabel(type, count);
       });
+    }
+
+    /**
+     * Remove empty / nested accordion shells left after redistribute.
+     */
+    function removeEmptyAccordions() {
+      Array.from(document.querySelectorAll(ALL_SEL)).forEach((acc) => {
+        if (!acc.isConnected) return;
+        const body = acc.querySelector('.sui-aio-body');
+        Array.from(body?.querySelectorAll(':scope > .sui-aio-group') || []).forEach((child) => {
+          unpack(child);
+        });
+        if (!acc.isConnected) return;
+        if (streamNodesInBody(acc.querySelector('.sui-aio-body')).length === 0) {
+          unpack(acc);
+        }
+      });
+      updateAccordionCounts();
     }
 
     function repackOrphans(box) {
@@ -770,6 +857,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
 
         for (const stream of Array.from(body.children)) {
           if (stream.nodeType !== 1) continue;
+          if (stream.classList?.contains?.('sui-aio-group')) continue;
           const direct = getDirectAddonTitle(stream) || resolveTorrentAddonName(stream, box);
           if (!direct) continue;
           const accType = acc.getAttribute('data-sui-acc') || '';
@@ -799,16 +887,22 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       }
 
       if (repackOrphans(box)) changed = true;
-      if (changed) updateAccordionCounts();
+      if (changed) {
+        removeEmptyAccordions();
+        updateAccordionCounts();
+      }
       return changed;
     }
 
     function scheduleRebuild(box) {
+      if (!canRunStreamUiWork()) return;
       if (Date.now() < state.pauseUntil) return;
       if (timer) clearTimeout(timer);
+      const gen = runtimeGeneration;
       const delay = streamsLoading() ? 120 : 250;
       timer = setTimeout(() => {
         timer = null;
+        if (gen !== runtimeGeneration || !canRunStreamUiWork()) return;
         if (sig(box) !== lastSig) build(box);
       }, delay);
     }
@@ -848,6 +942,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     }
 
     function build(box) {
+      if (!canRunStreamUiWork()) return;
       const groups = collectAllGroups(box);
       const newSig = sig(box);
 
@@ -856,8 +951,8 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
         return;
       }
 
+      // Identical content: do not redistribute on every poll (main-thread thrash).
       if (newSig === lastSig && document.querySelector(ALL_SEL)) {
-        redistribute(box);
         return;
       }
 
@@ -871,7 +966,16 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
         const stateKey = accordionStateKey(meta.type, meta.name);
         const isOpen = stateKey ? openKeys.get(stateKey) : undefined;
         const acc = shell(meta, isOpen);
-        anchor.parentElement.insertBefore(acc, anchor);
+        // Always insert as a direct child of the streams box — never under .sui-aio-body.
+        let ref = anchor;
+        while (ref.parentElement && ref.parentElement !== box) {
+          ref = ref.parentElement;
+        }
+        if (ref.parentElement === box) {
+          box.insertBefore(acc, ref);
+        } else {
+          box.appendChild(acc);
+        }
         const body = acc.querySelector('.sui-aio-body');
         for (const stream of meta.streams) {
           if (stream.isConnected) body.appendChild(stream);
@@ -879,14 +983,27 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       }
 
       redistribute(box);
+      removeEmptyAccordions();
       lastSig = sig(box);
-      if (!obs) {
-        let mutTimer = null;
+      if (!obs || observedBox !== box) {
+        if (obs) {
+          obs.disconnect();
+          obs = null;
+        }
+        if (mutTimer) {
+          clearTimeout(mutTimer);
+          mutTimer = null;
+        }
+        observedBox = box;
+        observeGen = runtimeGeneration;
         obs = new MutationObserver(() => {
+          if (observeGen !== runtimeGeneration || !canRunStreamUiWork()) return;
           if (Date.now() < state.pauseUntil) return;
           if (mutTimer) clearTimeout(mutTimer);
+          const gen = runtimeGeneration;
           mutTimer = setTimeout(() => {
             mutTimer = null;
+            if (gen !== runtimeGeneration || !canRunStreamUiWork()) return;
             if (redistribute(box)) {
               lastSig = sig(box);
               return;
@@ -1872,6 +1989,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
   let tickInterval = null;
   let streamsObserver = null;
   let streamsObserveRaf = 0;
+  let streamsObserverTarget = null;
   let pendingTimer = null;
   let firstBuildDone = false;
 
@@ -1891,8 +2009,10 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     firstBuildDone = false;
     document.documentElement.classList.add(PENDING_CLASS);
     if (pendingTimer) window.clearTimeout(pendingTimer);
+    const gen = runtimeGeneration;
     pendingTimer = window.setTimeout(() => {
       pendingTimer = null;
+      if (gen !== runtimeGeneration) return;
       clearStreamsPending();
     }, PENDING_TIMEOUT_MS);
   }
@@ -1909,17 +2029,29 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
   }
 
   /**
-   * Observes the document for streams-list changes so the first build does not
-   * wait for the 900ms poll.
+   * Observes the streams container (not the whole document) for list changes.
    */
   function bindStreamsObserver() {
-    if (streamsObserver) return;
-    const target = document.body || document.documentElement;
+    if (!canRunStreamUiWork()) return;
+    const box = findStreamsBox();
+    const target = box || document.querySelector('[class*="streams-list-"]');
+    if (!target) return;
+    if (streamsObserver && streamsObserverTarget === target) return;
+    unbindStreamsObserver();
+    streamsObserverTarget = target;
+    const gen = runtimeGeneration;
     streamsObserver = new MutationObserver(() => {
-      if (!isStreamUiRoute()) return;
+      if (gen !== runtimeGeneration || !canRunStreamUiWork()) return;
       if (streamsObserveRaf) return;
       streamsObserveRaf = window.requestAnimationFrame(() => {
         streamsObserveRaf = 0;
+        if (gen !== runtimeGeneration || !canRunStreamUiWork()) return;
+        // Rebind if the streams box appeared after we attached to the list root.
+        if (!findStreamsBox() || streamsObserverTarget === findStreamsBox()) {
+          tick();
+          return;
+        }
+        bindStreamsObserver();
         tick();
       });
     });
@@ -1934,17 +2066,18 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       window.cancelAnimationFrame(streamsObserveRaf);
       streamsObserveRaf = 0;
     }
-    if (!streamsObserver) return;
+    if (!streamsObserver) {
+      streamsObserverTarget = null;
+      return;
+    }
     streamsObserver.disconnect();
     streamsObserver = null;
+    streamsObserverTarget = null;
   }
 
   function tick() {
-    if (window.stremioCustomSuspendBackground?.()) return;
+    if (!canRunStreamUiWork()) return;
     if (Date.now() < state.pauseUntil) return;
-    if (!isStreamUiRoute() && !document.querySelector('[class*="streams-list-"]')) {
-      return;
-    }
 
     const contentKey = getContentKey();
     if (contentKey !== state.contentKey) {
@@ -1964,6 +2097,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     if (box !== state.lastBox) {
       accordions.teardown();
       state.lastBox = box;
+      bindStreamsObserver();
     }
 
     if (state.aftercredits) afterCredits.build(box);
@@ -1984,11 +2118,8 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
           document.getElementById('sui-watchhub-root') ||
           document.getElementById('sui-aftercredits-root')
       );
-      const list = document.querySelector('[class*="streams-list-"]');
-      const listText = String(list?.textContent || '');
       const failedOrEmpty =
-        /no streams|keine streams|error|failed|nicht gefunden/i.test(listText) ||
-        (!streamsLoading() && getTopLevelStreamLinks(box).length === 0);
+        !streamsLoading() && getTopLevelStreamLinks(box).length === 0 && !hasCustomUi;
       if (hasCustomUi || !streamsLoading() || failedOrEmpty) {
         firstBuildDone = true;
         clearStreamsPending();
@@ -2000,6 +2131,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
    * Stops the poll + DOM work while off meta/detail (or on player).
    */
   function suspendRuntime() {
+    runtimeGeneration += 1;
     if (tickInterval) {
       window.clearInterval(tickInterval);
       tickInterval = null;
@@ -2008,6 +2140,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     clearStreamsPending();
     firstBuildDone = false;
     teardownAll(true);
+    document.getElementById(STYLE_ID)?.remove();
   }
 
   /**
@@ -2021,9 +2154,11 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       return;
     }
     if (!firstBuildDone) markStreamsPending();
+    injectCSS();
     bindStreamsObserver();
     if (!tickInterval) {
-      tickInterval = window.setInterval(tick, 900);
+      // Idle poll is light now (same-sig build returns immediately).
+      tickInterval = window.setInterval(tick, streamsLoading() ? 700 : 1500);
     }
     tick();
   }

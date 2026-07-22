@@ -32,6 +32,19 @@
   let ensureTimer = null;
   let layoutObserver = null;
   let uiWatcher = null;
+  let chromeIdleWatcher = null;
+
+  /**
+   * @returns {boolean}
+   */
+  function isOverlayHidden() {
+    const el = document.querySelector('[class*="player-container"]');
+    if (!el) return false;
+    for (const className of el.classList) {
+      if (String(className).includes('overlayHidden')) return true;
+    }
+    return false;
+  }
   let overlayTimer = null;
   let overlayObserver = null;
   let dismissGuardUntil = 0;
@@ -312,8 +325,8 @@
         border: 1px solid ${GLASS_BORDER};
         background: ${GLASS_BG};
         box-shadow: ${GLASS_SHADOW};
-        backdrop-filter: blur(20px) saturate(180%);
-        -webkit-backdrop-filter: blur(20px) saturate(180%);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
         overflow: hidden;
       }
       #${OVERLAY_ID} .mystremio-cast-header {
@@ -857,15 +870,59 @@
   }
 
   function bindLayoutObserver() {
-    if (layoutObserver) return;
+    if (layoutObserver || isOverlayHidden()) return;
     const target =
       document.querySelector('[class*="player-container"]') || document.documentElement;
-    layoutObserver = new MutationObserver(() => scheduleEnsure());
+    layoutObserver = new MutationObserver(() => {
+      if (isOverlayHidden()) return;
+      scheduleEnsure();
+    });
     layoutObserver.observe(target, { childList: true, subtree: true });
   }
 
+  function stopLayoutObserver() {
+    if (layoutObserver) {
+      layoutObserver.disconnect();
+      layoutObserver = null;
+    }
+    if (ensureTimer) {
+      window.clearTimeout(ensureTimer);
+      ensureTimer = null;
+    }
+  }
+
+  function syncLayoutWorkToChrome() {
+    if (!isPlayerRoute() || !isCastOverlayEnabled()) {
+      stopLayoutObserver();
+      stopUiWatcher();
+      return;
+    }
+    if (isOverlayHidden()) {
+      stopLayoutObserver();
+      return;
+    }
+    bindLayoutObserver();
+    startUiWatcher();
+    scheduleEnsure();
+  }
+
+  function bindChromeIdleWatcher() {
+    if (chromeIdleWatcher || typeof MutationObserver === 'undefined') return;
+    const target = document.querySelector('[class*="player-container"]');
+    if (!target) return;
+    chromeIdleWatcher = new MutationObserver(() => syncLayoutWorkToChrome());
+    chromeIdleWatcher.observe(target, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  function stopChromeIdleWatcher() {
+    if (chromeIdleWatcher) {
+      chromeIdleWatcher.disconnect();
+      chromeIdleWatcher = null;
+    }
+  }
+
   function startUiWatcher() {
-    if (uiWatcher) return;
+    if (uiWatcher || isOverlayHidden()) return;
     uiWatcher = window.setInterval(() => {
       if (!isCastOverlayEnabled()) {
         teardown();
@@ -875,6 +932,7 @@
         stopUiWatcher();
         return;
       }
+      if (isOverlayHidden()) return;
       ensureButton();
     }, 2500);
   }
@@ -893,14 +951,8 @@
     removeUi();
     unlockPlayerOverlay();
     stopUiWatcher();
-    if (layoutObserver) {
-      layoutObserver.disconnect();
-      layoutObserver = null;
-    }
-    if (ensureTimer) {
-      window.clearTimeout(ensureTimer);
-      ensureTimer = null;
-    }
+    stopLayoutObserver();
+    stopChromeIdleWatcher();
   }
 
   function teardown() {
@@ -933,21 +985,19 @@
         return;
       }
       if (overlayOpen) closeOverlay();
-      scheduleEnsure();
-      bindLayoutObserver();
-      startUiWatcher();
+      bindChromeIdleWatcher();
+      syncLayoutWorkToChrome();
       window.setTimeout(ensureAll, 300);
     });
     document.addEventListener('stremio-custom-playback-stopped', () => {
       suspendRuntime();
     });
     document.addEventListener('stremio-custom-stream-started', () => {
-      scheduleEnsure();
-      bindLayoutObserver();
-      startUiWatcher();
+      bindChromeIdleWatcher();
+      syncLayoutWorkToChrome();
     });
-    bindLayoutObserver();
-    startUiWatcher();
+    bindChromeIdleWatcher();
+    syncLayoutWorkToChrome();
   }
 
   console.info('[StremioCustom] Cast overlay plugin ready.');

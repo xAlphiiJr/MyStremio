@@ -32,8 +32,8 @@
       background: ${PLAYER_GLASS_BG} !important;
       border-radius: 20px !important;
       box-shadow: ${PLAYER_GLASS_SHADOW} !important;
-      backdrop-filter: blur(20px) saturate(180%) !important;
-      -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
       border: 1px solid ${PLAYER_GLASS_BORDER} !important;
       margin-bottom: 10px !important;
       min-height: 52px !important;
@@ -49,6 +49,13 @@
       background-image: none !important;
       opacity: 1 !important;
       border-radius: 999px !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+
+    html body [class*="player-container"] [class*="seek-bar-container"] [class*="slider-container"] [class*="track"]:not([class*="track-before"]):not([class*="track-after"]) {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
     }
 
     html body [class*="player-container"] [class*="slider-container"] [class*="track-after"],
@@ -67,8 +74,8 @@
     html body [class*="player-container"] [class*="nav-menu-container"],
     html body [class*="player-container"] [class*="menu-container"][class*="menu-direction"] {
       background: var(--stremio-player-glass-bg, ${PLAYER_GLASS_BG}) !important;
-      backdrop-filter: blur(20px) saturate(180%) !important;
-      -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
       border: 1px solid var(--stremio-player-glass-border, ${PLAYER_GLASS_BORDER}) !important;
       box-shadow: ${PLAYER_GLASS_SHADOW} !important;
     }
@@ -85,8 +92,8 @@
     html.stremio-custom-player-route .context-menu-portal [class*="nav-menu-container"],
     html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][class*="menu-direction"] {
       background: var(--stremio-player-glass-bg, ${PLAYER_GLASS_BG}) !important;
-      backdrop-filter: blur(20px) saturate(180%) !important;
-      -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
       border: 1px solid var(--stremio-player-glass-border, ${PLAYER_GLASS_BORDER}) !important;
       box-shadow: ${PLAYER_GLASS_SHADOW} !important;
     }

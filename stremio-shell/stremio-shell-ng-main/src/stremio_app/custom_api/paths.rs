@@ -1,5 +1,6 @@
 use crate::stremio_app::constants::APP_DATA_DIR;
 use std::{
+    collections::HashSet,
     env,
     fs,
     io,
@@ -9,6 +10,7 @@ use std::{
 const PLUGIN_EXT: &str = ".plugin.js";
 const PLUGIN_SCHEMA_EXT: &str = ".plugin.schema.json";
 const THEME_EXT: &str = ".theme.css";
+const PLUGIN_SYNC_STATE_FILE: &str = "mystremio-plugin-sync.json";
 
 pub fn app_data_dir() -> PathBuf {
     env::var_os("APPDATA")
@@ -265,9 +267,148 @@ pub fn bundled_themes_dir() -> PathBuf {
 pub fn ensure_asset_dirs() {
     let _ = fs::create_dir_all(plugins_dir());
     let _ = fs::create_dir_all(themes_dir());
-    sync_bundled_assets(&bundled_plugins_dir(), &plugins_dir(), PLUGIN_EXT);
-    sync_bundled_assets(&bundled_plugins_dir(), &plugins_dir(), PLUGIN_SCHEMA_EXT);
+    // Plugins: respect user deletions (do not restore removed files on update).
+    sync_bundled_plugins();
+    // Themes: always keep AppData in sync with the install bundle.
     sync_bundled_assets(&bundled_themes_dir(), &themes_dir(), THEME_EXT);
+}
+
+fn plugin_sync_state_path() -> PathBuf {
+    app_data_dir().join(PLUGIN_SYNC_STATE_FILE)
+}
+
+/// Stem key for a plugin asset, e.g. `player/foo.plugin.js` → `player/foo`.
+fn plugin_stem(relative: &str) -> String {
+    let normalized = relative.replace('\\', "/");
+    for suffix in [".plugin.schema.json", ".plugin.json", ".plugin.js"] {
+        if let Some(base) = normalized.strip_suffix(suffix) {
+            return base.to_string();
+        }
+    }
+    normalized
+}
+
+fn read_string_set(value: Option<&serde_json::Value>) -> HashSet<String> {
+    value
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(|s| s.replace('\\', "/"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn write_plugin_sync_state(seen: &HashSet<String>, removed: &HashSet<String>) {
+    let path = plugin_sync_state_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let mut seen_list: Vec<_> = seen.iter().cloned().collect();
+    let mut removed_list: Vec<_> = removed.iter().cloned().collect();
+    seen_list.sort();
+    removed_list.sort();
+    let payload = serde_json::json!({
+        "seen": seen_list,
+        "removed": removed_list,
+    });
+    if let Ok(content) = serde_json::to_string_pretty(&payload) {
+        let _ = fs::write(path, content);
+    }
+}
+
+/// Load sync memory. When missing, bootstrap so existing installs keep deletions
+/// while fresh installs still receive the full bundled plugin set.
+fn load_plugin_sync_state(bundled_stems: &HashSet<String>) -> (HashSet<String>, HashSet<String>) {
+    let path = plugin_sync_state_path();
+    if path.exists() {
+        if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
+                return (
+                    read_string_set(value.get("seen")),
+                    read_string_set(value.get("removed")),
+                );
+            }
+        }
+    }
+
+    let present: HashSet<String> = walk_files(&plugins_dir(), PLUGIN_EXT)
+        .into_iter()
+        .map(|rel| plugin_stem(&rel))
+        .collect();
+
+    if present.is_empty() {
+        // Fresh install: empty seen/removed so every bundled plugin is treated as new.
+        return (HashSet::new(), HashSet::new());
+    }
+
+    // Existing install before sync-state existed: keep what is present, and treat
+    // bundled plugins that are already missing as user-removed.
+    let mut removed = HashSet::new();
+    for stem in bundled_stems {
+        if !present.contains(stem) {
+            removed.insert(stem.clone());
+        }
+    }
+    (present, removed)
+}
+
+/// Sync install plugins → AppData without restoring plugins the user deleted.
+fn sync_bundled_plugins() {
+    let source = bundled_plugins_dir();
+    let target = plugins_dir();
+    if !source.exists() {
+        return;
+    }
+    let _ = fs::create_dir_all(&target);
+
+    let bundled_rels = {
+        let mut files = walk_files(&source, PLUGIN_EXT);
+        files.extend(walk_files(&source, PLUGIN_SCHEMA_EXT));
+        files
+    };
+    let bundled_stems: HashSet<String> = bundled_rels.iter().map(|rel| plugin_stem(rel)).collect();
+    let (mut seen, mut removed) = load_plugin_sync_state(&bundled_stems);
+
+    for rel in &bundled_rels {
+        let stem = plugin_stem(rel);
+        let from = source.join(rel);
+        let to = target.join(rel);
+
+        if to.exists() {
+            removed.remove(&stem);
+            seen.insert(stem);
+            if !files_content_equal(&from, &to) {
+                if let Some(parent) = to.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = fs::copy(&from, &to);
+            }
+            continue;
+        }
+
+        // Destination missing.
+        if removed.contains(&stem) {
+            continue;
+        }
+        if seen.contains(&stem) {
+            // Previously present, now gone → user deleted; remember and skip.
+            removed.insert(stem);
+            continue;
+        }
+
+        // New plugin introduced by this app version.
+        if let Some(parent) = to.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if fs::copy(&from, &to).is_ok() {
+            seen.insert(stem);
+        }
+    }
+
+    write_plugin_sync_state(&seen, &removed);
 }
 
 fn sync_bundled_assets(source: &Path, target: &Path, extension: &str) {
@@ -294,16 +435,42 @@ fn copy_tree(source: &Path, target: &Path, extension: &str) {
             continue;
         }
 
-        if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(extension))
-        {
-            let destination = target.join(entry.file_name());
-            // Keep executable assets in AppData updated on each launch.
-            // Sensitive user values live in *.plugin.json and are not part of this sync.
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if file_name.ends_with(extension) {
+            let destination = target.join(file_name);
+            // Skip rewrite when the AppData copy already matches the bundled file.
+            // Unconditional copy every launch triggers antivirus rescans.
+            if files_content_equal(&path, &destination) {
+                continue;
+            }
             let _ = fs::copy(&path, &destination);
         }
+    }
+}
+
+/// Fast equality check: size + mtime first, then full byte compare if metadata
+/// matches are inconclusive (e.g. destination missing or clocks differ).
+fn files_content_equal(source: &Path, destination: &Path) -> bool {
+    let Ok(src_meta) = fs::metadata(source) else {
+        return false;
+    };
+    let Ok(dst_meta) = fs::metadata(destination) else {
+        return false;
+    };
+    if src_meta.len() != dst_meta.len() {
+        return false;
+    }
+    // Same size + same modified time → treat as unchanged (avoids reading large themes).
+    if let (Ok(src_mtime), Ok(dst_mtime)) = (src_meta.modified(), dst_meta.modified()) {
+        if src_mtime == dst_mtime {
+            return true;
+        }
+    }
+    match (fs::read(source), fs::read(destination)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
     }
 }
 

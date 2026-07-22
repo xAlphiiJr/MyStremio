@@ -6,7 +6,11 @@
 
   const STYLE_ID = 'stremio-custom-seek-buffer-styles';
 
+  const FAST_POLL_MS = 200;
+  const SLOW_POLL_MS = 2000;
+
   let loopTimer = null;
+  let loopIntervalMs = 0;
   let mpvHookInstalled = false;
   let cacheAheadSec = 0;
   let mpvCurrentTime = 0;
@@ -15,6 +19,30 @@
   let estimatedAheadSec = 0;
   let lastAdvanceAt = 0;
   let coreDurationPollGen = 0;
+  let chromeWatcher = null;
+
+  /**
+   * @returns {boolean} True when player chrome is auto-hidden.
+   */
+  function isOverlayHidden() {
+    const el = document.querySelector('[class*="player-container"]');
+    if (!el) return false;
+    for (const className of el.classList) {
+      if (String(className).includes('overlayHidden')) return true;
+    }
+    return false;
+  }
+
+  /**
+   * @returns {boolean}
+   */
+  function isSeekBarVisible() {
+    if (isOverlayHidden()) return false;
+    const slider = getSeekSlider();
+    if (!slider) return false;
+    const rect = slider.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
 
   function parseShellPayload(raw) {
     if (raw == null) return null;
@@ -346,17 +374,51 @@
   function stopLoop() {
     if (loopTimer) window.clearInterval(loopTimer);
     loopTimer = null;
+    loopIntervalMs = 0;
     cacheAheadSec = 0;
     estimatedAheadSec = 0;
+  }
+
+  /**
+   * @param {number} ms
+   */
+  function ensureLoop(ms) {
+    if (loopTimer && loopIntervalMs === ms) return;
+    if (loopTimer) window.clearInterval(loopTimer);
+    loopIntervalMs = ms;
+    loopTimer = window.setInterval(tick, ms);
+  }
+
+  function bindChromeWatcher() {
+    if (chromeWatcher || typeof MutationObserver === 'undefined') return;
+    const target = document.querySelector('[class*="player-container"]');
+    if (!target) return;
+    chromeWatcher = new MutationObserver(() => {
+      if (!isOnPlayerPage()) return;
+      ensureLoop(isSeekBarVisible() ? FAST_POLL_MS : SLOW_POLL_MS);
+      if (isSeekBarVisible()) updateBufferBar();
+    });
+    chromeWatcher.observe(target, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  function stopChromeWatcher() {
+    if (chromeWatcher) {
+      chromeWatcher.disconnect();
+      chromeWatcher = null;
+    }
   }
 
   function tick() {
     if (!isOnPlayerPage()) {
       stopLoop();
+      stopChromeWatcher();
       return;
     }
     hookMpvMessages();
-    updateBufferBar();
+    bindChromeWatcher();
+    const visible = isSeekBarVisible();
+    if (visible) updateBufferBar();
+    ensureLoop(visible ? FAST_POLL_MS : SLOW_POLL_MS);
   }
 
   function start() {
@@ -364,8 +426,9 @@
     hookMpvMessages();
     restoreStoredDurationHint();
     scheduleCoreDurationPoll();
+    bindChromeWatcher();
     tick();
-    if (!loopTimer) loopTimer = window.setInterval(tick, 200);
+    if (!loopTimer) ensureLoop(FAST_POLL_MS);
   }
 
   injectStyles();
@@ -379,10 +442,12 @@
       start();
     } else {
       stopLoop();
+      stopChromeWatcher();
     }
   });
   document.addEventListener('stremio-custom-playback-stopped', () => {
     stopLoop();
+    stopChromeWatcher();
   });
   document.addEventListener('stremio-custom-cache-cleared', () => {
     cacheAheadSec = 0;
@@ -391,6 +456,7 @@
   document.addEventListener('stremio-custom-stream-started', () => {
     restoreStoredDurationHint();
     scheduleCoreDurationPoll();
+    if (isOnPlayerPage()) start();
   });
   document.addEventListener('stremio-custom-duration-hint', (event) => {
     rememberDuration(event?.detail?.duration);

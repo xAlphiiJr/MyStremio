@@ -63,6 +63,7 @@ fn schemas() -> &'static Mutex<storage::RegisteredSchemas> {
 
 pub fn init() {
     ensure_asset_dirs();
+    storage::migrate_root_plugin_litter();
     ensure_webview_user_data_dir();
 }
 

@@ -85,6 +85,8 @@ fn create_shareable_mpv(window_handle: HWND) -> Arc<Mpv> {
         set_property!("msg-level", "all=no");
         set_property!("quiet", "yes");
         set_property!("hwdec", "auto");
+        #[cfg(windows)]
+        set_property!("gpu-api", "d3d11");
         set_property!("cache", "yes");
         // Fast first frame: small startup cache (user preload boost applies after playback starts).
         set_property!("cache-secs", "12");

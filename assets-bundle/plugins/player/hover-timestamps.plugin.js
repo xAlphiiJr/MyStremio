@@ -1,7 +1,7 @@
 /**
  * @name Hover Timestamps
  * @description Show a time tooltip when hovering the player seek bar
- * @version 1.0.0
+ * @version 1.0.1
  * @author MyStremio
  * @category player
  */
@@ -10,10 +10,12 @@
 (function () {
   'use strict';
 
-  const PLUGIN_VERSION = '1.0.0';
+  const PLUGIN_VERSION = '1.0.1';
   const STYLE_ID = 'stremio-hover-timestamps-styles';
   const TOOLTIP_ID = 'stremio-custom-seek-hover-time';
   const PLUGIN_REF = 'player/hover-timestamps.plugin.js';
+  const FAST_POLL_MS = 200;
+  const SLOW_POLL_MS = 2000;
 
   if (window.__stremioHoverTimestampsVersion !== PLUGIN_VERSION) {
     window.__stremioHoverTimestampsReady = false;
@@ -56,6 +58,7 @@
   window.__stremioHoverTimestampsVersion = PLUGIN_VERSION;
 
   let loopTimer = null;
+  let loopIntervalMs = 0;
   let hoverBoundSlider = null;
   let cachedHoverDuration = 0;
   let mpvCurrentTime = 0;
@@ -101,8 +104,8 @@
         box-shadow:
           0 8px 24px rgba(0, 0, 0, 0.35),
           inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-        backdrop-filter: blur(14px) saturate(170%) !important;
-        -webkit-backdrop-filter: blur(14px) saturate(170%) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
         transform: translate(-50%, -84%) !important;
         display: none;
         white-space: nowrap;
@@ -424,7 +427,19 @@
   function stopLoop() {
     if (loopTimer) window.clearInterval(loopTimer);
     loopTimer = null;
+    loopIntervalMs = 0;
     document.getElementById(TOOLTIP_ID)?.style && (getHoverTooltip().style.display = 'none');
+  }
+
+  /**
+   * Starts or retargets the poll interval.
+   * @param {number} ms
+   */
+  function ensureLoop(ms) {
+    if (loopTimer && loopIntervalMs === ms) return;
+    if (loopTimer) window.clearInterval(loopTimer);
+    loopIntervalMs = ms;
+    loopTimer = window.setInterval(tick, ms);
   }
 
   function tick() {
@@ -439,7 +454,10 @@
     }
     hookMpvMessages();
     injectStyles();
-    bindHoverPreview(getSeekSlider());
+    const slider = getSeekSlider();
+    bindHoverPreview(slider);
+    // Fast until seek bar is bound; then slow to catch DOM remounts cheaply.
+    ensureLoop(hoverBoundSlider && hoverBoundSlider === slider ? SLOW_POLL_MS : FAST_POLL_MS);
   }
 
   function start() {
@@ -449,7 +467,7 @@
     restoreStoredDurationHint();
     scheduleCoreDurationPoll();
     tick();
-    if (!loopTimer) loopTimer = window.setInterval(tick, 200);
+    if (!loopTimer) ensureLoop(FAST_POLL_MS);
   }
 
   injectStyles();
@@ -470,6 +488,7 @@
   document.addEventListener('stremio-custom-stream-started', () => {
     restoreStoredDurationHint();
     scheduleCoreDurationPoll();
+    if (isOnPlayerPage()) start();
   });
   document.addEventListener('stremio-custom-duration-hint', (event) => {
     rememberHoverDuration(event?.detail?.duration);

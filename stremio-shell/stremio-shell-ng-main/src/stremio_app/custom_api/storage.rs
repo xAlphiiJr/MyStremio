@@ -3,7 +3,7 @@ use serde_json::{json, Map, Value};
 use std::{
     collections::HashMap,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 const PLUGIN_CONFIG_EXT: &str = ".plugin.json";
@@ -97,13 +97,19 @@ pub fn read_user_preferences() -> Value {
 }
 
 pub fn save_user_preferences(preferences: &Value) {
-    // Many JS callers (persistUserPreferences) omit apiKeys. Preserve the vault
-    // from disk whenever the key is absent so shared keys are not wiped.
+    // Many JS callers (persistUserPreferences) omit apiKeys / uiScaleAdaptedMonitors.
+    // Preserve those from disk whenever the key is absent so vaults and monitor adapt
+    // state are not wiped (wiping adapted monitors makes UI scale snap back to DPI %).
     let mut merged = preferences.clone();
-    if merged.get("apiKeys").is_none() {
-        if let Some(existing_keys) = read_api_keys_from_disk_raw() {
-            if let Some(obj) = merged.as_object_mut() {
+    if let Some(obj) = merged.as_object_mut() {
+        if obj.get("apiKeys").is_none() {
+            if let Some(existing_keys) = read_api_keys_from_disk_raw() {
                 obj.insert("apiKeys".to_string(), existing_keys);
+            }
+        }
+        if obj.get("uiScaleAdaptedMonitors").is_none() {
+            if let Some(existing) = read_ui_scale_adapted_monitors_from_disk_raw() {
+                obj.insert("uiScaleAdaptedMonitors".to_string(), existing);
             }
         }
     }
@@ -126,6 +132,18 @@ fn read_api_keys_from_disk_raw() -> Option<Value> {
         .ok()
         .and_then(|content| serde_json::from_str::<Value>(&content).ok())
         .and_then(|value| value.get("apiKeys").cloned())
+}
+
+/// Reads `uiScaleAdaptedMonitors` from disk without full normalize (no recursion).
+fn read_ui_scale_adapted_monitors_from_disk_raw() -> Option<Value> {
+    let path = preferences_path();
+    if !path.exists() {
+        return None;
+    }
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+        .and_then(|value| value.get("uiScaleAdaptedMonitors").cloned())
 }
 
 pub fn read_autoskip_settings() -> Value {
@@ -356,23 +374,59 @@ fn normalize_player_volume(value: Value) -> Value {
 }
 
 fn plugin_config_path(plugin_base_name: &str) -> std::path::PathBuf {
-    find_plugin_config_path(plugin_base_name)
-        .unwrap_or_else(|| plugins_dir().join(format!("{plugin_base_name}{PLUGIN_CONFIG_EXT}")))
+    if let Some(existing) = find_plugin_config_path(plugin_base_name) {
+        return existing;
+    }
+    if let Some(js_path) = find_plugin_js_path(plugin_base_name) {
+        return js_path.with_file_name(format!("{plugin_base_name}{PLUGIN_CONFIG_EXT}"));
+    }
+    // No matching plugin.js yet — keep writes out of the plugins root by using player/.
+    plugins_dir()
+        .join("player")
+        .join(format!("{plugin_base_name}{PLUGIN_CONFIG_EXT}"))
 }
 
 fn plugin_schema_path(plugin_base_name: &str) -> std::path::PathBuf {
     if let Some(config_path) = find_plugin_config_path(plugin_base_name) {
-        let replaced = config_path
-            .to_string_lossy()
-            .replace(PLUGIN_CONFIG_EXT, PLUGIN_SCHEMA_EXT);
-        return Path::new(&replaced).to_path_buf();
+        return config_path.with_file_name(format!("{plugin_base_name}{PLUGIN_SCHEMA_EXT}"));
     }
-    plugins_dir().join(format!("{plugin_base_name}{PLUGIN_SCHEMA_EXT}"))
+    if let Some(js_path) = find_plugin_js_path(plugin_base_name) {
+        return js_path.with_file_name(format!("{plugin_base_name}{PLUGIN_SCHEMA_EXT}"));
+    }
+    plugins_dir()
+        .join("player")
+        .join(format!("{plugin_base_name}{PLUGIN_SCHEMA_EXT}"))
 }
 
 fn find_plugin_config_path(plugin_base_name: &str) -> Option<std::path::PathBuf> {
+    let expected = format!("{plugin_base_name}{PLUGIN_CONFIG_EXT}");
+    let mut root_hit: Option<PathBuf> = None;
     for file in walk_files(&plugins_dir(), PLUGIN_CONFIG_EXT) {
-        if file.ends_with(&format!("{plugin_base_name}{PLUGIN_CONFIG_EXT}")) {
+        if Path::new(&file)
+            .file_name()
+            .and_then(|name| name.to_str())
+            != Some(expected.as_str())
+        {
+            continue;
+        }
+        let full = plugins_dir().join(&file);
+        if file.contains('/') {
+            return Some(full);
+        }
+        root_hit = Some(full);
+    }
+    root_hit
+}
+
+/// Resolves the AppData path of `{name}.plugin.js` (category-aware).
+fn find_plugin_js_path(plugin_base_name: &str) -> Option<std::path::PathBuf> {
+    let expected = format!("{plugin_base_name}{PLUGIN_EXT}");
+    for file in walk_files(&plugins_dir(), PLUGIN_EXT) {
+        if Path::new(&file)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some(expected.as_str())
+        {
             return Some(plugins_dir().join(file));
         }
     }
@@ -574,9 +628,8 @@ fn normalize_preferences(value: Value) -> Value {
 
 fn read_json_object(path: &Path) -> Value {
     if !path.exists() {
-        let empty = Value::Object(Map::new());
-        write_json_object(path, &empty);
-        return empty;
+        // Do not create empty files on read — that littered plugins/ root with {}.
+        return Value::Object(Map::new());
     }
 
     fs::read_to_string(path)
@@ -867,3 +920,101 @@ pub fn adapt_ui_scale_for_new_monitor(monitor_key: &str, windows_percent: u32) -
 
     Some(normalized)
 }
+
+/// Moves loose plugins-root `*.plugin.json` / orphan schemas into category folders
+/// beside their `.plugin.js`, and deletes known junk (empty configs, brightness, tmdbApiKey).
+///
+/// Safe to call on every launch; no-ops when the plugins root is already tidy.
+pub fn migrate_root_plugin_litter() {
+    let root = plugins_dir();
+    let Ok(entries) = fs::read_dir(&root) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+
+        if file_name == "tmdbApiKey.plugin.json" || file_name == "brightness.plugin.json" {
+            let _ = fs::remove_file(&path);
+            continue;
+        }
+
+        if file_name.ends_with(PLUGIN_SCHEMA_EXT) {
+            let base = file_name.trim_end_matches(PLUGIN_SCHEMA_EXT);
+            if let Some(js_path) = find_plugin_js_path(base) {
+                let dest = js_path.with_file_name(file_name);
+                if dest != path && dest.exists() {
+                    let _ = fs::remove_file(&path);
+                } else if dest != path {
+                    let _ = fs::rename(&path, &dest);
+                }
+            } else {
+                let _ = fs::remove_file(&path);
+            }
+            continue;
+        }
+
+        if !file_name.ends_with(PLUGIN_CONFIG_EXT) {
+            continue;
+        }
+
+        let base = file_name.trim_end_matches(PLUGIN_CONFIG_EXT);
+        let content = fs::read_to_string(&path).unwrap_or_default();
+        let trimmed = content.trim().trim_start_matches('\u{feff}');
+        let is_empty_obj = trimmed.is_empty()
+            || trimmed == "{}"
+            || serde_json::from_str::<Value>(trimmed)
+                .ok()
+                .and_then(|v| v.as_object().map(|o| o.is_empty()))
+                .unwrap_or(false);
+
+        let Some(js_path) = find_plugin_js_path(base) else {
+            if is_empty_obj {
+                let _ = fs::remove_file(&path);
+            }
+            continue;
+        };
+
+        let dest = js_path.with_file_name(file_name);
+        if dest == path {
+            continue;
+        }
+
+        if is_empty_obj {
+            let _ = fs::remove_file(&path);
+            continue;
+        }
+
+        if dest.exists() {
+            let dest_empty = fs::read_to_string(&dest)
+                .ok()
+                .map(|c| {
+                    let t = c.trim().trim_start_matches('\u{feff}');
+                    t.is_empty()
+                        || t == "{}"
+                        || serde_json::from_str::<Value>(t)
+                            .ok()
+                            .and_then(|v| v.as_object().map(|o| o.is_empty()))
+                            .unwrap_or(false)
+                })
+                .unwrap_or(true);
+            if dest_empty {
+                let _ = fs::copy(&path, &dest);
+            }
+            let _ = fs::remove_file(&path);
+        } else if let Some(parent) = dest.parent() {
+            let _ = fs::create_dir_all(parent);
+            if fs::rename(&path, &dest).is_err() {
+                let _ = fs::copy(&path, &dest);
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+}
+

@@ -211,7 +211,10 @@
 
       if (horizontalVisible && horizontalNav) {
         moveNavbar(verticalNav, horizontalNav);
-        horizontalNav.querySelectorAll('a').forEach((link) => {
+        // Only restyle vertical tab links — never touch profile/nav-menu <a> icons
+        // (Settings / Addons / Help), which live as siblings under horizontal-nav.
+        verticalNav.querySelectorAll('a').forEach((link) => {
+          if (link.closest('[class*="nav-menu-container"]')) return;
           link.querySelector('svg')?.remove();
           const label = link.querySelector('div');
           if (label) label.className = 'nav-label';

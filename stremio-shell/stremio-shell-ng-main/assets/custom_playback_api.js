@@ -39,6 +39,11 @@
   let startupBaselineTime = null;
   let playbackAdvanced = false;
   let startupRecoveryCount = 0;
+  /** Throttle heavy time-pos fan-out (~5 Hz) while keeping heartbeat every tick. */
+  const TIME_POS_HEAVY_MS = 200;
+  let lastHeavyTimePosAt = 0;
+  let pendingHeavyTimePos = null;
+  let pendingHeavyTimePosTimer = null;
   /**
    * Playback owner states (logical):
    * idle | loading | playing | paused | leaving
@@ -324,6 +329,44 @@
     }
   }
 
+  /**
+   * Applies DOM/shell fan-out for time-pos. Throttled to ~5 Hz unless forced
+   * (pause/seek/end) so frame-rate mpv ticks do not saturate WebView2.
+   * @param {number} seconds
+   * @param {boolean} force
+   */
+  function flushHeavyTimePos(seconds, force) {
+    if (!Number.isFinite(seconds)) return;
+    const now = Date.now();
+    const due = force || now - lastHeavyTimePosAt >= TIME_POS_HEAVY_MS;
+    if (!due) {
+      pendingHeavyTimePos = seconds;
+      if (!pendingHeavyTimePosTimer) {
+        pendingHeavyTimePosTimer = window.setTimeout(() => {
+          pendingHeavyTimePosTimer = null;
+          const next = pendingHeavyTimePos;
+          pendingHeavyTimePos = null;
+          if (Number.isFinite(next)) flushHeavyTimePos(next, true);
+        }, TIME_POS_HEAVY_MS);
+      }
+      return;
+    }
+    if (pendingHeavyTimePosTimer) {
+      window.clearTimeout(pendingHeavyTimePosTimer);
+      pendingHeavyTimePosTimer = null;
+    }
+    pendingHeavyTimePos = null;
+    lastHeavyTimePosAt = now;
+    updateCurrentTime(seconds, 'mpv');
+    maybeBoostPreload();
+    syncShellVideoState();
+    document.dispatchEvent(
+      new CustomEvent('stremio-custom-mpv-time', {
+        detail: { time: seconds },
+      })
+    );
+  }
+
   function syncShellVideoState() {
     if (!isPlayerRoute()) return;
     const video = ensureShellVideo();
@@ -455,14 +498,7 @@
         // false-positive recovery seeks that flip the play/pause UI).
         lastMpvTimeAt = Date.now();
         noteMpvTimeProgress(seconds);
-        updateCurrentTime(seconds, 'mpv');
-        maybeBoostPreload();
-        syncShellVideoState();
-        document.dispatchEvent(
-          new CustomEvent('stremio-custom-mpv-time', {
-            detail: { time: seconds },
-          })
-        );
+        flushHeavyTimePos(seconds, false);
       }
       return;
     }
@@ -491,6 +527,9 @@
 
     if (change.name === 'pause') {
       mpvPause = Boolean(change.data);
+      if (mpvPause && Number.isFinite(shimState.currentTime)) {
+        flushHeavyTimePos(shimState.currentTime, true);
+      }
       return;
     }
 

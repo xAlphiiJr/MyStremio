@@ -2,7 +2,7 @@
 
 **MyStremio** is a personalized Windows desktop client built on the Stremio shell stack.
 It combines UI upgrades, player improvements, plugins/themes and library tools in one installer.
-Current release: **2.3.3**
+Current release: **2.3.4**
 
 > **Disclaimer:** MyStremio is an independent community project and is not affiliated with official Stremio.
 
@@ -29,6 +29,8 @@ Current release: **2.3.3**
 
 ---
 
+
+
 ### ❓ How MyStremio differs from official Stremio
 
 -MyStremio uses MPV as the native video player
@@ -47,44 +49,49 @@ Current release: **2.3.3**
 
 ---
 
+
+
 ### ❤️ Support
 
 If you want to support my work you can leave a small tip on [ko-fi](https://ko-fi.com/xalphiijr), I would really appreciate it! <3 
 
 ---
 
+
+
 ## 🚀 Features
+
+
+
 ### 🪄 UI
+
 MyStremio offers its own UI enhancements and combines it with already existing plugins made by the communtiy.
 
 #### 🏠 Board hero home view
 
 The board includes a hero section with rotating titles. The Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme) and just slightly optimized by me.
 
-<p align="center">
-  <img src="./images/01-board-hero.png" alt="Board Hero Home" width="1000"/>
-</p>
+
 
 #### 🖱️ Hover metadata in catalogs
 
    While browsing catalogs, hover cards show key information (plot, genres, cast) without forcing a page change.
 
-<p align="center">
-  <img src="./images/02-catalog-hover.png" alt="Hover Metadata in Catalogs" width="1000"/>
-</p>
+
 
 #### 📖 Detail view with metadata and stream sidebar
 
 The Data Enrichment Plugin by MrBlu03 (if a TMDB API key is set under **Settings → MyStremio → API Keys**) offers an enhanced detail page with cast and similar titles.
 The StreamUI plugin offers a clean and modern sidebar with folders to pick streams from. (The plugin works for the follwing addons: Most torrent addons, [WatchHub](https://stremio-addons.net/addons/watchhub), [Ratings Aggregator](https://stremio-addons.net/addons/ratings-aggregator), [IMDb Ratings](https://stremio-addons.net/addons/imdb-ratings), [AfterCredits](https://aftercredits.almosteffective.com/configure.html)).
 
-<p align="center">
-  <img src="./images/03-detail-metadata-stream-sidebar.png" alt="Detail View with Metadata and Stream Sidebar" width="1000"/>
-</p>
+
 
 ---
 
+
+
 ### ⚙️ Settings
+
 MyStremio comes with a few custom settings including Favorite Languages, Plugins and Buffering.
 
 #### ⚡ Quick Select
@@ -98,21 +105,21 @@ Inside **player** settings, you can define favorite subtitle and audio languages
 This preference layer is used by the quick language actions shown in the previous section.
 
 #### 🛠️ MyStremio
+
 In the Stremio settings you will find the **MyStremio** section. These include settings for API Keys, plugins, buffering, library and discord.
 
 - **API Keys** are managed centrally under Settings → MyStremio → API Keys (one key for all installed plugins that need it).
-
 - **Plugins** can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and communtiy made plugins built into to installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: Enhanced Title Bar by Fxy, EnhancedCovers by Fxy, SlashtoSearch by REVENGE977. A few of other plugins are slightly tuned to fit into MyStremio including: Dynamic Hero by Fxy, Context Menu Fix by MrBlu03 and Data Enrichment by MrBlu03.
-
 - **Preload** settings determine how much of the video gets bufferd ahead. You can chose from buffering only the next 10 seconds or the entire video. This currently works for torrent/debrid streams and is not designed for usenet or http. That doesn't mean it won't work on those, I just can't test it as I'm not using usenet/http.
-
 - **Library** json can be importet or exportet to keep your custom library entries safe or import them on another device. Updating the app won't remove your library entries, but if you decide to uninstall MyStremio and reinstall it in the future you will need the json to get your custom library back.
-  
 - **Discord** Rich Presence by [REVENGE977](https://github.com/REVENGE977/) enhances the native Discord integration and shows additional info.
 
 ---
 
+
+
 ### 📺 Player
+
 MyStremio offers some qualitiy of life changes available as plugins so you can enable/disable them to further customize your experience.
 
 #### ⏱️ Skip Intro Plugin
@@ -123,9 +130,9 @@ Built in plugin that allows to receive and contribute segment timestamps to TheI
 
 Built in plugin that adds configurable skip-back and skip-forward controls to the player bar — useful for quick rewinds or jumping ahead without scrubbing. The skip interval can be changed in the settings: MyStremio → Plugins → Player → Seek Buttons.
 
-#### 🔆 Brightness Slider Plugin
+#### 🎛️ Picture Settings Plugin
 
-Built in plugin that adds a brightness slider to dim the video while watching without the need to change monitor/screen/tv settings.
+Built in player plugin with Master Dim plus Contrast, Brightness, Gamma, and Saturation controls.
 
 #### ⏳ Hover Timestamps Plugin
 
@@ -137,11 +144,15 @@ Built in plugin that adds a cast section directly into the player.
 
 ---
 
+
+
 ### 🎞️ Addon Manager
 
 [Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio and optionally disable specific sources (for example Cinemeta).
 
 ---
+
+
 
 ### 💡 Planned Features
 
@@ -150,7 +161,20 @@ Built in plugin that adds a cast section directly into the player.
 
 ---
 
+
+
 ## 🛠️ Patch Notes
+
+
+
+### 2.3.4
+
+- **Nav menu icons** — Settings, Addons, and Help icons no longer disappear after opening the profile menu.
+- **Updater branding** — Update banner now says MyStremio instead of Stremio.
+- **Anime4K** — Is now adjustable via button inside the player. Shader quality (S/M/L/VL/UL) selectable in plugin settings, default L.
+
+
+
 ### 2.3.3
 
 - **AniSkip** — Integrated to Intro Skip plugin
@@ -158,11 +182,15 @@ Built in plugin that adds a cast section directly into the player.
 - **shell/loading polish** — Plugin and Player loading,Transparency transitions and stream start more robust
 - **Glass icon** — Replaced original Stremio logo with glass icon
 
+
+
 ### 2.3.2
 
 - **Central API Keys** — Shared API keys (TMDB, RPDB, TheIntroDB, IntroDB, …) live under **Settings → MyStremio → API Keys**, discovered from installed plugin schemas; plugin cards show Set/Missing instead of duplicate inputs.
 - **Player navigation fix** — Fixed the black screen after Episode → Next (Detail streams) → Back by syncing shell leave-cleanup with HashRouter `pushState`/`replaceState` (opaque UI restored when leaving the player; abandoned dead `#/player` routes no longer stick).
 - **Stream re-open fix** — Re-clicking the same stream after Back no longer bounces to the episode list; dead-player protection only applies to history Back, not stream clicks.
+
+
 
 ### 2.3.1
 
@@ -170,13 +198,17 @@ Built in plugin that adds a cast section directly into the player.
 - **Data Enrichment cast** — TV detail cast also uses `aggregate_credits` so Series Cast matches TMDB instead of a tiny credits subset.
 - **Rating links** — Stream UI rating cards now clickable and open the correct source pages.
 - **Intro Skip Plugin** — Added +/- buttons to allow for small corrections before submitting.
-- **Hover Timestamps and Brightness** — Switched the Hover Timestamps and Brightness features from native settings to plugins to allow more individualisation. 
+- **Hover Timestamps and Brightness** — Switched the Hover Timestamps and Brightness features from native settings to plugins to allow more individualisation.
+
+
 
 ### 2.3.0
 
 - **IntroDB integration** — TheIntroDB plugin now loads skip segments from both [TheIntroDB](https://theintrodb.org/) and [IntroDB](https://introdb.app/), with separate API keys, contributor target selection, and a shell-side IntroDB proxy to bypass browser CORS limits.
 - **Library title fix** — Library items now show the correct title reliably across navigation and route changes.
 - **UI scaling settings** — New **Settings → Interface → UI Scaling** dropdown (75%–200%), independent of Windows display scaling, persisted across restarts via WebView2 zoom.
+
+
 
 ### 2.2.9
 
@@ -201,20 +233,24 @@ Built in plugin that adds a cast section directly into the player.
 
 ---
 
+
+
 ### Known Issues
 
 - **Board stream start:** When starting the stream through the "Continue Watching" section, the video may remain frozen on the first start. One click into the seek bar fixes the issue.
 - **Cast Search Addon:** The Cast Search Addon is not compatible with the StreamUI plugin as the cast members load the same way as video streams which messes with correct grouping.
 - **Formatter:** Flags don't display correctly.
 - **Hover timestamps:** When starting a stream from the "Continue Watching" segment on the board, the hover timestamps won't load. Starting the stream from the details page fixes this problem.
+- **Antivirus (e.g. Avast):** Some security tools may repeatedly scan MyStremio because it runs unsigned binaries from `%LOCALAPPDATA%\Programs\MyStremio`, a local streaming runtime, and writable data under `%APPDATA%\MyStremio` (plus occasional update installers under `%APPDATA%\MyStremio\updates`). Prefer folder exclusions for those paths over disabling antivirus entirely. Authenticode signing (when available) is the proper long-term fix.
 
 ---
+
 
 
 ## 💾 Installation
 
 1. Download the latest installer from this repository's **Releases** page.
-2. Run `MyStremioSetup-v2.3.3_x64.exe` (or the latest version).
+2. Run `MyStremioSetup-v2.3.4_x64.exe` (or the latest version).
 3. The installer sets up:
   - App binaries (`mystremio-shell.exe`, streaming server, FFmpeg, libmpv)
   - Bundled plugins and themes
@@ -222,6 +258,7 @@ Built in plugin that adds a cast section directly into the player.
   - WebView2 runtime (if missing)
   - Protocol handlers (`stremio://`, `magnet:`, optional `.torrent`)
 4. Launch MyStremio from the Start menu or desktop shortcut.
+
 
 
 ### 📂 Install paths
@@ -238,6 +275,7 @@ Built in plugin that adds a cast section directly into the player.
 - Optional API keys for plugins (for example TMDB, TheIntroDB) under **Settings → MyStremio → API Keys**
 
 
+
 ### 🗑️ Uninstall
 
 Use **Windows Apps & Features** or the Start menu uninstaller.
@@ -252,11 +290,13 @@ cd stremio-shell\stremio-shell-ng-main
 .\package-release.ps1
 ```
 
-Output: `release\MyStremioSetup-v2.3.3_x64.exe`
+Output: `release\MyStremioSetup-v2.3.4_x64.exe`
 
 The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle. To rebuild the Web UI from source, clone [stremio-web](https://github.com/Stremio/stremio-web) into `.tmp/stremio-web`, apply MyStremio patches, then run the build script again.
 
 ---
+
+
 
 ## 🔒 Privacy and local data
 
@@ -265,6 +305,8 @@ The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle
 - Discord Rich Presence only sends data when enabled and connected.
 
 ---
+
+
 
 ## 🙏 Credits
 

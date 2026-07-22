@@ -1,7 +1,7 @@
 /**
- * @name Brightness
- * @description Adjust player video brightness via MPV
- * @version 1.0.0
+ * @name Picture Settings
+ * @description Player picture controls: Master Dim plus Contrast / Brightness / Gamma / Saturation (mpv)
+ * @version 2.2.0
  * @author MyStremio
  * @category player
  */
@@ -10,16 +10,20 @@
 (function () {
   'use strict';
 
-  const PLUGIN_VERSION = '1.0.0';
-  const PLUGIN_REF = 'player/brightness.plugin.js';
+  const PLUGIN_VERSION = '2.2.0';
+  const PLUGIN_REF = 'player/picture.plugin.js';
+  const LEGACY_PLUGIN_REF = 'player/brightness.plugin.js';
 
   /**
    * @returns {boolean}
    */
-  function isBrightnessEnabled() {
+  function isPictureEnabled() {
     const helpers = window.StremioCustom?.helpers;
     if (!helpers?.isPluginEnabled) return false;
-    return helpers.isPluginEnabled(PLUGIN_REF);
+    return (
+      helpers.isPluginEnabled(PLUGIN_REF) ||
+      helpers.isPluginEnabled(LEGACY_PLUGIN_REF)
+    );
   }
 
   const BTN_ID = 'mystremio-brightness-btn';
@@ -27,55 +31,172 @@
   const STYLE_ID = 'mystremio-brightness-styles';
   const SEEK_GROUP_ID = 'stremio-seek-buttons-group';
   const OVERLAY_LOCK_CLASS = 'mystremio-brightness-overlay-lock';
-  const STORAGE_KEY = 'stremio-custom-player-brightness';
+  const STORAGE_KEY = 'stremio-custom-player-brightness-eq';
+  const LEGACY_STORAGE_KEY = 'stremio-custom-player-brightness';
   const ICON_SIZE = '2.0rem';
-  const DEFAULT_PERCENT = 100;
-  const PANEL_VERSION = '8';
+  const PANEL_VERSION = '10';
   const SLIDER_ACTIVE_CLASS = 'mystremio-brightness-slider-active';
-  const MAX_BRIGHTNESS_DROP = 50;
+
+  /**
+   * @typedef {object} EqState
+   * @property {number} dim Master dim 0–100 (100 = no dim)
+   * @property {number} contrast Absolute mpv contrast (−100…100), 0 neutral
+   * @property {number} brightness Absolute mpv brightness (−100…100), 0 neutral
+   * @property {number} gamma Absolute mpv gamma (−100…100), 0 neutral
+   * @property {number} saturation Absolute mpv saturation (−100…100), 0 neutral
+   * @property {boolean} brightnessManual Fine Brightness overrides master dim curve
+   * @property {boolean} contrastManual Fine Contrast ignores master coupling
+   * @property {boolean} gammaManual Fine Gamma ignores master coupling
+   * @property {boolean} saturationManual Fine Saturation ignores master coupling
+   */
+
+  /** @type {EqState} */
+  const DEFAULT_STATE = {
+    dim: 100,
+    contrast: 0,
+    brightness: 0,
+    gamma: 0,
+    saturation: 0,
+    brightnessManual: false,
+    contrastManual: false,
+    gammaManual: false,
+    saturationManual: false,
+  };
 
   let shellMsgId = 14000;
   let panelOpen = false;
   let outsideHandler = null;
   let keyHandler = null;
-  let overlayTimer = null;
   let overlayObserver = null;
   let dismissGuardUntil = 0;
   let ensureTimer = null;
-  let lastAppliedPercent = null;
   let layoutObserver = null;
+  let chromeIdleWatcher = null;
+
+  /**
+   * @returns {boolean}
+   */
+  function isOverlayHidden() {
+    const el = document.querySelector('[class*="player-container"]');
+    if (!el) return false;
+    for (const className of el.classList) {
+      if (String(className).includes('overlayHidden')) return true;
+    }
+    return false;
+  }
+  /** @type {EqState} */
+  let state = { ...DEFAULT_STATE };
+  let lastAppliedSig = '';
 
   function isPlayerRoute() {
     return /#\/player/.test(location.hash || '');
   }
 
-  function clampPercent(value) {
+  /**
+   * @param {unknown} value
+   * @param {number} min
+   * @param {number} max
+   * @param {number} fallback
+   * @returns {number}
+   */
+  function clampInt(value, min, max, fallback) {
     const num = Number(value);
-    if (!Number.isFinite(num)) return DEFAULT_PERCENT;
-    return Math.min(100, Math.max(0, Math.round(num)));
+    if (!Number.isFinite(num)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(num)));
   }
 
-  function readStoredPercent() {
+  /**
+   * Maps Master Dim (0–100) to a detail-preserving “smartphone dim” curve.
+   * Uses a squared falloff so mid-dim keeps more midtones; at Dim 0 ≈ brightness −72,
+   * gamma +32 (shadow lift), mild contrast −8 and saturation −12.
+   * Prefer gamma recovery over crushing brightness alone (mpv brightness is a hard offset).
+   *
+   * @param {number} dim
+   * @returns {{ brightness: number, contrast: number, gamma: number, saturation: number }}
+   */
+  function dimCurve(dim) {
+    const t = 1 - clampInt(dim, 0, 100, 100) / 100;
+    const t2 = t * t;
+    return {
+      brightness: Math.round(-55 * t - 17 * t2),
+      contrast: Math.round(-8 * t),
+      gamma: Math.round(14 * t + 18 * t2),
+      saturation: Math.round(-12 * t),
+    };
+  }
+
+  /**
+   * Resolves the mpv props that should be applied for the current state.
+   * Master Dim writes the dim curve unless the corresponding fine slider was moved
+   * (manual flag). Fine sliders write the same props absolutely until Reset.
+   *
+   * @param {EqState} s
+   * @returns {{ brightness: number, contrast: number, gamma: number, saturation: number }}
+   */
+  function resolveMpvProps(s) {
+    const curve = dimCurve(s.dim);
+    return {
+      brightness: s.brightnessManual ? s.brightness : curve.brightness,
+      contrast: s.contrastManual ? s.contrast : curve.contrast,
+      gamma: s.gammaManual ? s.gamma : curve.gamma,
+      saturation: s.saturationManual ? s.saturation : curve.saturation,
+    };
+  }
+
+  /**
+   * @param {unknown} raw
+   * @returns {EqState}
+   */
+  function normalizeState(raw) {
+    if (raw == null || typeof raw !== 'object') return { ...DEFAULT_STATE };
+    const obj = /** @type {Record<string, unknown>} */ (raw);
+    return {
+      dim: clampInt(obj.dim, 0, 100, DEFAULT_STATE.dim),
+      contrast: clampInt(obj.contrast, -100, 100, 0),
+      brightness: clampInt(obj.brightness, -100, 100, 0),
+      gamma: clampInt(obj.gamma, -100, 100, 0),
+      saturation: clampInt(obj.saturation, -100, 100, 0),
+      brightnessManual: Boolean(obj.brightnessManual),
+      contrastManual: Boolean(obj.contrastManual),
+      gammaManual: Boolean(obj.gammaManual),
+      saturationManual: Boolean(obj.saturationManual),
+    };
+  }
+
+  /**
+   * Loads EQ state from localStorage (migrates legacy single-percent key).
+   *
+   * @returns {EqState}
+   */
+  function readStoredState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw == null || raw === '') return DEFAULT_PERCENT;
-      return clampPercent(raw);
-    } catch (_) {
-      return DEFAULT_PERCENT;
-    }
+      if (raw) return normalizeState(JSON.parse(raw));
+    } catch (_) {}
+    try {
+      const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legacy != null && legacy !== '') {
+        const dim = clampInt(legacy, 0, 100, 100);
+        return normalizeState({ ...DEFAULT_STATE, dim });
+      }
+    } catch (_) {}
+    return { ...DEFAULT_STATE };
   }
 
-  function writeStoredPercent(percent) {
+  /**
+   * @param {EqState} next
+   */
+  function writeStoredState(next) {
     try {
-      localStorage.setItem(STORAGE_KEY, String(clampPercent(percent)));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeState(next)));
     } catch (_) {}
   }
 
-  function percentToMpvBrightness(percent) {
-    const t = clampPercent(percent) / 100;
-    return -MAX_BRIGHTNESS_DROP * (1 - t);
-  }
-
+  /**
+   * @param {string} prop
+   * @param {number|string|boolean} value
+   * @returns {boolean}
+   */
   function sendMpvSetProp(prop, value) {
     if (!window.chrome?.webview?.postMessage) return false;
     try {
@@ -92,13 +213,27 @@
     }
   }
 
-  function applyBrightness(percent) {
-    sendMpvSetProp('brightness', percentToMpvBrightness(percent));
+  /**
+   * Pushes resolved tone props to mpv.
+   *
+   * @param {EqState} [s]
+   */
+  function applyTone(s) {
+    const props = resolveMpvProps(s || state);
+    sendMpvSetProp('brightness', props.brightness);
+    sendMpvSetProp('contrast', props.contrast);
+    sendMpvSetProp('gamma', props.gamma);
+    sendMpvSetProp('saturation', props.saturation);
   }
 
+  /**
+   * Resets all mpv tone props to neutral (gamma 0, not 1).
+   */
   function resetMpvTone() {
-    sendMpvSetProp('gamma', 1);
     sendMpvSetProp('brightness', 0);
+    sendMpvSetProp('contrast', 0);
+    sendMpvSetProp('gamma', 0);
+    sendMpvSetProp('saturation', 0);
   }
 
   function isDismissGuardActive() {
@@ -111,11 +246,6 @@
 
   function stopEvent(event) {
     event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-  }
-
-  function stopBubble(event) {
     event.stopPropagation();
     event.stopImmediatePropagation();
   }
@@ -143,10 +273,12 @@
     return target instanceof Element && Boolean(target.closest(`#${BTN_ID}`));
   }
 
+  /**
+   * @param {HTMLElement} button
+   */
   function bindButtonHandler(button) {
     if (!button || button.dataset.mystremioBrightnessBound === '1') return;
     button.dataset.mystremioBrightnessBound = '1';
-
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -155,28 +287,113 @@
     });
   }
 
+  /**
+   * @param {HTMLInputElement|null} slider
+   * @param {number} percent 0–100 fill
+   */
   function updateSliderFill(slider, percent) {
     if (!slider) return;
-    slider.style.setProperty('--brightness-pct', `${clampPercent(percent)}%`);
+    const pct = clampInt(percent, 0, 100, 50);
+    slider.style.setProperty('--eq-pct', `${pct}%`);
+  }
+
+  /**
+   * Maps a bipolar (−100…100) slider value to a 0–100 track fill percent.
+   *
+   * @param {number} value
+   * @returns {number}
+   */
+  function bipolarFill(value) {
+    return clampInt(((clampInt(value, -100, 100, 0) + 100) / 200) * 100, 0, 100, 50);
   }
 
   function stopSliderBubble(event) {
     event.stopPropagation();
   }
 
-  function bindNativeSlider(slider) {
-    if (!slider || slider.dataset.mystremioBrightnessBound === '1') return;
-    slider.dataset.mystremioBrightnessBound = '1';
+  /**
+   * @param {HTMLElement} panel
+   */
+  function bindPanelControls(panel) {
+    if (!panel || panel.dataset.mystremioBrightnessControls === '1') return;
+    panel.dataset.mystremioBrightnessControls = '1';
 
-    updateSliderFill(slider, slider.value);
-
-    slider.addEventListener('input', (event) => {
-      stopSliderBubble(event);
-      updateSliderFill(event.target, event.target.value);
-      setBrightness(event.target.value, true);
+    panel.querySelectorAll('[data-eq-key]').forEach((slider) => {
+      if (!(slider instanceof HTMLInputElement)) return;
+      slider.addEventListener('input', (event) => {
+        stopSliderBubble(event);
+        const key = slider.getAttribute('data-eq-key');
+        if (!key) return;
+        onSliderInput(key, slider.value);
+      });
+      slider.addEventListener('pointerdown', stopSliderBubble);
+      slider.addEventListener('pointerup', stopSliderBubble);
     });
-    slider.addEventListener('pointerdown', stopSliderBubble);
-    slider.addEventListener('pointerup', stopSliderBubble);
+
+    panel.querySelector('[data-mystremio-brightness-reset]')?.addEventListener('click', (event) => {
+      stopEvent(event);
+      resetAll(true);
+    });
+    panel.querySelector('[data-mystremio-brightness-close]')?.addEventListener('click', (event) => {
+      stopEvent(event);
+      closePanel();
+    });
+  }
+
+  /**
+   * Handles slider input for master dim and fine EQ controls.
+   *
+   * @param {string} key
+   * @param {string|number} rawValue
+   */
+  function onSliderInput(key, rawValue) {
+    if (key === 'dim') {
+      state.dim = clampInt(rawValue, 0, 100, 100);
+      // Master reasserts the dim curve unless the user already overrode brightness.
+      if (!state.brightnessManual) {
+        state.brightness = dimCurve(state.dim).brightness;
+      }
+      persistAndApply();
+      syncPanelFromState();
+      return;
+    }
+
+    const value = clampInt(rawValue, -100, 100, 0);
+    if (key === 'brightness') {
+      state.brightness = value;
+      state.brightnessManual = true;
+    } else if (key === 'contrast') {
+      state.contrast = value;
+      state.contrastManual = true;
+    } else if (key === 'gamma') {
+      state.gamma = value;
+      state.gammaManual = true;
+    } else if (key === 'saturation') {
+      state.saturation = value;
+      state.saturationManual = true;
+    } else {
+      return;
+    }
+    persistAndApply();
+    syncPanelFromState();
+  }
+
+  function persistAndApply() {
+    state = normalizeState(state);
+    writeStoredState(state);
+    applyTone(state);
+    lastAppliedSig = JSON.stringify(resolveMpvProps(state));
+  }
+
+  /**
+   * @param {boolean} persist
+   */
+  function resetAll(persist) {
+    state = { ...DEFAULT_STATE };
+    if (persist) writeStoredState(state);
+    resetMpvTone();
+    lastAppliedSig = JSON.stringify(resolveMpvProps(state));
+    syncPanelFromState();
   }
 
   function findLeftBarInsertPoint() {
@@ -342,13 +559,13 @@
       #${PANEL_ID} {
         position: fixed;
         z-index: 2147483000;
-        width: min(13.5rem, calc(100vw - 2rem));
-        padding: 0.6rem 0.7rem 0.65rem;
+        width: min(15.5rem, calc(100vw - 2rem));
+        padding: 0.65rem 0.75rem 0.7rem;
         border-radius: 12px;
         border: 1px solid rgba(255, 255, 255, 0.12);
         background: rgba(36, 36, 40, 0.94);
-        backdrop-filter: blur(18px) saturate(160%);
-        -webkit-backdrop-filter: blur(18px) saturate(160%);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
         box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.08);
         color: #fff;
         font-family: inherit;
@@ -358,37 +575,37 @@
         pointer-events: auto;
         overflow: visible;
       }
-      #${PANEL_ID}.open {
-        display: block;
-      }
+      #${PANEL_ID}.open { display: block; }
       #${PANEL_ID} .mystremio-brightness-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 0.5rem;
-        margin-bottom: 0.45rem;
-      }
-      #${PANEL_ID} .mystremio-brightness-header-left {
-        display: flex;
-        align-items: center;
-        gap: 0.4rem;
-        min-width: 0;
-        flex: 1;
+        margin-bottom: 0.5rem;
       }
       #${PANEL_ID} .mystremio-brightness-title {
         font-size: 0.82rem;
         font-weight: 600;
         letter-spacing: 0.01em;
-        line-height: 1.2;
-        white-space: nowrap;
       }
-      #${PANEL_ID} .mystremio-brightness-value {
-        font-size: 0.75rem;
-        font-weight: 500;
-        font-variant-numeric: tabular-nums;
-        color: rgba(255, 255, 255, 0.68);
-        line-height: 1.2;
-        white-space: nowrap;
+      #${PANEL_ID} .mystremio-brightness-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+      #${PANEL_ID} .mystremio-brightness-reset {
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.85);
+        font-size: 0.68rem;
+        font-weight: 600;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0.28rem 0.45rem;
+        border-radius: 6px;
+      }
+      #${PANEL_ID} .mystremio-brightness-reset:hover {
+        background: rgba(255, 255, 255, 0.14);
       }
       #${PANEL_ID} .mystremio-brightness-close {
         border: none;
@@ -397,8 +614,6 @@
         font-size: 1rem;
         line-height: 1;
         cursor: pointer;
-        padding: 0;
-        margin: 0;
         width: 1.2rem;
         height: 1.2rem;
         flex: none;
@@ -411,15 +626,35 @@
         background: rgba(255, 255, 255, 0.08);
         color: rgba(255, 255, 255, 0.9);
       }
-      #${PANEL_ID} .mystremio-brightness-slider-wrap {
-        display: flex;
+      #${PANEL_ID} .mystremio-eq-row {
+        display: grid;
+        grid-template-columns: 4.6rem 1fr 2.2rem;
         align-items: center;
-        width: 100%;
-        min-height: 1.35rem;
-        padding: 0.35rem 0;
-        overflow: visible;
+        gap: 0.4rem;
+        min-height: 1.55rem;
+        margin-top: 0.28rem;
       }
-      #${PANEL_ID} [data-mystremio-brightness-slider] {
+      #${PANEL_ID} .mystremio-eq-row.is-master {
+        margin-top: 0.1rem;
+        margin-bottom: 0.2rem;
+        padding-bottom: 0.35rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      #${PANEL_ID} .mystremio-eq-label {
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.78);
+        white-space: nowrap;
+      }
+      #${PANEL_ID} .mystremio-eq-value {
+        font-size: 0.7rem;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        color: rgba(255, 255, 255, 0.62);
+        text-align: right;
+        white-space: nowrap;
+      }
+      #${PANEL_ID} [data-eq-key] {
         -webkit-appearance: none;
         appearance: none;
         width: 100%;
@@ -429,31 +664,31 @@
         cursor: pointer;
         touch-action: none;
         overflow: visible;
-        --brightness-pct: 100%;
+        --eq-pct: 50%;
       }
-      #${PANEL_ID} [data-mystremio-brightness-slider]::-webkit-slider-runnable-track {
+      #${PANEL_ID} [data-eq-key]::-webkit-slider-runnable-track {
         height: 0.28rem;
         border-radius: 999px;
         background: linear-gradient(
           to right,
           rgba(255, 255, 255, 0.92) 0%,
-          rgba(255, 255, 255, 0.92) var(--brightness-pct, 100%),
-          rgba(255, 255, 255, 0.2) var(--brightness-pct, 100%),
+          rgba(255, 255, 255, 0.92) var(--eq-pct, 50%),
+          rgba(255, 255, 255, 0.2) var(--eq-pct, 50%),
           rgba(255, 255, 255, 0.2) 100%
         );
       }
-      #${PANEL_ID} [data-mystremio-brightness-slider]::-moz-range-track {
+      #${PANEL_ID} [data-eq-key]::-moz-range-track {
         height: 0.28rem;
         border-radius: 999px;
         background: rgba(255, 255, 255, 0.2);
         border: none;
       }
-      #${PANEL_ID} [data-mystremio-brightness-slider]::-moz-range-progress {
+      #${PANEL_ID} [data-eq-key]::-moz-range-progress {
         height: 0.28rem;
         border-radius: 999px;
         background: rgba(255, 255, 255, 0.92);
       }
-      #${PANEL_ID} [data-mystremio-brightness-slider]::-webkit-slider-thumb {
+      #${PANEL_ID} [data-eq-key]::-webkit-slider-thumb {
         -webkit-appearance: none;
         appearance: none;
         width: 0.72rem;
@@ -463,34 +698,17 @@
         background: #fff;
         border: none;
         box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-        transition: box-shadow 150ms ease;
       }
-      #${PANEL_ID} [data-mystremio-brightness-slider]:hover::-webkit-slider-thumb,
-      #${PANEL_ID} [data-mystremio-brightness-slider]:active::-webkit-slider-thumb {
-        box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.22), 0 1px 4px rgba(0, 0, 0, 0.35);
-      }
-      #${PANEL_ID} [data-mystremio-brightness-slider]::-moz-range-thumb {
+      #${PANEL_ID} [data-eq-key]::-moz-range-thumb {
         width: 0.72rem;
         height: 0.72rem;
         border-radius: 50%;
         background: #fff;
         border: none;
         box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-        transition: box-shadow 150ms ease;
-      }
-      #${PANEL_ID} [data-mystremio-brightness-slider]:hover::-moz-range-thumb,
-      #${PANEL_ID} [data-mystremio-brightness-slider]:active::-moz-range-thumb {
-        box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.22), 0 1px 4px rgba(0, 0, 0, 0.35);
       }
       html.${SLIDER_ACTIVE_CLASS} {
         cursor: grabbing !important;
-      }
-      html.${SLIDER_ACTIVE_CLASS} body {
-        pointer-events: none !important;
-      }
-      html.${SLIDER_ACTIVE_CLASS} #${PANEL_ID},
-      html.${SLIDER_ACTIVE_CLASS} #${PANEL_ID} * {
-        pointer-events: auto !important;
       }
       html.${OVERLAY_LOCK_CLASS} [class*="player-container"] {
         cursor: default !important;
@@ -512,32 +730,52 @@
     `;
   }
 
-  function getPanelFields() {
+  /**
+   * Syncs panel slider values/labels from in-memory state.
+   */
+  function syncPanelFromState() {
     const panel = document.getElementById(PANEL_ID);
-    if (!panel) return null;
-    return {
-      panel,
-      slider: panel.querySelector('[data-mystremio-brightness-slider]'),
-      value: panel.querySelector('[data-mystremio-brightness-value]'),
-    };
-  }
+    if (!panel) return;
+    const props = resolveMpvProps(state);
 
-  function updatePanelValue(percent) {
-    const fields = getPanelFields();
-    if (!fields) return;
-    const clamped = clampPercent(percent);
-    if (fields.slider) {
-      fields.slider.value = String(clamped);
-      updateSliderFill(fields.slider, clamped);
+    /** @type {Array<{ key: string, value: number, label: string, fill: number }>} */
+    const rows = [
+      { key: 'dim', value: state.dim, label: `${state.dim}%`, fill: state.dim },
+      {
+        key: 'contrast',
+        value: state.contrastManual ? state.contrast : props.contrast,
+        label: String(state.contrastManual ? state.contrast : props.contrast),
+        fill: bipolarFill(state.contrastManual ? state.contrast : props.contrast),
+      },
+      {
+        key: 'brightness',
+        value: props.brightness,
+        label: String(props.brightness),
+        fill: bipolarFill(props.brightness),
+      },
+      {
+        key: 'gamma',
+        value: state.gammaManual ? state.gamma : props.gamma,
+        label: String(state.gammaManual ? state.gamma : props.gamma),
+        fill: bipolarFill(state.gammaManual ? state.gamma : props.gamma),
+      },
+      {
+        key: 'saturation',
+        value: state.saturationManual ? state.saturation : props.saturation,
+        label: String(state.saturationManual ? state.saturation : props.saturation),
+        fill: bipolarFill(state.saturationManual ? state.saturation : props.saturation),
+      },
+    ];
+
+    for (const row of rows) {
+      const slider = panel.querySelector(`[data-eq-key="${row.key}"]`);
+      const valueEl = panel.querySelector(`[data-eq-value="${row.key}"]`);
+      if (slider instanceof HTMLInputElement) {
+        slider.value = String(row.value);
+        updateSliderFill(slider, row.fill);
+      }
+      if (valueEl) valueEl.textContent = row.label;
     }
-    if (fields.value) fields.value.textContent = `${clamped}%`;
-  }
-
-  function setBrightness(percent, persist) {
-    const clamped = clampPercent(percent);
-    if (persist) writeStoredPercent(clamped);
-    updatePanelValue(clamped);
-    applyBrightness(clamped);
   }
 
   function ensurePanel() {
@@ -547,7 +785,8 @@
       panel = null;
     }
     if (panel) {
-      bindNativeSlider(panel.querySelector('[data-mystremio-brightness-slider]'));
+      bindPanelControls(panel);
+      syncPanelFromState();
       return panel;
     }
 
@@ -555,35 +794,45 @@
     panel.id = PANEL_ID;
     panel.dataset.mystremioBrightnessVersion = PANEL_VERSION;
     panel.setAttribute('role', 'dialog');
-    panel.setAttribute('aria-label', 'Brightness');
+    panel.setAttribute('aria-label', 'Picture Settings');
     panel.innerHTML = `
       <div class="mystremio-brightness-header">
-        <div class="mystremio-brightness-header-left">
-          <span class="mystremio-brightness-title">Brightness</span>
-          <span class="mystremio-brightness-value" data-mystremio-brightness-value>${DEFAULT_PERCENT}%</span>
+        <span class="mystremio-brightness-title">Picture Settings</span>
+        <div class="mystremio-brightness-header-actions">
+          <button type="button" class="mystremio-brightness-reset" data-mystremio-brightness-reset>Reset</button>
+          <button type="button" class="mystremio-brightness-close" data-mystremio-brightness-close aria-label="Close">×</button>
         </div>
-        <button type="button" class="mystremio-brightness-close" data-mystremio-brightness-close aria-label="Close">×</button>
       </div>
-      <div class="mystremio-brightness-slider-wrap">
-        <input
-          type="range"
-          min="0"
-          max="100"
-          step="1"
-          value="${DEFAULT_PERCENT}"
-          data-mystremio-brightness-slider
-          aria-label="Brightness"
-        />
+      <div class="mystremio-eq-row is-master">
+        <span class="mystremio-eq-label">Dim</span>
+        <input type="range" min="0" max="100" step="1" value="100" data-eq-key="dim" aria-label="Dim" />
+        <span class="mystremio-eq-value" data-eq-value="dim">100%</span>
+      </div>
+      <div class="mystremio-eq-row">
+        <span class="mystremio-eq-label">Contrast</span>
+        <input type="range" min="-100" max="100" step="1" value="0" data-eq-key="contrast" aria-label="Contrast" />
+        <span class="mystremio-eq-value" data-eq-value="contrast">0</span>
+      </div>
+      <div class="mystremio-eq-row">
+        <span class="mystremio-eq-label">Brightness</span>
+        <input type="range" min="-100" max="100" step="1" value="0" data-eq-key="brightness" aria-label="Brightness" />
+        <span class="mystremio-eq-value" data-eq-value="brightness">0</span>
+      </div>
+      <div class="mystremio-eq-row">
+        <span class="mystremio-eq-label">Gamma</span>
+        <input type="range" min="-100" max="100" step="1" value="0" data-eq-key="gamma" aria-label="Gamma" />
+        <span class="mystremio-eq-value" data-eq-value="gamma">0</span>
+      </div>
+      <div class="mystremio-eq-row">
+        <span class="mystremio-eq-label">Saturation</span>
+        <input type="range" min="-100" max="100" step="1" value="0" data-eq-key="saturation" aria-label="Saturation" />
+        <span class="mystremio-eq-value" data-eq-value="saturation">0</span>
       </div>
     `;
 
-    panel.querySelector('[data-mystremio-brightness-close]')?.addEventListener('click', (event) => {
-      stopEvent(event);
-      closePanel();
-    });
-    bindNativeSlider(panel.querySelector('[data-mystremio-brightness-slider]'));
     document.body.appendChild(panel);
-    updatePanelValue(readStoredPercent());
+    bindPanelControls(panel);
+    syncPanelFromState();
     return panel;
   }
 
@@ -592,8 +841,8 @@
     const button = document.getElementById(BTN_ID);
     if (!panel || !button) return;
 
-    const panelWidth = panel.offsetWidth || 256;
-    const panelHeight = panel.offsetHeight || 140;
+    const panelWidth = panel.offsetWidth || 248;
+    const panelHeight = panel.offsetHeight || 220;
     const margin = 14;
     const seekBar = document.querySelector('[class*="player-container"] [class*="seek-bar-container"]');
     const rect = button.getBoundingClientRect();
@@ -608,13 +857,8 @@
     if (seekBar) {
       const seekRect = seekBar.getBoundingClientRect();
       const top = seekRect.top - panelHeight - margin;
-      if (top >= margin) {
-        panel.style.top = `${top}px`;
-        panel.style.bottom = 'auto';
-      } else {
-        panel.style.top = `${margin}px`;
-        panel.style.bottom = 'auto';
-      }
+      panel.style.top = `${top >= margin ? top : margin}px`;
+      panel.style.bottom = 'auto';
     } else {
       panel.style.top = 'auto';
       panel.style.bottom = `${margin + 120}px`;
@@ -638,15 +882,7 @@
     stopOverlayKeepAlive();
   }
 
-  /**
-   * Keeps overlayVisible while the brightness panel is open without a 350ms poll.
-   * Reacts to player-container class churn (Stremio overlayHidden) via MutationObserver.
-   */
   function stopOverlayKeepAlive() {
-    if (overlayTimer) {
-      window.clearInterval(overlayTimer);
-      overlayTimer = null;
-    }
     if (overlayObserver) {
       overlayObserver.disconnect();
       overlayObserver = null;
@@ -695,12 +931,7 @@
     }
     if (!isOutsidePointer(event)) return;
 
-    if (isOtherControlBarTarget(event.target)) {
-      closePanel();
-      return;
-    }
-
-    if (isInteractivePlayerChrome(event.target)) {
+    if (isOtherControlBarTarget(event.target) || isInteractivePlayerChrome(event.target)) {
       closePanel();
       return;
     }
@@ -712,15 +943,10 @@
 
   function bindPanelHandlers() {
     if (outsideHandler) return;
-
-    outsideHandler = (event) => {
-      handleOutsidePointer(event);
-    };
-
+    outsideHandler = (event) => handleOutsidePointer(event);
     document.addEventListener('pointerdown', outsideHandler, true);
     document.addEventListener('mousedown', outsideHandler, true);
     document.addEventListener('click', outsideHandler, true);
-
     keyHandler = (event) => {
       if (!panelOpen) return;
       if (event.key === 'Escape') {
@@ -747,14 +973,13 @@
   function openPanel() {
     ensurePanel();
     panelOpen = true;
-    const panel = document.getElementById(PANEL_ID);
-    panel?.classList.add('open');
+    document.getElementById(PANEL_ID)?.classList.add('open');
     document.getElementById(BTN_ID)?.classList.add('active');
     lockPlayerOverlay();
     startOverlayKeepAlive();
     positionPanel();
     bindPanelHandlers();
-    updatePanelValue(readStoredPercent());
+    syncPanelFromState();
   }
 
   function closePanel() {
@@ -771,7 +996,7 @@
   }
 
   function ensureButton() {
-    if (!isBrightnessEnabled()) {
+    if (!isPictureEnabled()) {
       removeUi();
       return;
     }
@@ -807,8 +1032,8 @@
         button.type = 'button';
       }
       button.id = BTN_ID;
-      button.title = 'Brightness';
-      button.setAttribute('aria-label', 'Brightness');
+      button.title = 'Picture Settings';
+      button.setAttribute('aria-label', 'Picture Settings');
       replaceButtonIcon(button);
       placeLeftBarButton(button, insertPoint);
     } else if (!isButtonCorrectlyPlaced(button)) {
@@ -827,17 +1052,17 @@
   }
 
   function ensureAll() {
-    if (!isBrightnessEnabled()) {
+    if (!isPictureEnabled()) {
       removeUi();
       return;
     }
 
     ensureButton();
     if (!isPlayerRoute()) return;
-    const percent = readStoredPercent();
-    if (percent !== lastAppliedPercent) {
-      lastAppliedPercent = percent;
-      setBrightness(percent, false);
+    const sig = JSON.stringify(resolveMpvProps(state));
+    if (sig !== lastAppliedSig) {
+      lastAppliedSig = sig;
+      applyTone(state);
     }
   }
 
@@ -861,23 +1086,17 @@
   }
 
   function bindLayoutObserver() {
-    if (layoutObserver) return;
+    if (layoutObserver || isOverlayHidden()) return;
     const target =
       document.querySelector('[class*="player-container"]') || document.documentElement;
-    layoutObserver = new MutationObserver(() => scheduleEnsure());
+    layoutObserver = new MutationObserver(() => {
+      if (isOverlayHidden()) return;
+      scheduleEnsure();
+    });
     layoutObserver.observe(target, { childList: true, subtree: true });
   }
 
-
-  function teardownDisabled() {
-    removeUi();
-    document.getElementById(STYLE_ID)?.remove();
-    if (typeof resetMpvTone === 'function') {
-      resetMpvTone();
-    } else {
-      sendMpvSetProp('gamma', 1);
-      sendMpvSetProp('brightness', 0);
-    }
+  function stopLayoutObserver() {
     if (layoutObserver) {
       layoutObserver.disconnect();
       layoutObserver = null;
@@ -886,6 +1105,42 @@
       window.clearTimeout(ensureTimer);
       ensureTimer = null;
     }
+  }
+
+  function syncLayoutWorkToChrome() {
+    if (!isPlayerRoute() || !isPictureEnabled()) {
+      stopLayoutObserver();
+      return;
+    }
+    if (isOverlayHidden()) {
+      stopLayoutObserver();
+      return;
+    }
+    bindLayoutObserver();
+    scheduleEnsure();
+  }
+
+  function bindChromeIdleWatcher() {
+    if (chromeIdleWatcher || typeof MutationObserver === 'undefined') return;
+    const target = document.querySelector('[class*="player-container"]');
+    if (!target) return;
+    chromeIdleWatcher = new MutationObserver(() => syncLayoutWorkToChrome());
+    chromeIdleWatcher.observe(target, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  function stopChromeIdleWatcher() {
+    if (chromeIdleWatcher) {
+      chromeIdleWatcher.disconnect();
+      chromeIdleWatcher = null;
+    }
+  }
+
+  function teardownDisabled() {
+    removeUi();
+    document.getElementById(STYLE_ID)?.remove();
+    resetMpvTone();
+    stopLayoutObserver();
+    stopChromeIdleWatcher();
     stopOverlayKeepAlive();
     document.documentElement.classList.remove(OVERLAY_LOCK_CLASS);
     document.documentElement.classList.remove(SLIDER_ACTIVE_CLASS);
@@ -899,23 +1154,23 @@
     closePanel();
     removeUi();
     stopOverlayKeepAlive();
-    if (layoutObserver) {
-      layoutObserver.disconnect();
-      layoutObserver = null;
-    }
-    if (ensureTimer) {
-      window.clearTimeout(ensureTimer);
-      ensureTimer = null;
-    }
+    stopLayoutObserver();
+    stopChromeIdleWatcher();
     document.documentElement.classList.remove(OVERLAY_LOCK_CLASS);
     document.documentElement.classList.remove(SLIDER_ACTIVE_CLASS);
   }
 
-  window.__stremioBrightnessUnload = function () {
+  function unloadPicture() {
     suspendRuntime();
-  };
+  }
 
-  if (!isBrightnessEnabled()) {
+  window.__stremioPictureUnload = unloadPicture;
+  /** @deprecated Legacy alias for bootstrap unload hooks. */
+  window.__stremioBrightnessUnload = unloadPicture;
+
+  state = readStoredState();
+
+  if (!isPictureEnabled()) {
     teardownDisabled();
     return;
   }
@@ -933,8 +1188,8 @@
         suspendRuntime();
         return;
       }
-      scheduleEnsure();
-      bindLayoutObserver();
+      bindChromeIdleWatcher();
+      syncLayoutWorkToChrome();
       window.setTimeout(ensureAll, 300);
       window.setTimeout(ensureAll, 1200);
     });
@@ -943,17 +1198,20 @@
     });
     document.addEventListener('stremio-custom-stream-started', () => {
       window.setTimeout(() => {
-        resetMpvTone();
-        setBrightness(readStoredPercent(), false);
+        state = readStoredState();
+        applyTone(state);
+        lastAppliedSig = JSON.stringify(resolveMpvProps(state));
+        syncPanelFromState();
       }, 120);
-      scheduleEnsure();
-      bindLayoutObserver();
+      bindChromeIdleWatcher();
+      syncLayoutWorkToChrome();
     });
     window.addEventListener('resize', () => {
       if (panelOpen) positionPanel();
     });
 
-    bindLayoutObserver();
+    bindChromeIdleWatcher();
+    syncLayoutWorkToChrome();
 
     let ticks = 0;
     const timer = setInterval(() => {
@@ -961,11 +1219,12 @@
         if (ticks > 3) clearInterval(timer);
         return;
       }
+      if (isOverlayHidden()) return;
       if (needsLayoutEnsure()) ensureAll();
       ticks += 1;
       if (ticks >= 12) clearInterval(timer);
     }, 1000);
   }
 
-  console.info('[StremioCustom] Brightness plugin ready.');
+  console.info('[StremioCustom] Picture Settings plugin ready.');
 })();

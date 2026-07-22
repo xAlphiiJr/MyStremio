@@ -56,7 +56,7 @@
             background: "rgba(70, 70, 70, 0.22)",
             hover: "rgba(90, 90, 90, 0.32)",
             border: "1px solid rgba(255, 255, 255, 0.04)",
-            backdropFilter: "blur(20px) saturate(180%)",
+            backdropFilter: "none",
             boxShadow: "0 8px 32px rgba(0, 0, 0, 0.2), 0 4px 16px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 0 -1px 0 rgba(0, 0, 0, 0.1)",
             borderRadius: "50px",
             fontSize: "15px",
@@ -948,8 +948,8 @@
 				border-radius: 16px;
 				border: 1px solid rgba(255, 255, 255, 0.14);
 				background: rgba(42, 42, 46, 0.92);
-				backdrop-filter: blur(20px) saturate(180%);
-				-webkit-backdrop-filter: blur(20px) saturate(180%);
+				backdrop-filter: none;
+				-webkit-backdrop-filter: none;
 				box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 				color: #fff;
 				font-family: inherit;
@@ -1230,13 +1230,7 @@
 		}
 
 		init() {
-			this._observer = new MutationObserver(() => {
-				this.checkPlaybackChange();
-			});
-			this._observer.observe(document.body, {
-				childList: true,
-				subtree: true
-			});
+			this.startDomObserver();
 			this._checkTimer = setInterval(() => this.checkPlaybackChange(), 700);
 			document.addEventListener("stremio-custom-route-change", () => {
 				this._lastSeenUrl = null;
@@ -1252,13 +1246,44 @@
 			}).catch(() => {});
 		}
 
+		startDomObserver() {
+			if (this._observer || typeof MutationObserver === "undefined") return;
+			this._observer = new MutationObserver(() => {
+				if (!this.isOnPlayerRoute()) return;
+				this.checkPlaybackChange();
+			});
+			this._observer.observe(document.body, {
+				childList: true,
+				subtree: true
+			});
+		}
+
+		stopDomObserver() {
+			if (!this._observer) return;
+			this._observer.disconnect();
+			this._observer = null;
+		}
+
+		/**
+		 * @returns {boolean}
+		 */
+		isOverlayHidden() {
+			const el = document.querySelector('[class*="player-container"]');
+			if (!el) return false;
+			for (const className of el.classList) {
+				if (String(className).includes("overlayHidden")) return true;
+			}
+			return false;
+		}
+
 		startContributeUiWatcher() {
 			if (this.contributeUiWatcher) return;
 			this.contributeUiWatcher = window.setInterval(() => {
 				if (!this.isOnPlayerRoute()) return;
 				if (!this.hasAnySubmitApiKey()) return;
+				if (this.isOverlayHidden()) return;
 				this.ensureContributeUi();
-			}, 200);
+			}, 1000);
 		}
 
 		stopContributeUiWatcher() {
@@ -1540,7 +1565,10 @@
 		startSegmentWatcher() {
 			if (this.segmentWatcher) clearInterval(this.segmentWatcher);
 			this.syncSkipButton();
-			this.segmentWatcher = setInterval(() => this.syncSkipButton(), 300);
+			this.segmentWatcher = setInterval(() => {
+				if (this.isOverlayHidden()) return;
+				this.syncSkipButton();
+			}, 300);
 		}
 
 		stopSegmentWatcher() {
@@ -3803,6 +3831,7 @@
 			plugin.stopContributeOverlayKeepAlive?.();
 			plugin.cleanup?.();
 			plugin.stopContributeUiWatcher?.();
+			plugin.stopDomObserver?.();
 			if (plugin.contributeOverlayTimer) {
 				window.clearInterval(plugin.contributeOverlayTimer);
 				plugin.contributeOverlayTimer = null;
@@ -3833,6 +3862,7 @@
 		if (plugin && !plugin._checkTimer) {
 			plugin._checkTimer = setInterval(() => plugin.checkPlaybackChange?.(), 700);
 		}
+		plugin?.startDomObserver?.();
 		plugin?.startContributeUiWatcher?.();
 	});
 	if (!window.__tidbBeforeUnloadInstalled) {

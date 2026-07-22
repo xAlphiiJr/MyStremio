@@ -6,7 +6,7 @@
 
   const SERVER_BASE = 'http://127.0.0.1:11470';
   const INFO_HASH_RE = /^[0-9a-f]{40}$/i;
-  const POLL_MS = 1000;
+  const POLL_MS = 3000;
 
   let serverBase = SERVER_BASE;
   let serverBaseResolved = false;
@@ -231,11 +231,25 @@
     }
   }
 
+  /**
+   * @returns {boolean} True when player chrome (incl. seek/buffer UI) is hidden.
+   */
+  function isBufferUiHidden() {
+    const el = document.querySelector('[class*="player-container"]');
+    if (!el) return true;
+    for (const className of el.classList) {
+      if (String(className).includes('overlayHidden')) return true;
+    }
+    return false;
+  }
+
   async function refreshProgress() {
     if (!isOnPlayerPage()) {
       cachedRatio = 0;
       return;
     }
+    // Skip HTTP stats while chrome is auto-hidden; demuxer-cache still drives seek bar.
+    if (isBufferUiHidden()) return;
 
     if (!streamContext?.infoHash) {
       const discovered = await discoverActiveStreamContext();

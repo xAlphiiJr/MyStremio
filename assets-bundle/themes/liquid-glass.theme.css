@@ -12,9 +12,12 @@
     font-family: "Inter", sans-serif !important;
 }
 
-/* change the accent color from purple to white */
+/* change the accent color from purple to white; neutralize native purple glow */
 :root {
     --primary-accent-color: #fff;
+    --secondary-background-color: #1a1a1e;
+    --modal-background-color: rgba(28, 28, 32, 0.96);
+    --outer-glow: 0 8px 28px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
     --background: rgb(20, 20, 20);
 
     --bg-color: rgba(250, 251, 255, 0.74);
@@ -30,6 +33,38 @@
 
     --box-shadow:
         inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 8px 40px rgba(0, 0, 0, 0.55);
+}
+
+/* Native tooltips inherit --outer-glow; force glass look without purple halo */
+[class*="tooltip-container"] {
+    background: rgba(36, 36, 40, 0.94) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    box-shadow:
+        0 8px 28px rgba(0, 0, 0, 0.42),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+    backdrop-filter: blur(18px) saturate(160%) !important;
+    -webkit-backdrop-filter: blur(18px) saturate(160%) !important;
+}
+
+/* Detail action buttons: glass highlight on hover/focus instead of accent outline */
+.meta-preview-container-o22hc
+    .action-buttons-container-XbKVa
+    .action-button-XIZa3:hover,
+.meta-preview-container-o22hc
+    .action-buttons-container-XbKVa
+    .action-button-XIZa3:focus,
+.meta-preview-container-o22hc
+    .action-buttons-container-XbKVa
+    .action-button-XIZa3.show-button-_yuOF:hover,
+.meta-preview-container-o22hc
+    .action-buttons-container-XbKVa
+    .action-button-XIZa3.show-button-_yuOF:focus {
+    background: rgba(255, 255, 255, 0.14) !important;
+    outline: none !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    box-shadow:
+        0 4px 16px rgba(0, 0, 0, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
 }
 
 /* glass effect: */
@@ -83,14 +118,24 @@ html {
     max-height: calc(100vh - 6rem) !important;
     overflow-y: auto !important;
     border-radius: var(--border-radius) !important;
-    background: rgba(30, 30, 30, 0.92) !important;
+    background: rgba(30, 30, 30, 0.94) !important;
     box-shadow:
         0 8px 32px rgba(0, 0, 0, 0.5),
         0 4px 16px rgba(0, 0, 0, 0.3),
         inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
-    -webkit-backdrop-filter: var(--backdrop-filter) !important;
+    /* No live blur: WebView2 + opacity fade looks like a loading shimmer. */
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Profile / nav popup: disable stock fade-in (opacity 0 for ~140ms then slide). */
+#app [class*="nav-menu-container"].animation-fade-in,
+.context-menu-portal [class*="nav-menu-container"].animation-fade-in,
+[class*="nav-menu-container"].animation-fade-in {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
 }
 
 /* Context menu content - handle all class variations */
@@ -427,8 +472,9 @@ html {
     display: flex !important;
     flex-direction: row !important;
     gap: 1rem !important;
-    overflow-y: auto !important;
-    padding: 1rem 0 !important;
+    /* visible: overflow-y:auto clips box-shadow on the right of the pill row */
+    overflow: visible !important;
+    padding: 1rem 1.25rem !important;
     scrollbar-width: none !important;
     width: auto !important;
     position: relative !important;
@@ -446,8 +492,8 @@ html {
     background: rgba(70, 70, 70, 0.22) !important;
     border-radius: 999px !important;
     box-shadow:
-        0 8px 32px rgba(0, 0, 0, 0.2),
-        0 4px 16px rgba(0, 0, 0, 0.1),
+        0 10px 36px rgba(0, 0, 0, 0.28),
+        0 2px 12px rgba(0, 0, 0, 0.12),
         inset 0 1px 0 rgba(255, 255, 255, 0.15),
         inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
     backdrop-filter: var(--backdrop-filter) !important;
@@ -511,13 +557,13 @@ html {
 #app nav[class*="horizontal-nav-bar"] [class*="nav-menu-container"],
 .nav-menu-container-Pl25j,
 [class*="nav-menu-container"] {
-    background: rgba(30, 30, 30, 0.92) !important;
+    background: rgba(30, 30, 30, 0.94) !important;
     box-shadow:
         0 8px 32px rgba(0, 0, 0, 0.5),
         0 4px 16px rgba(0, 0, 0, 0.3),
         inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
-    -webkit-backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.12) !important;
 }
 
@@ -528,6 +574,8 @@ html {
         0 8px 32px rgba(0, 0, 0, 0.38),
         inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
     border: 1px solid rgba(255, 255, 255, 0.14) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
 }
 
 html.stremio-custom-player-route .context-menu-portal [class*="nav-menu-container"],
@@ -537,6 +585,8 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
         0 8px 32px rgba(0, 0, 0, 0.38),
         inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
     border: 1px solid rgba(255, 255, 255, 0.14) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
 }
 
 .modal-container-OuxEF .modal-dialog-container-DZMKq {
@@ -558,8 +608,8 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
         0 4px 16px rgba(0, 0, 0, 0.1),
         inset 0 1px 0 rgba(255, 255, 255, 0.15),
         inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
-    -webkit-backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
 }
 
@@ -574,8 +624,8 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
         0 4px 16px rgba(0, 0, 0, 0.1),
         inset 0 1px 0 rgba(255, 255, 255, 0.15),
         inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
-    -webkit-backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
     margin-bottom: 15px !important;
     margin-top: 5px !important;
@@ -597,15 +647,16 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
         0 4px 16px rgba(0, 0, 0, 0.1),
         inset 0 1px 0 rgba(255, 255, 255, 0.15),
         inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
-    -webkit-backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
 }
 
 [class*="player-container"] [class*="seek-bar-container"] [class*="slider-container"] [class*="track"]:not([class*="track-before"]):not([class*="track-after"]) {
     background: rgba(255, 255, 255, 0.62) !important;
     border-radius: 999px !important;
-    backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
 }
 
@@ -617,7 +668,8 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
         0 4px 16px rgba(0, 0, 0, 0.1),
         inset 0 1px 0 rgba(255, 255, 255, 0.15),
         inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
 }
 
@@ -1285,6 +1337,29 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
         inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
 }
 
+/*
+ * Plugin gear selects (e.g. Anime4K quality) render MultiselectMenu inside the
+ * Plugins CollapsibleDropdown portal. That portal uses overflow:hidden/auto and
+ * clips the nested dropdown to a tiny inset. While a nested select is open,
+ * allow the menu to escape the portal.
+ */
+[class*="plugin-settings"],
+[class*="plugin-setting-row-stacked"],
+[class*="plugin-block"] {
+    overflow: visible !important;
+}
+
+[class*="custom-dropdown-panel-portal"]:has([class*="multiselect-menu"][class*="active"]),
+[class*="custom-dropdown-panel-portal"]:has([class*="dropdown"][class*="open"]),
+[class*="custom-dropdown-panel-fit"]:has([class*="multiselect-menu"][class*="active"]),
+[class*="custom-dropdown-panel-fit"]:has([class*="dropdown"][class*="open"]) {
+    overflow: visible !important;
+}
+
+[class*="plugin-settings"] [class*="multiselect-menu"] [class*="dropdown"][class*="open"] {
+    z-index: 1000 !important;
+}
+
 .stremio-custom-lang-quick-btn {
     background: rgba(70, 70, 70, 0.22) !important;
     box-shadow:
@@ -1710,8 +1785,8 @@ body.ghost-clicking #heroLoadingScreen {
     display: flex !important;
     flex-direction: row !important;
     gap: 1rem !important;
-    overflow-y: auto !important;
-    padding: 1rem 0 !important;
+    overflow: visible !important;
+    padding: 1rem 1.25rem !important;
     scrollbar-width: none !important;
     width: auto !important;
     position: relative !important;
@@ -1739,8 +1814,8 @@ body.ghost-clicking #heroLoadingScreen {
     background: rgba(70, 70, 70, 0.22) !important;
     border-radius: 999px !important;
     box-shadow:
-        0 8px 32px rgba(0, 0, 0, 0.2),
-        0 4px 16px rgba(0, 0, 0, 0.1),
+        0 10px 36px rgba(0, 0, 0, 0.28),
+        0 2px 12px rgba(0, 0, 0, 0.12),
         inset 0 1px 0 rgba(255, 255, 255, 0.15),
         inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
     backdrop-filter: var(--backdrop-filter) !important;
@@ -1891,7 +1966,8 @@ body.ghost-clicking #heroLoadingScreen {
         0 4px 16px rgba(0, 0, 0, 0.1),
         inset 0 1px 0 rgba(255, 255, 255, 0.15),
         inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
     margin-bottom: 15px !important;
     margin-top: 5px !important;
@@ -1901,7 +1977,8 @@ body.ghost-clicking #heroLoadingScreen {
 .slider-container-nJz5F .track-gItfW {
     background: rgba(255, 255, 255, 0.62) !important;
     border-radius: 999px !important;
-    backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
     flex: 1;
     height: var(--track-size);
@@ -1934,7 +2011,8 @@ body.ghost-clicking #heroLoadingScreen {
         0 4px 16px rgba(0, 0, 0, 0.1),
         inset 0 1px 0 rgba(255, 255, 255, 0.15),
         inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
 }
 
@@ -1961,6 +2039,27 @@ body.ghost-clicking #heroLoadingScreen {
 
 [class*="continue-watching-row"] [class*="progress-bar-layer"] {
     z-index: 12 !important;
+    pointer-events: none !important;
+}
+
+/* Library / catalog posters: keep progress inside the card stacking context.
+   Native progress uses z-index:-1 which bleeds through neighbors and steals clicks
+   after Last Watched reorders (wrong title opens). */
+[class*="library-container"] [class*="meta-item-container"] [class*="poster-container"],
+[class*="meta-item-container"] [class*="poster-container"] {
+    position: relative !important;
+    isolation: isolate !important;
+    overflow: hidden !important;
+}
+
+[class*="library-container"] [class*="meta-item-container"] [class*="poster-image-layer"],
+[class*="meta-item-container"] [class*="poster-container"] [class*="poster-image-layer"] {
+    z-index: 1 !important;
+}
+
+[class*="library-container"] [class*="meta-item-container"] [class*="progress-bar-layer"],
+[class*="meta-item-container"] [class*="poster-container"] [class*="progress-bar-layer"] {
+    z-index: 3 !important;
     pointer-events: none !important;
 }
 

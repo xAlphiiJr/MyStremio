@@ -29,8 +29,13 @@
     }
   }
 
+  /**
+   * Current app hash route without query/hash fragments.
+   * @returns {string}
+   */
   function getRoute() {
-    return (location.hash || '#/').replace(/^#/, '') || '/';
+    const raw = (location.hash || '#/').replace(/^#/, '') || '/';
+    return raw.split('?')[0].split('#')[0] || '/';
   }
 
   function isPlayerRoute() {
@@ -123,10 +128,38 @@
     return !pauseBtn;
   }
 
+  /**
+   * Friendly Discord label for the current hash route.
+   * Strips query strings so values like `/library?sort=lastwatched` or
+   * `/?streamingServerUrl=...` never leak into Rich Presence.
+   * @param {string} route
+   * @returns {string}
+   */
   function routeLabel(route) {
-    if (route === '/' || route.startsWith('/board')) return 'Board';
-    const segment = route.split('/').filter(Boolean)[0] || 'Stremio';
-    return segment.charAt(0).toUpperCase() + segment.slice(1);
+    const path = String(route || '/')
+      .split('?')[0]
+      .split('#')[0]
+      .trim() || '/';
+    if (path === '/' || path === '' || path.startsWith('/board')) return 'Board';
+
+    const segment = path.split('/').filter(Boolean)[0] || '';
+    if (!segment || segment.includes('=') || segment.startsWith('streaming')) {
+      return 'Board';
+    }
+
+    const known = {
+      library: 'Library',
+      discover: 'Discover',
+      settings: 'Settings',
+      addons: 'Addons',
+      search: 'Search',
+      calendar: 'Calendar',
+      player: 'Player',
+      intro: 'Login',
+    };
+    const key = segment.toLowerCase();
+    if (known[key]) return known[key];
+    return key.charAt(0).toUpperCase() + key.slice(1);
   }
 
   async function buildPayload() {

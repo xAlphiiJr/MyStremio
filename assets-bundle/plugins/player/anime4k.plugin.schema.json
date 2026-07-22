@@ -1,9 +1,16 @@
 [
   {
-    "key": "mode",
-    "type": "input",
-    "label": "Mode",
-    "description": "Off disables shaders. A ≈ 1080p, B ≈ 720p, C ≈ 480p. A+A / B+B / C+A are heavier. Mode chips are shown in the panel (no dropdown).",
-    "defaultValue": "A"
+    "key": "quality",
+    "type": "select",
+    "label": "Shader quality",
+    "description": "CNN model size used by Anime4K modes. Higher is sharper but heavier on the GPU.",
+    "defaultValue": "L",
+    "options": [
+      { "value": "S", "label": "S (fastest)" },
+      { "value": "M", "label": "M" },
+      { "value": "L", "label": "L (default)" },
+      { "value": "VL", "label": "VL" },
+      { "value": "UL", "label": "UL (heaviest)" }
+    ]
   }
 ]

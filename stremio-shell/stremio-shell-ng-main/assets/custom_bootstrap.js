@@ -279,10 +279,12 @@
   const TMDB_NOTICE_KEY = 'stremio-custom-tmdb-notice-shown-v211d';
   const DEFAULTS_APPLIED_KEY = 'stremio-custom-defaults-applied-v211a';
   const NATIVE_PLAYER_FEATURES_MIGRATED_KEY = 'stremio-custom-migrate-brightness-hover-v1';
+  const BRIGHTNESS_TO_PICTURE_MIGRATED_KEY = 'stremio-custom-migrate-brightness-to-picture-v1';
   const ANIME4K_PLUGIN_MIGRATED_KEY = 'stremio-custom-migrate-anime4k-v1';
   const DEFAULT_DISABLED_PLUGIN_PATTERNS = [
     /slash[-_ ]?to[-_ ]?search/i,
     /cast[-_ ]?overlay/i,
+    /anime4k/i,
   ];
   const DYNAMIC_HERO_PLUGIN = 'interface/hero-div.plugin.js';
   const DYNAMIC_HERO_ENABLED_KEY = 'mystremio_dynamic_hero_enabled_v1';
@@ -1164,7 +1166,9 @@
     if (/seek[-_ ]?buttons/i.test(normalized) || /seek[-_ ]?buttons/i.test(baseName || '')) {
       window.__stremioSeekButtonsUnload?.();
     }
-    if (/brightness/i.test(normalized) || /brightness/i.test(baseName || '')) {
+    if (/brightness/i.test(normalized) || /brightness/i.test(baseName || '') ||
+        /picture/i.test(normalized) || /picture/i.test(baseName || '')) {
+      window.__stremioPictureUnload?.();
       window.__stremioBrightnessUnload?.();
     }
     if (/hover[-_ ]?timestamps/i.test(normalized) || /hover[-_ ]?timestamps/i.test(baseName || '')) {
@@ -1215,7 +1219,7 @@
     'player/tidb.plugin.js',
     'player/seek-buttons.plugin.js',
     'player/hover-timestamps.plugin.js',
-    'player/brightness.plugin.js',
+    'player/picture.plugin.js',
     'player/cast-overlay.plugin.js',
     'player/anime4k.plugin.js',
   ]);
@@ -1270,6 +1274,7 @@
   function suspendPlayerPluginRuntime() {
     const hooks = [
       '__stremioSeekButtonsUnload',
+      '__stremioPictureUnload',
       '__stremioBrightnessUnload',
       '__stremioCastOverlayUnload',
       '__stremioHoverTimestampsUnload',
@@ -1286,6 +1291,7 @@
     }
     document.documentElement.classList.remove(
       'mystremio-brightness-overlay-lock',
+      'mystremio-picture-overlay-lock',
       'mystremio-cast-overlay-lock',
       'tidb-contribute-overlay-lock'
     );
@@ -1338,13 +1344,13 @@
   }
 
   /**
-   * One-shot: enable brightness + hover-timestamps for existing users who already
+   * One-shot: enable picture + hover-timestamps for existing users who already
    * had defaults applied (those features were previously always-on natives).
    * @returns {Promise<void>}
    */
   async function migrateNativePlayerFeaturesToPlugins() {
     if (localStorage.getItem(NATIVE_PLAYER_FEATURES_MIGRATED_KEY) === 'true') return;
-    const refs = ['player/brightness.plugin.js', 'player/hover-timestamps.plugin.js'];
+    const refs = ['player/picture.plugin.js', 'player/hover-timestamps.plugin.js'];
     const enabled = await migrateEnabledPlugins();
     const next = [...enabled];
     let changed = false;
@@ -1364,20 +1370,48 @@
   }
 
   /**
-   * One-shot: enable Anime4K for existing installs that already applied defaults.
+   * One-shot: rewrite enabledPlugins from brightness.plugin.js → picture.plugin.js.
+   * @returns {Promise<void>}
+   */
+  async function migrateBrightnessToPicturePlugin() {
+    if (localStorage.getItem(BRIGHTNESS_TO_PICTURE_MIGRATED_KEY) === 'true') return;
+    const enabled = await migrateEnabledPlugins();
+    const next = [];
+    let changed = false;
+    let hadBrightness = false;
+    for (const ref of enabled) {
+      const normalized = String(ref || '').replace(/\\/g, '/');
+      if (/brightness\.plugin\.js$/i.test(normalized)) {
+        hadBrightness = true;
+        changed = true;
+        continue;
+      }
+      next.push(ref);
+    }
+    if (hadBrightness) {
+      const pictureRef =
+        (await resolvePluginRef('player/picture.plugin.js')) || 'player/picture.plugin.js';
+      if (!isPluginEnabled(pictureRef, next)) {
+        next.push(pictureRef);
+        changed = true;
+      }
+    }
+    if (changed) {
+      setEnabledPlugins(next);
+      await ensurePluginsLoadedForRoute();
+    }
+    localStorage.setItem(BRIGHTNESS_TO_PICTURE_MIGRATED_KEY, 'true');
+    persistUserPreferences();
+  }
+
+  /**
+   * One-shot: mark Anime4K migration complete without force-enabling.
+   * Existing installs that already have the plugin in enabledPlugins keep it;
+   * new installs stay opt-in via DEFAULT_DISABLED_PLUGIN_PATTERNS.
    * @returns {Promise<void>}
    */
   async function migrateAnime4kPluginEnabled() {
     if (localStorage.getItem(ANIME4K_PLUGIN_MIGRATED_KEY) === 'true') return;
-    const ref = 'player/anime4k.plugin.js';
-    const enabled = await migrateEnabledPlugins();
-    const next = [...enabled];
-    const resolved = (await resolvePluginRef(ref)) || ref;
-    if (!isPluginEnabled(resolved, next)) {
-      next.push(resolved);
-      setEnabledPlugins(next);
-      await ensurePluginsLoadedForRoute();
-    }
     localStorage.setItem(ANIME4K_PLUGIN_MIGRATED_KEY, 'true');
     persistUserPreferences();
   }
@@ -1550,6 +1584,7 @@
     }
     await ensureDefaultPluginsEnabled();
     await migrateNativePlayerFeaturesToPlugins();
+    await migrateBrightnessToPicturePlugin();
     await migrateAnime4kPluginEnabled();
     syncDynamicHeroEnabledFlag();
     scheduleAuthProfilePersistence();

@@ -835,6 +835,12 @@
 					suspendRuntime();
 					return;
 				}
+				const player = document.querySelector('[class*="player-container"]');
+				if (player) {
+					for (const className of player.classList) {
+						if (String(className).includes('overlayHidden')) return;
+					}
+				}
 				ensureButtons();
 			});
 			buttonsObserver.observe(target, { childList: true, subtree: true });
@@ -845,6 +851,12 @@
 				if (!isSeekButtonsEnabled() || !isPlayerRoute()) {
 					suspendRuntime();
 					return;
+				}
+				const player = document.querySelector('[class*="player-container"]');
+				if (player) {
+					for (const className of player.classList) {
+						if (String(className).includes('overlayHidden')) return;
+					}
 				}
 				ensureButtons();
 			}, 2500);
