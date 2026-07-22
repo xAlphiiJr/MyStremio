@@ -130,7 +130,7 @@ Built in plugin that allows to receive and contribute segment timestamps to TheI
 
 Built in plugin that adds configurable skip-back and skip-forward controls to the player bar — useful for quick rewinds or jumping ahead without scrubbing. The skip interval can be changed in the settings: MyStremio → Plugins → Player → Seek Buttons.
 
-#### 🎛️ Picture Settings Plugin
+#### 🖼️ Picture Settings Plugin
 
 Built in player plugin with Master Dim plus Contrast, Brightness, Gamma, and Saturation controls.
 
