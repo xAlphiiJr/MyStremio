@@ -1,0 +1,10 @@
+[
+  {
+    "defaultValue": "",
+    "description": "Uses the shared TMDB key from Settings → MyStremio → API Keys when set. Get a free key at themoviedb.org/settings/api",
+    "key": "tmdbApiKey",
+    "label": "TMDB API Key",
+    "placeholder": "Enter your TMDB API key",
+    "type": "input"
+  }
+]

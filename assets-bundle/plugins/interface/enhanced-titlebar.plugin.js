@@ -5,6 +5,12 @@
  * @author Fxy
  */
 
+(function () {
+  'use strict';
+
+  if (window.__EnhancedTitlebarLoaded) return;
+  window.__EnhancedTitlebarLoaded = true;
+
 const CONFIG = {
   apiBase: "https://v3-cinemeta.strem.io/meta",
   timeout: 5000,
@@ -17,9 +23,26 @@ const RETRY_CONFIG = {
 };
 let enhanceTimeout = null;
 let mutationObserver = null;
+let titlebarPollInterval = null;
 let isEnhancing = false;
 let lastEnhanceRun = 0;
 const MIN_RUN_INTERVAL = 800;
+
+function onTitlebarLibraryClick(event) {
+  const chip = event.target?.closest?.(
+    '[class*="library-container"] [class*="chip-"]:not([data-sc-custom-folder-tab])',
+  );
+  if (!chip) return;
+  setTimeout(scheduleLibraryEnhancementRefresh, 120);
+}
+
+function onTitlebarRouteChange() {
+  if (isLibraryPage()) {
+    restoreLibraryNativeTitlebars();
+    return;
+  }
+  scheduleEnhancement();
+}
 
 function injectStyles() {
   if (document.getElementById("enhanced-title-bar-styles")) return;
@@ -609,38 +632,58 @@ function init() {
     }
   }
 
-  setInterval(() => {
+  if (titlebarPollInterval) clearInterval(titlebarPollInterval);
+  titlebarPollInterval = setInterval(() => {
     if (window.stremioCustomSuspendBackground?.()) return;
     if (shouldEnhancePage()) {
       enhanceMediaContainers();
     }
   }, 5000);
 
-  document.addEventListener(
-    "click",
-    (event) => {
-      const chip = event.target?.closest?.(
-        '[class*="library-container"] [class*="chip-"]:not([data-sc-custom-folder-tab])',
-      );
-      if (!chip) return;
-      setTimeout(scheduleLibraryEnhancementRefresh, 120);
-    },
-    true,
-  );
-
-  document.addEventListener("stremio-custom-route-change", () => {
-    if (isLibraryPage()) {
-      restoreLibraryNativeTitlebars();
-      return;
-    }
-    scheduleEnhancement();
-  });
+  document.addEventListener("click", onTitlebarLibraryClick, true);
+  document.addEventListener("stremio-custom-route-change", onTitlebarRouteChange);
 }
 
+/**
+ * Hard unload for live disable.
+ */
+window.__stremioEnhancedTitlebarUnload = function () {
+  if (mutationObserver) {
+    mutationObserver.disconnect();
+    mutationObserver = null;
+  }
+  if (titlebarPollInterval) {
+    clearInterval(titlebarPollInterval);
+    titlebarPollInterval = null;
+  }
+  if (enhanceTimeout) {
+    clearTimeout(enhanceTimeout);
+    enhanceTimeout = null;
+  }
+  document.removeEventListener("click", onTitlebarLibraryClick, true);
+  document.removeEventListener("stremio-custom-route-change", onTitlebarRouteChange);
+  try {
+    restoreLibraryNativeTitlebars();
+  } catch (_) {}
+  document.querySelectorAll(".enhanced-title-bar").forEach((node) => {
+    const parent = node.parentElement;
+    if (parent) {
+      // Leave native title if present; strip enhancement wrapper content
+      node.remove();
+    }
+  });
+  document.getElementById("enhanced-title-bar-styles")?.remove();
+  try {
+    delete window.__EnhancedTitlebarLoaded;
+  } catch (_) {
+    window.__EnhancedTitlebarLoaded = false;
+  }
+};
+
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
+  document.addEventListener("DOMContentLoaded", init, { once: true });
 } else {
   init();
 }
 
-setTimeout(init, 100);
+})();

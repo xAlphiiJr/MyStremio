@@ -79,22 +79,36 @@ fn ended_tokens() {
         Token::StructEnd,
         Token::StructEnd,
     ];
-    let tokens: [Token; 4] = [
-        Token::Struct {
-            name: "PlayerEnded",
-            len: 1,
-        },
-        Token::Str("reason"),
-        Token::Str("quit"),
-        Token::StructEnd,
-    ];
+    let reason_only = |reason: &'static str| -> [Token; 4] {
+        [
+            Token::Struct {
+                name: "PlayerEnded",
+                len: 1,
+            },
+            Token::Str("reason"),
+            Token::Str(reason),
+            Token::StructEnd,
+        ]
+    };
     assert_tokens(
         &PlayerEnded::from_end_reason(mpv_end_file_reason::Error),
         &error_tokens,
     );
     assert_tokens(
         &PlayerEnded::from_end_reason(mpv_end_file_reason::Quit),
-        &tokens,
+        &reason_only("quit"),
+    );
+    assert_tokens(
+        &PlayerEnded::from_end_reason(mpv_end_file_reason::Eof),
+        &reason_only("eof"),
+    );
+    assert_tokens(
+        &PlayerEnded::from_end_reason(mpv_end_file_reason::Stop),
+        &reason_only("stop"),
+    );
+    assert_tokens(
+        &PlayerEnded::from_end_reason(mpv_end_file_reason::Redirect),
+        &reason_only("redirect"),
     );
 }
 

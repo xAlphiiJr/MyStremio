@@ -10,6 +10,9 @@
 (function () {
   'use strict';
 
+  if (window.__stremioStreamUiReady) return;
+  window.__stremioStreamUiReady = true;
+
   const STYLE_ID = 'stream-ui-styles';
   const SETTING_TORRENT = 'enable_torrent_accordions';
   const SETTING_USENET = 'enable_usenet_accordions';
@@ -1692,10 +1695,12 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       const root = document.createElement('div');
       root.id = ROOT;
       const sub = items.length === 1 && items[0].noStinger
-        ? 'Keine Szenen nach dem Abspann'
+        ? 'No scenes after the credits'
         : items.length === 1 && items[0].hasStinger
-          ? 'Szenen nach dem Abspann'
-          : `${items.length} Hinweis${items.length === 1 ? '' : 'e'}`;
+          ? 'Scenes after the credits'
+          : items.length === 1
+            ? '1 note'
+            : `${items.length} notes`;
       root.innerHTML = `
 <div class="sui-panel-hdr"><div class="sui-panel-icon">🎬</div><div><div class="sui-panel-title">After Credits</div><div class="sui-panel-sub">${esc(sub)}</div></div></div>
 <div class="sui-ac-list">${items.map(messageRow).join('')}</div>`;
@@ -2144,6 +2149,20 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
   }
 
   /**
+   * Hard unload for live disable — clears Ready gate so re-inject can boot again.
+   */
+  function hardUnload() {
+    suspendRuntime();
+    try {
+      delete window.__stremioStreamUiReady;
+    } catch (_) {
+      window.__stremioStreamUiReady = false;
+    }
+  }
+
+  window.__stremioStreamUiUnload = hardUnload;
+
+  /**
    * Restarts the poll when back on a streams-list route.
    */
   function ensureRuntime() {
@@ -2162,8 +2181,6 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     }
     tick();
   }
-
-  window.__stremioStreamUiUnload = suspendRuntime;
 
   async function init() {
     injectCSS();

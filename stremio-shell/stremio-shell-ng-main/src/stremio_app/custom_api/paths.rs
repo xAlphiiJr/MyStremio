@@ -319,17 +319,21 @@ fn write_plugin_sync_state(seen: &HashSet<String>, removed: &HashSet<String>) {
     }
 }
 
-/// Load sync memory. When missing, bootstrap so existing installs keep deletions
-/// while fresh installs still receive the full bundled plugin set.
-fn load_plugin_sync_state(bundled_stems: &HashSet<String>) -> (HashSet<String>, HashSet<String>) {
+/// Load sync memory. When missing, bootstrap from what is already in AppData.
+/// Missing bundled plugins are NOT treated as removed — that wrongly blocked new
+/// plugins (e.g. Picture Settings) on upgrades. Removals are recorded only after
+/// a plugin was previously present (`seen`) and then deleted by the user.
+fn load_plugin_sync_state(_bundled_stems: &HashSet<String>) -> (HashSet<String>, HashSet<String>) {
     let path = plugin_sync_state_path();
     if path.exists() {
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
-                return (
-                    read_string_set(value.get("seen")),
-                    read_string_set(value.get("removed")),
-                );
+                let seen = read_string_set(value.get("seen"));
+                let mut removed = read_string_set(value.get("removed"));
+                // Heal early 2.3.4 bootstrap bug: stems marked removed without ever
+                // having been seen (new plugins incorrectly blocked on upgrade).
+                removed.retain(|stem| seen.contains(stem));
+                return (seen, removed);
             }
         }
     }
@@ -339,20 +343,9 @@ fn load_plugin_sync_state(bundled_stems: &HashSet<String>) -> (HashSet<String>, 
         .map(|rel| plugin_stem(&rel))
         .collect();
 
-    if present.is_empty() {
-        // Fresh install: empty seen/removed so every bundled plugin is treated as new.
-        return (HashSet::new(), HashSet::new());
-    }
-
-    // Existing install before sync-state existed: keep what is present, and treat
-    // bundled plugins that are already missing as user-removed.
-    let mut removed = HashSet::new();
-    for stem in bundled_stems {
-        if !present.contains(stem) {
-            removed.insert(stem.clone());
-        }
-    }
-    (present, removed)
+    // Fresh or existing install without sync state: only remember what is present.
+    // Anything bundled but missing will be installed as a new plugin.
+    (present, HashSet::new())
 }
 
 /// Sync install plugins → AppData without restoring plugins the user deleted.

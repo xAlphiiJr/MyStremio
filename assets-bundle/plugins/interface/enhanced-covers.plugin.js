@@ -2,14 +2,23 @@
  * @name EnhancedCovers
  * @description Widens the cover images in the Continue Watching section using background images with logo overlay.
  * @updateUrl none
- * @version 26.0.4
+ * @version 26.0.5
  * @author Fxy rewritten and improved by MrBlu03
  */
 
 (function () {
+  if (window.__EnhancedCoversLoaded) return;
+  window.__EnhancedCoversLoaded = true;
+
   // Store references for cleanup
   let coverInterval = null;
   let coverObserver = null;
+
+  function onCoversRouteChange() {
+    injectStyles();
+    setTimeout(replaceCover, 500);
+    setTimeout(replaceCover, 1500);
+  }
 
   // Inject CSS to widen the poster containers - only in continue-watching-row
   function injectStyles() {
@@ -128,11 +137,53 @@
 
   // Extract IMDB ID from various URL formats
   function extractImdbId(url) {
-    const match = url.match(/(tt\d+)/);
+    if (!url) return null;
+    const match = String(url).match(/(tt\d+)/);
     return match ? match[1] : null;
   }
 
-  // Clean up stale enhanced covers when items change
+  /**
+   * Card identity from the meta-item link (authoritative after React reuse).
+   * Prefer href over img.src because EnhancedCovers owns the image URL.
+   * @param {HTMLImageElement} img
+   * @returns {string|null}
+   */
+  function getCardImdbId(img) {
+    const card =
+      img.closest('[class*="meta-item-container"]') ||
+      img.closest('[class*="meta-item"]');
+    if (!card) return extractImdbId(img.src);
+    const link =
+      card.tagName === 'A'
+        ? card
+        : card.querySelector('a[href*="tt"], a[href*="/detail/"]');
+    const fromHref = extractImdbId(link?.getAttribute('href') || link?.href || '');
+    if (fromHref) return fromHref;
+    return extractImdbId(img.dataset.originalSrc) || extractImdbId(img.src);
+  }
+
+  /**
+   * Hard-reset an enhanced poster so it can be re-bound to a new title.
+   * @param {HTMLImageElement} img
+   */
+  function resetEnhancedCover(img) {
+    const gen = String((Number(img.dataset.enhanceGen) || 0) + 1);
+    img.dataset.enhanceGen = gen;
+
+    if (img.dataset.originalSrc) {
+      img.src = img.dataset.originalSrc;
+    }
+    delete img.dataset.enhancedCover;
+    delete img.dataset.originalSrc;
+    delete img.dataset.imdbId;
+
+    const posterContainer = img.closest('[class*="poster-container"]');
+    if (posterContainer) {
+      posterContainer.querySelectorAll('.enhanced-logo-overlay').forEach((logo) => logo.remove());
+    }
+  }
+
+  // Clean up stale enhanced covers when items change / cards are reused
   function cleanupStaleCovers() {
     const continueWatchingRow = document.querySelector(
       '[class*="continue-watching-row"]',
@@ -144,28 +195,15 @@
     );
 
     posters.forEach((img) => {
-      // Check if the current IMDB ID in the src matches what we stored
-      const storedImdbId = img.dataset.imdbId;
-      const currentImdbId = extractImdbId(img.src);
+      const storedImdbId = img.dataset.imdbId || '';
+      const cardImdbId = getCardImdbId(img) || '';
 
-      // If the image src was changed back by Stremio (different IMDB ID or no longer our metahub URL)
-      if (storedImdbId && currentImdbId && storedImdbId !== currentImdbId) {
-        // Reset this image - it's been reused for a different item
+      // Identity drifted, missing, or unknown → hard reset (React reused the node)
+      if (!storedImdbId || !cardImdbId || storedImdbId !== cardImdbId) {
         console.log(
-          `[EnhancedCovers] Detected stale cover: was ${storedImdbId}, now ${currentImdbId}`,
+          `[EnhancedCovers] Detected stale cover: was ${storedImdbId || '?'}, card ${cardImdbId || '?'}`,
         );
-        delete img.dataset.enhancedCover;
-        delete img.dataset.originalSrc;
-        delete img.dataset.imdbId;
-
-        // Remove the old logo
-        const posterContainer = img.closest('[class*="poster-container"]');
-        if (posterContainer) {
-          const oldLogo = posterContainer.querySelector(
-            ".enhanced-logo-overlay",
-          );
-          if (oldLogo) oldLogo.remove();
-        }
+        resetEnhancedCover(img);
       }
     });
 
@@ -200,74 +238,72 @@
     );
 
     posters.forEach((img) => {
-      // Skip if already processed
-      if (img.dataset.enhancedCover === "true") return;
       if (!img.src) return;
 
-      // Skip if already using background from metahub
-      if (img.src.includes("images.metahub.space/background/")) return;
+      const imdbId = getCardImdbId(img);
+      if (!imdbId) return;
 
-      // Try to extract IMDB ID from any source
-      const imdbId = extractImdbId(img.src);
+      // Already enhanced for this exact title
+      if (img.dataset.enhancedCover === "true" && img.dataset.imdbId === imdbId) {
+        return;
+      }
 
-      if (imdbId) {
-        // Construct metahub background URL
-        const backgroundSrc = `https://images.metahub.space/background/large/${imdbId}/img`;
-        const logoSrc = `https://images.metahub.space/logo/medium/${imdbId}/img`;
+      // Stale enhancement for a different title
+      if (img.dataset.enhancedCover === "true") {
+        resetEnhancedCover(img);
+      }
 
-        img.dataset.enhancedCover = "true";
-        img.dataset.originalSrc = img.src;
-        img.dataset.imdbId = imdbId;
+      const backgroundSrc = `https://images.metahub.space/background/large/${imdbId}/img`;
+      const logoSrc = `https://images.metahub.space/logo/medium/${imdbId}/img`;
 
-        // Get the poster container to add the logo
-        const posterContainer = img.closest('[class*="poster-container"]');
+      const gen = String((Number(img.dataset.enhanceGen) || 0) + 1);
+      img.dataset.enhanceGen = gen;
+      img.dataset.enhancedCover = "true";
+      img.dataset.originalSrc = img.dataset.originalSrc || img.src;
+      img.dataset.imdbId = imdbId;
 
-        // Remove any existing logo first (in case of mismatch)
+      const posterContainer = img.closest('[class*="poster-container"]');
+      if (posterContainer) {
+        posterContainer.querySelectorAll('.enhanced-logo-overlay').forEach((logo) => logo.remove());
+      }
+
+      const testImg = new Image();
+      testImg.onload = function () {
+        if (img.dataset.enhanceGen !== gen || img.dataset.imdbId !== imdbId) return;
+        img.src = backgroundSrc;
+
         if (posterContainer) {
-          const existingLogo = posterContainer.querySelector(
-            ".enhanced-logo-overlay",
-          );
-          if (existingLogo) existingLogo.remove();
+          const logoImg = document.createElement("img");
+          logoImg.className = "enhanced-logo-overlay";
+          logoImg.alt = "";
+          logoImg.loading = "lazy";
+
+          const testLogo = new Image();
+          testLogo.onload = function () {
+            if (img.dataset.enhanceGen !== gen || img.dataset.imdbId !== imdbId) return;
+            logoImg.src = logoSrc;
+            const playLayer = posterContainer.querySelector('[class*="play-icon-layer"]');
+            if (playLayer) {
+              posterContainer.insertBefore(logoImg, playLayer);
+            } else {
+              posterContainer.appendChild(logoImg);
+            }
+            console.log(`[EnhancedCovers] Added logo for ${imdbId}`);
+          };
+          testLogo.onerror = function () {
+            console.log(`[EnhancedCovers] No logo found for ${imdbId}`);
+          };
+          testLogo.src = logoSrc;
         }
 
-        // Preload the background image
-        const testImg = new Image();
-        testImg.onload = function () {
-          img.src = backgroundSrc;
-
-          // Add logo overlay
-          if (posterContainer) {
-            const logoImg = document.createElement("img");
-            logoImg.className = "enhanced-logo-overlay";
-            logoImg.alt = "";
-            logoImg.loading = "lazy";
-
-            // Test if logo exists before adding
-            const testLogo = new Image();
-            testLogo.onload = function () {
-              logoImg.src = logoSrc;
-              const playLayer = posterContainer.querySelector('[class*="play-icon-layer"]');
-              if (playLayer) {
-                posterContainer.insertBefore(logoImg, playLayer);
-              } else {
-                posterContainer.appendChild(logoImg);
-              }
-              console.log(`[EnhancedCovers] Added logo for ${imdbId}`);
-            };
-            testLogo.onerror = function () {
-              console.log(`[EnhancedCovers] No logo found for ${imdbId}`);
-            };
-            testLogo.src = logoSrc;
-          }
-
-          console.log(`[EnhancedCovers] Replaced cover for ${imdbId}`);
-        };
-        testImg.onerror = function () {
-          img.dataset.enhancedCover = "failed";
-          console.log(`[EnhancedCovers] No background found for ${imdbId}`);
-        };
-        testImg.src = backgroundSrc;
-      }
+        console.log(`[EnhancedCovers] Replaced cover for ${imdbId}`);
+      };
+      testImg.onerror = function () {
+        if (img.dataset.enhanceGen !== gen) return;
+        img.dataset.enhancedCover = "failed";
+        console.log(`[EnhancedCovers] No background found for ${imdbId}`);
+      };
+      testImg.src = backgroundSrc;
     });
   }
 
@@ -366,11 +402,33 @@
   }
 
   // Handle navigation changes (HashRouter via route bus)
-  document.addEventListener("stremio-custom-route-change", () => {
-    injectStyles();
-    setTimeout(replaceCover, 500);
-    setTimeout(replaceCover, 1500);
-  });
+  document.addEventListener("stremio-custom-route-change", onCoversRouteChange);
 
-  console.log("[EnhancedCovers] Plugin loaded successfully v1.6.0");
+  /**
+   * Hard unload for live disable.
+   */
+  window.__stremioEnhancedCoversUnload = function () {
+    if (coverObserver) {
+      coverObserver.disconnect();
+      coverObserver = null;
+    }
+    if (coverInterval) {
+      clearInterval(coverInterval);
+      coverInterval = null;
+    }
+    document.removeEventListener("stremio-custom-route-change", onCoversRouteChange);
+    document.querySelectorAll('img[data-enhanced-cover="true"]').forEach((img) => {
+      try {
+        resetEnhancedCover(img);
+      } catch (_) {}
+    });
+    document.getElementById("enhanced-covers-styles")?.remove();
+    try {
+      delete window.__EnhancedCoversLoaded;
+    } catch (_) {
+      window.__EnhancedCoversLoaded = false;
+    }
+  };
+
+  console.log("[EnhancedCovers] Plugin loaded successfully v1.7.0");
 })();

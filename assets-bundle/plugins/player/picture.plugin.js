@@ -562,11 +562,11 @@
         width: min(15.5rem, calc(100vw - 2rem));
         padding: 0.65rem 0.75rem 0.7rem;
         border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(36, 36, 40, 0.94);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(42, 42, 46, 0.58);
         backdrop-filter: none;
         -webkit-backdrop-filter: none;
-        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.18);
         color: #fff;
         font-family: inherit;
         font-size: 0.78rem;
@@ -1161,7 +1161,7 @@
   }
 
   function unloadPicture() {
-    suspendRuntime();
+    teardownDisabled();
   }
 
   window.__stremioPictureUnload = unloadPicture;

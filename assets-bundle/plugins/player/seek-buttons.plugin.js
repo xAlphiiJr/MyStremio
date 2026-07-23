@@ -863,7 +863,7 @@
 		}
 	}
 
-	window.__stremioSeekButtonsUnload = suspendRuntime;
+	window.__stremioSeekButtonsUnload = teardown;
 
 	function initObservers() {
 		ensureRuntime();

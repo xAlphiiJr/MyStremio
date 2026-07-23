@@ -93,7 +93,25 @@ fn create_shareable_mpv(window_handle: HWND) -> Arc<Mpv> {
         set_property!("demuxer-readahead-secs", "12");
         set_property!("demuxer-max-bytes", "200MiB");
         set_property!("cache-pause-initial", "no");
-        set_property!("vo", "gpu-next,");
+        // Stock Stremio quality path (shell-ng PR #73): prefer gpu-next, fall back to gpu.
+        set_property!("vo", "gpu-next,gpu,");
+        // Soft-fail quality / D3D11 colorspace defaults — unsupported opts must not panic the shell.
+        for (name, value) in [
+            ("gpu-context", "d3d11"),
+            ("d3d11-output-format", "auto"),
+            ("d3d11-output-csp", "auto"),
+            ("target-colorspace-hint", "auto"),
+            ("target-colorspace-hint-mode", "target"),
+            ("tone-mapping", "bt.2390"),
+            ("dither-depth", "auto"),
+            ("deband", "yes"),
+            ("scale", "spline36"),
+            ("cscale", "spline36"),
+        ] {
+            if let Err(error) = initializer.set_property(name, value) {
+                eprintln!("mpv: cannot set {name}={value}: {error:?}");
+            }
+        }
         Ok(())
     });
     let mpv = Arc::new(mpv.expect("cannot build MPV"));

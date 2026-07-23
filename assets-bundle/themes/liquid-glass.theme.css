@@ -830,6 +830,11 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
     top: 0 !important;
 }
 
+/* Board without Dynamic Hero: clear floating horizontal nav above Continue Watching */
+#app [class*="board-container"] [class*="board-content"]:not(:has([class*="hero-slot"])) {
+    padding-top: calc(var(--horizontal-nav-bar-size, 5.5rem) + var(--safe-area-inset-top, 0px)) !important;
+}
+
 /* Hero Section */
 .hero-container {
     position: relative;
@@ -1475,7 +1480,16 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
     box-shadow: none !important;
 }
 
-/* Meta hover panel – liquid glass */
+/* Live horizontal nav: fixed stacking ONLY with board tab strip (not detail/player) */
+#app nav[class*="horizontal-nav-bar"]:has([class*="vertical-nav-bar"]) {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    z-index: 121 !important;
+}
+
+/* Meta hover panel – liquid glass (z-index set in plugin; keep under nav @ 121) */
 .meta-hover-panel {
     background: rgba(30, 30, 30, 0.92) !important;
     backdrop-filter: var(--backdrop-filter) !important;
@@ -1484,6 +1498,20 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
         0 16px 48px rgba(0, 0, 0, 0.55),
         0 0 0 1px rgba(255, 255, 255, 0.08),
         inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Detail slogan: under logo only — do NOT move logo; push following content down */
+.detail-slogan {
+    color: rgba(255, 255, 255, 0.95) !important;
+    font-family: "PlusJakartaSans", Candara, Calibri, "Segoe UI", sans-serif !important;
+    font-style: italic !important;
+    font-weight: 700 !important;
+    font-size: 1.2rem !important;
+    letter-spacing: 0.01em !important;
+    line-height: 1.45 !important;
+    margin: 0 0 1rem !important;
+    max-width: 36rem !important;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45) !important;
 }
 
 .meta-hover-panel-tag {
@@ -2922,6 +2950,36 @@ body.ghost-clicking #heroLoadingScreen {
     right: 4px;
 }
 
+/* Enhanced Genres: cast-style pills with SVG icons (no TMDB artwork) */
+.enhanced-genres-section {
+    margin-bottom: 24px;
+}
+
+.enhanced-genre-icon-circle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(100, 100, 100, 0.45);
+    color: rgba(255, 255, 255, 0.92);
+}
+
+.enhanced-genre-icon {
+    display: block;
+    flex-shrink: 0;
+}
+
+.enhanced-genre-pill .enhanced-cast-info {
+    padding-right: 4px;
+}
+
+.enhanced-genre-pill .enhanced-cast-name {
+    white-space: nowrap;
+}
+
+.enhanced-directors-section {
+    margin-bottom: 24px;
+}
+
 /* Enhanced Cast Section */
 .enhanced-cast-section {
     margin-bottom: 24px;
@@ -3818,4 +3876,10 @@ html body #app [class*="updater-banner"] [class*="close"] svg {
     color: inherit !important;
     fill: currentColor !important;
     opacity: 1 !important;
+}
+
+/* Soften MetaPreview → Meta backdrop handoff on detail pages */
+[class*="metadetails"] [class*="background-image"],
+[class*="meta-details"] [class*="background-image"] {
+    transition: opacity 0.35s ease;
 }

@@ -961,7 +961,7 @@
     window.__stremioCastOverlayReady = false;
   }
 
-  window.__stremioCastOverlayUnload = suspendRuntime;
+  window.__stremioCastOverlayUnload = teardown;
 
   if (!isCastOverlayEnabled()) {
     teardown();

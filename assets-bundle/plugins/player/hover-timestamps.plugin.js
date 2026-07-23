@@ -46,6 +46,8 @@
       if (typeof stopLoop === 'function') stopLoop();
     } catch (_) {}
     teardown();
+    window.__stremioHoverTimestampsReady = false;
+    window.__stremioHoverTimestampsVersion = '';
   };
 
   if (!isPluginEnabled()) {

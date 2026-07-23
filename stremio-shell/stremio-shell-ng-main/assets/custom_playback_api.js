@@ -1044,6 +1044,14 @@
       return;
     }
 
+    // Dead / ghost `#/player` without a stream path: keep leave-stop running,
+    // stay opaque, and do not resume playback. Hooks stay ready for a later loadfile.
+    if (!currentStreamPath) {
+      hookShellMessages();
+      window.__stremioCustomPlayerTransparencyEnsure?.();
+      return;
+    }
+
     const wasLeaving = leaveStopPending;
     leaveStopPending = false;
     leaveTeardownGen += 1;

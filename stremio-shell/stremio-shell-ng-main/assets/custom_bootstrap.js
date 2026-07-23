@@ -283,7 +283,6 @@
   const ANIME4K_PLUGIN_MIGRATED_KEY = 'stremio-custom-migrate-anime4k-v1';
   const DEFAULT_DISABLED_PLUGIN_PATTERNS = [
     /slash[-_ ]?to[-_ ]?search/i,
-    /cast[-_ ]?overlay/i,
     /anime4k/i,
   ];
   const DYNAMIC_HERO_PLUGIN = 'interface/hero-div.plugin.js';
@@ -1178,7 +1177,7 @@
       window.__stremioCastOverlayUnload?.();
     }
     if (/anime4k/i.test(normalized) || /anime4k/i.test(baseName || '')) {
-      window.__stremioAnime4kSuspend?.();
+      window.__stremioAnime4kUnload?.() || window.__stremioAnime4kSuspend?.();
     }
     if (/stream[-_ ]?ui/i.test(normalized) || /stream[-_ ]?ui/i.test(baseName || '')) {
       window.__stremioStreamUiUnload?.();
@@ -1188,6 +1187,25 @@
     }
     if (/context[-_ ]?menu/i.test(normalized) || /context[-_ ]?menu/i.test(baseName || '')) {
       window.__stremioContextMenuUnload?.();
+    }
+    if (/data[-_ ]?enrichment/i.test(normalized) || /data[-_ ]?enrichment/i.test(baseName || '')) {
+      window.__stremioDataEnrichmentUnload?.();
+    }
+    if (/detail[-_ ]?slogan/i.test(normalized) || /detail[-_ ]?slogan/i.test(baseName || '')) {
+      window.__stremioDetailSloganUnload?.();
+    }
+    if (/enhanced[-_ ]?covers/i.test(normalized) || /enhanced[-_ ]?covers/i.test(baseName || '')) {
+      window.__stremioEnhancedCoversUnload?.();
+    }
+    if (/enhanced[-_ ]?titlebar/i.test(normalized) || /enhanced[-_ ]?title[-_ ]?bar/i.test(normalized) ||
+        /enhanced[-_ ]?titlebar/i.test(baseName || '') || /enhanced[-_ ]?title[-_ ]?bar/i.test(baseName || '')) {
+      window.__stremioEnhancedTitlebarUnload?.();
+    }
+    if (/slash[-_ ]?to[-_ ]?search/i.test(normalized) || /SlashToSearch/i.test(baseName || '')) {
+      window.__stremioSlashToSearchUnload?.();
+    }
+    if (/tidb/i.test(normalized) || /tidb/i.test(baseName || '') || /intro[-_ ]?skip/i.test(normalized)) {
+      window.__stremioTidbUnload?.() || window.__stremioTidbSuspend?.();
     }
     let removed = false;
     const direct = document.getElementById(toScriptId(normalized));

@@ -292,12 +292,39 @@
     return true;
   }
 
+  function hasLiveStream() {
+    try {
+      return Boolean(window.StremioCustomPlayback?.getMpvSnapshot?.()?.hasStream);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
+   * Keep shell opaque until MPV actually presents (WebView default alpha is 0).
+   */
+  function ensureOpaqueReconcile() {
+    const run = () => {
+      try {
+        window.__stremioCustomPlayerTransparencyEnsure?.();
+      } catch (_) {}
+    };
+    run();
+    requestAnimationFrame(run);
+    window.setTimeout(run, 100);
+  }
+
   function clearViewportTimers() {
     for (const id of viewportTimers) window.clearTimeout(id);
     viewportTimers = [];
   }
 
   function punchMpvViewport() {
+    if (phase !== Phase.VIDEO || !hasLiveStream()) {
+      ensureOpaqueReconcile();
+      return;
+    }
+
     window.__stremioCustomPlayerTransparencyEnsure?.();
     window.StremioCustomPlayback?.refreshMpvViewport?.();
 
@@ -318,6 +345,7 @@
   }
 
   function maintainMpvViewport() {
+    if (phase !== Phase.VIDEO || !hasLiveStream()) return;
     const now = Date.now();
     if (now - lastViewportMaintainAt < VIEWPORT_MAINTAIN_MS) return;
     lastViewportMaintainAt = now;
@@ -325,6 +353,11 @@
   }
 
   function scheduleViewportPunch() {
+    if (phase !== Phase.VIDEO || !hasLiveStream()) {
+      clearViewportTimers();
+      ensureOpaqueReconcile();
+      return;
+    }
     clearViewportTimers();
     for (const delay of VIEWPORT_PUNCH_MS) {
       viewportTimers.push(window.setTimeout(punchMpvViewport, delay));
@@ -420,6 +453,12 @@
     pendingSession = false;
 
     if (phase === Phase.VIDEO) {
+      if (!hasLiveStream()) {
+        setPhase(Phase.IDLE);
+        setShellBorderless(false);
+        ensureOpaqueReconcile();
+        return;
+      }
       setShellBorderless(true, true);
       scheduleViewportPunch();
       return;
@@ -434,13 +473,21 @@
 
     applySeriesBranding();
     window.StremioCustomPlayback?.onPlayerSessionStart?.();
+    ensureOpaqueReconcile();
 
+    // Never force VIDEO without proven MPV frames — that punches WebView a:0 → black.
     maxTimer = window.setTimeout(() => {
-      if (phase === Phase.LOADING) {
+      if (phase !== Phase.LOADING) return;
+      if (mpvReadyForVideo()) {
         setPhase(Phase.VIDEO);
         window.StremioCustomPlayback?.nudgePlayback?.();
         scheduleViewportPunch();
+        return;
       }
+      console.warn(
+        '[StremioCustom] Player load timed out without MPV frames — staying opaque (no viewport punch)'
+      );
+      ensureOpaqueReconcile();
     }, MAX_LOAD_MS);
   }
 
@@ -452,13 +499,23 @@
     artwork = { background: null, logo: null, imdbId: null };
     setShellBorderless(false);
     window.StremioCustomPlayback?.onPlayerSessionEnd?.();
+    ensureOpaqueReconcile();
   }
 
   function onStreamStarted() {
     beginSession();
   }
 
+  /**
+   * Dead `#/player` (history back without stream): stay IDLE/opaque.
+   * Real playback starts via `stremio-custom-stream-started` after loadfile path arrives.
+   */
   function onPlayerEnter() {
+    if (!hasLiveStream() && !pendingSession) {
+      if (phase === Phase.VIDEO) endSession();
+      else ensureOpaqueReconcile();
+      return;
+    }
     if (pendingSession || phase === Phase.IDLE) {
       beginSession();
       return;
@@ -469,6 +526,7 @@
   function onPlayerLeave(options = {}) {
     const hadActiveSession = phase !== Phase.IDLE || pendingSession;
     endSession();
+    ensureOpaqueReconcile();
     if (!options.silent && hadActiveSession) {
       showAppLoadingMask(190, { contentOnly: true });
     } else {
@@ -487,8 +545,12 @@
    * Enter/leave player session on SPA navigations (HashRouter push/replace).
    */
   function onRouteChangeForSession() {
-    if (!isPlayerRoute()) onPlayerLeave();
-    else onPlayerEnter();
+    if (!isPlayerRoute()) {
+      onPlayerLeave();
+      return;
+    }
+    onPlayerEnter();
+    ensureOpaqueReconcile();
   }
 
   document.addEventListener('stremio-custom-route-change', onRouteChangeForSession);

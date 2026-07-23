@@ -35,6 +35,16 @@
         right: 0 !important;
       }
 
+      /* Only board-style nav (with tab strip). Detail/player keep absolute-in-flow
+         so meta-preview + streams sidebar retain native top spacing. */
+      #app nav[class*="horizontal-nav-bar"]:has([class*="vertical-nav-bar"]) {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        z-index: 121 !important;
+      }
+
       #app [class*="main-nav-bars-container"] > [class*="vertical-nav-bar"] {
         visibility: hidden !important;
         pointer-events: none !important;

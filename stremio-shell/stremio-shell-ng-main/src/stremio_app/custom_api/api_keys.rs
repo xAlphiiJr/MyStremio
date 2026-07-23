@@ -342,6 +342,7 @@ pub fn ensure_api_keys_migrated() {
             ("tidb", "tidb_api_key"),
             ("tidb", "introdb_api_key"),
             ("meta-hover-panel", "tmdbApiKey"),
+            ("detail-slogan", "tmdbApiKey"),
         ];
 
         for (plugin, key) in candidates {

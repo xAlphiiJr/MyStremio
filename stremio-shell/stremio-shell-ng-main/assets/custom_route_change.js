@@ -18,6 +18,8 @@
 
   let lastHash = location.hash || '';
   let notifyScheduled = false;
+  /** Latest source wins when multiple history updates coalesce into one microtask. */
+  let pendingSource = '';
 
   /**
    * @param {string} prev
@@ -50,14 +52,18 @@
 
   /**
    * Coalesce bursty history updates into one microtask notification.
+   * Always keeps the latest `source` (do not drop later replaceState/popstate).
    * @param {string} source
    */
   function scheduleNotify(source) {
+    pendingSource = source || pendingSource || 'unknown';
     if (notifyScheduled) return;
     notifyScheduled = true;
     queueMicrotask(() => {
       notifyScheduled = false;
-      notifyIfHashChanged(source);
+      const src = pendingSource || 'unknown';
+      pendingSource = '';
+      notifyIfHashChanged(src);
     });
   }
 
@@ -76,7 +82,12 @@
     return result;
   };
 
-  window.addEventListener('popstate', () => scheduleNotify('popstate'));
+  // Synchronous popstate so leave/enter cleanup runs before paint.
+  window.addEventListener('popstate', () => {
+    pendingSource = '';
+    notifyScheduled = false;
+    notifyIfHashChanged('popstate');
+  });
   window.addEventListener('hashchange', () => scheduleNotify('hashchange'));
 
   console.info('[StremioCustom] Route-change bus ready.');

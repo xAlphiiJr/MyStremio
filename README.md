@@ -2,7 +2,7 @@
 
 **MyStremio** is a personalized Windows desktop client built on the Stremio shell stack.
 It combines UI upgrades, player improvements, plugins/themes and library tools in one installer.
-Current release: **2.3.4**
+Current release: **2.3.5**
 
 > **Disclaimer:** MyStremio is an independent community project and is not affiliated with official Stremio.
 
@@ -171,6 +171,20 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 
 
+### 2.3.5
+
+- **Cast Overlay** — Enabled by default on first install (still freely toggleable; updates never re-enable a plugin the user turned off)
+- **Next Episode** — No longer double-skips to the episode after next (MPV end-reason map: `stop` vs `eof`); player session / viewport transparency only when MPV has a live stream (dead `#/player` stays opaque — no black hole); Back/Next uses stock Stremio navigation
+- **Meta Hover Panel** — Panel no longer covers the top navigation tabs (nav stays clickable above the hover panel)
+- **Detail Slogan** — New plugin shows the TMDB tagline under the title/logo without moving the logo; following meta content shifts down; slogan uses a thicker rounded italic sans (PlusJakartaSans)
+- **Detail layout** — Fixed nav stacking no longer collapses the detail page (title/sidebar stay below the top chrome)
+- **Data Enrichment** — Genres as cast-style pills with Lucide-style SVG icons; Crime fingerprint, Drama theater masks, War crossed swords; lean remount (`detailKey` + mount identity + debounced forceRemount, no duplicate hashchange); IMDb score pinned from Cinemeta so meta-addons cannot replace it with TMDB scores; Similar/Collection use `#/detail/type/tt/tt`
+- **Player menus** — Picture Settings and TiDB contribute panels use the same Cast/Anime4K glass (`rgba(42,42,46,0.58)`)
+- **MPV quality** — Stock Stremio defaults (`spline36`, `bt.2390` tone-mapping, `deband`, `gpu-next,gpu` VO / D3D11 colorspace hints) so playback sharpness matches native shell-ng
+- **Detail backdrop** — Soft opacity fade on the detail background layer to ease the MetaPreview→Meta image handoff
+- **Stream UI** — After Credits panel subtitles are English
+- **Plugins** — Enable/disable in Settings applies live (no Ctrl+R) for enrichment, slogan, covers, titlebar, SlashToSearch, TIDB, and player plugins
+
 ### 2.3.4
 
 - **Nav menu icons** — Settings, Addons, and Help icons no longer disappear after opening the profile menu
@@ -179,9 +193,9 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 - **Stream UI** — Fixed performance issues caused by Stream UI plugin. Fixed an issue where it would place a second folder into the first one on usenet addons
 - **Discord Rich Presence** — Fixed an issue where it would not display current page correctly
 - **Library** — Harded library updating after title change
-
-
-
+- **Plugin sync** — Fixed new bundled plugins (e.g. Picture Settings) not installing on upgrade; user-deleted plugins still stay removed
+- **Continue Watching** — Posters refresh correctly after removing a title (Enhanced Covers / RPDB)
+- **Board layout** — Fixed nav overlapping Continue Watching when Dynamic Hero is disabled
 
 ### 2.3.3
 
@@ -195,8 +209,8 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 ### 2.3.2
 
 - **Central API Keys** — Shared API keys (TMDB, RPDB, TheIntroDB, IntroDB, …) live under **Settings → MyStremio → API Keys**, discovered from installed plugin schemas; plugin cards show Set/Missing instead of duplicate inputs.
-- **Player navigation fix** — Fixed the black screen after Episode → Next (Detail streams) → Back by syncing shell leave-cleanup with HashRouter `pushState`/`replaceState` (opaque UI restored when leaving the player; abandoned dead `#/player` routes no longer stick).
-- **Stream re-open fix** — Re-clicking the same stream after Back no longer bounces to the episode list; dead-player protection only applies to history Back, not stream clicks.
+- **Player navigation fix** — Fixed the black screen after Episode → Next (Detail streams) → Back by syncing shell leave-cleanup with HashRouter `pushState`/`replaceState` and keeping the shell opaque until MPV actually presents frames.
+- **Stream re-open fix** — Re-clicking the same stream after Back opens the player again normally (no history bounce away from a fresh stream click).
 
 
 
@@ -258,7 +272,7 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 ## 💾 Installation
 
 1. Download the latest installer from this repository's **Releases** page.
-2. Run `MyStremioSetup-v2.3.4_x64.exe` (or the latest version).
+2. Run `MyStremioSetup-v2.3.5_x64.exe` (or the latest version).
 3. The installer sets up:
   - App binaries (`mystremio-shell.exe`, streaming server, FFmpeg, libmpv)
   - Bundled plugins and themes
@@ -298,7 +312,7 @@ cd stremio-shell\stremio-shell-ng-main
 .\package-release.ps1
 ```
 
-Output: `release\MyStremioSetup-v2.3.4_x64.exe`
+Output: `release\MyStremioSetup-v2.3.5_x64.exe`
 
 The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle. To rebuild the Web UI from source, clone [stremio-web](https://github.com/Stremio/stremio-web) into `.tmp/stremio-web`, apply MyStremio patches, then run the build script again.
 
@@ -323,6 +337,7 @@ MyStremio includes parts of the following independent community projects:
 - [REVENGE977/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced)
 - [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme)
 - [Bo0ii/StreamGo](https://github.com/Bo0ii/StreamGo)
+- [allecsc/Stremio-Kai](https://github.com/allecsc/Stremio-Kai) (detail page slogan / tagline inspiration)
 - [bloc97/Anime4K](https://github.com/bloc97/Anime4K)
 - [TheIntroDB](https://theintrodb.org/)
 - [IntroDB](https://introdb.app/)

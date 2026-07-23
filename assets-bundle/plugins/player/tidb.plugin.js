@@ -947,10 +947,10 @@
 				padding: 0.85rem 0.95rem 0.95rem;
 				border-radius: 16px;
 				border: 1px solid rgba(255, 255, 255, 0.14);
-				background: rgba(42, 42, 46, 0.92);
+				background: rgba(42, 42, 46, 0.58);
 				backdrop-filter: none;
 				-webkit-backdrop-filter: none;
-				box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+				box-shadow: 0 8px 32px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.18);
 				color: #fff;
 				font-family: inherit;
 				font-size: 0.82rem;
@@ -3849,6 +3849,18 @@
 				plugin._checkTimer = null;
 			}
 		} catch (_) {}
+	};
+	/**
+	 * Hard unload for live disable — destroys instance so re-inject can recreate.
+	 */
+	window.__stremioTidbUnload = function () {
+		try {
+			window.__stremioTidbSuspend?.();
+			if (window.tidbPlugin && typeof window.tidbPlugin.destroy === 'function') {
+				window.tidbPlugin.destroy();
+			}
+		} catch (_) {}
+		window.tidbPlugin = null;
 	};
 	document.addEventListener('stremio-custom-playback-stopped', () => {
 		window.__stremioTidbSuspend?.();

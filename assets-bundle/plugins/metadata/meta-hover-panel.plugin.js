@@ -1,7 +1,7 @@
 /**
  * @name Meta Hover Panel
  * @description Rich movie/series info panel on poster hover using Cinemeta metadata.
- * @version 2.0.3
+ * @version 2.0.4
  * @author MyStremio
  * @category Metadata
  */
@@ -36,7 +36,7 @@
       width: ${CONFIG.PANEL_WIDTH}px;
       max-height: min(78vh, 640px);
       overflow: hidden auto;
-      z-index: 100001;
+      z-index: 100;
       border-radius: 14px;
       background: rgba(18, 18, 22, 0.94);
       border: 1px solid rgba(255, 255, 255, 0.1);
@@ -1351,13 +1351,41 @@
   }
 
   /**
-   * Disconnects body observer and clears hover UI while off board/catalog.
+   * Soft leave: clear hover UI / catalog observer (keeps Loaded gate).
    */
   function suspendRuntime() {
     clearHoverState();
     if (catalogObserver) {
       catalogObserver.disconnect();
       catalogObserver = null;
+    }
+  }
+
+  /**
+   * Hard unload for live disable — unbinds listeners and clears Loaded gate.
+   */
+  function hardUnload() {
+    suspendRuntime();
+    if (runtimeBound) {
+      document.removeEventListener('mousemove', handlePointerMove);
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('mouseleave', clearHoverState);
+      window.removeEventListener('scroll', handleScroll, true);
+      if (resizeHandler) window.removeEventListener('resize', resizeHandler);
+      window.removeEventListener('blur', clearHoverState);
+      document.removeEventListener('stremio-custom-route-change', onMetaHoverRouteChange);
+      document.removeEventListener('visibilitychange', onMetaHoverVisibility);
+      document.removeEventListener('stremio-custom-playback-route', ensureRuntime);
+      document.removeEventListener('stremio-custom-playback-stopped', ensureRuntime);
+      runtimeBound = false;
+      resizeHandler = null;
+    }
+    document.getElementById('meta-hover-panel-css')?.remove();
+    document.querySelectorAll('#meta-hover-panel-active, .meta-hover-panel').forEach((node) => node.remove());
+    try {
+      delete window.__MetaHoverPanelLoaded;
+    } catch (_) {
+      window.__MetaHoverPanelLoaded = false;
     }
   }
 
@@ -1398,7 +1426,17 @@
     catalogObserver.observe(document.body, { childList: true, subtree: true });
   }
 
-  window.__stremioMetaHoverUnload = suspendRuntime;
+  window.__stremioMetaHoverUnload = hardUnload;
+
+  function onMetaHoverRouteChange() {
+    invalidateCatalogCache();
+    clearHoverState();
+    ensureRuntime();
+  }
+
+  function onMetaHoverVisibility() {
+    if (document.hidden) clearHoverState();
+  }
 
   function init() {
     if (window.__MetaHoverPanelLoaded) return;
@@ -1421,15 +1459,9 @@
         repositionActivePanel();
       };
       window.addEventListener('resize', resizeHandler);
-      document.addEventListener('stremio-custom-route-change', () => {
-        invalidateCatalogCache();
-        clearHoverState();
-        ensureRuntime();
-      });
+      document.addEventListener('stremio-custom-route-change', onMetaHoverRouteChange);
       window.addEventListener('blur', clearHoverState);
-      document.addEventListener('visibilitychange', () => {
-        if (document.hidden) clearHoverState();
-      });
+      document.addEventListener('visibilitychange', onMetaHoverVisibility);
       document.addEventListener('stremio-custom-playback-route', ensureRuntime);
       document.addEventListener('stremio-custom-playback-stopped', ensureRuntime);
     }

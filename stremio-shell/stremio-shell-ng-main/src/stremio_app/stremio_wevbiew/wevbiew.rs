@@ -301,7 +301,6 @@ impl PartialUi for WebView {
                                 include_str!("../../../assets/custom_bootstrap.js"),
                                 include_str!("../../../assets/custom_scroll_restore.js"),
                                 include_str!("../../../assets/custom_player_glass.js"),
-                                include_str!("../../../assets/custom_dead_player_nav.js"),
                                 include_str!("../../../assets/custom_player_loading.js"),
                                 include_str!("../../../assets/custom_liquid_glass_nav.js"),
                                 include_str!("../../../assets/custom_hero_loading.js"),

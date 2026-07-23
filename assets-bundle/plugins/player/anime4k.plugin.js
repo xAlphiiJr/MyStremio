@@ -14,6 +14,9 @@
   const PLUGIN_ID = 'anime4k';
   const PLUGIN_REF = 'player/anime4k.plugin.js';
   const LOG_PREFIX = '[Anime4K]';
+
+  if (window.__stremioAnime4kPluginReady === PLUGIN_VERSION) return;
+
   const MODE_SETTING = 'mode';
   const QUALITY_SETTING = 'quality';
   const DEFAULT_QUALITY = 'L';
@@ -456,11 +459,11 @@
         width: min(16.5rem, calc(100vw - 2rem));
         padding: 0.65rem 0.75rem 0.75rem;
         border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(36, 36, 40, 0.94);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(42, 42, 46, 0.58);
         backdrop-filter: none;
         -webkit-backdrop-filter: none;
-        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.18);
         color: #fff;
         font-family: inherit;
         font-size: 0.78rem;
@@ -1086,6 +1089,21 @@
   }
 
   /**
+   * Hard unload for live disable — clears Ready gate.
+   */
+  function hardUnload() {
+    suspend();
+    document.removeEventListener('stremio-custom-route-change', onRouteChange);
+    document.removeEventListener('stremio-custom-playback-route', resume);
+    window.removeEventListener('hashchange', onRouteChange);
+    try {
+      delete window.__stremioAnime4kPluginReady;
+    } catch (_) {
+      window.__stremioAnime4kPluginReady = '';
+    }
+  }
+
+  /**
    * Resume after returning to the player route.
    */
   function resume() {
@@ -1114,9 +1132,7 @@
   });
 
   document.addEventListener('stremio-custom-route-change', onRouteChange);
-  document.addEventListener('stremio-custom-playback-route', () => {
-    resume();
-  });
+  document.addEventListener('stremio-custom-playback-route', resume);
   window.addEventListener('hashchange', onRouteChange);
   document.addEventListener('stremio-custom-bootstrap-ready', () => {
     initialize().then(() => {
@@ -1144,18 +1160,17 @@
   });
 
   window.__stremioAnime4kSuspend = suspend;
+  window.__stremioAnime4kUnload = hardUnload;
   window.__stremioAnime4kResume = resume;
   window.__stremioAnime4kApply = () => scheduleApply();
   window.__stremioAnime4kEnsure = ensureButton;
 
-  if (window.__stremioAnime4kPluginReady !== PLUGIN_VERSION) {
-    window.__stremioAnime4kPluginReady = PLUGIN_VERSION;
-    scheduleEnsure();
-    if (isPlayerRoute()) {
-      bindChromeIdleWatcher();
-      syncLayoutWorkToChrome();
-      startRetryLoop();
-    }
+  window.__stremioAnime4kPluginReady = PLUGIN_VERSION;
+  scheduleEnsure();
+  if (isPlayerRoute()) {
+    bindChromeIdleWatcher();
+    syncLayoutWorkToChrome();
+    startRetryLoop();
   }
 
   console.info(`${LOG_PREFIX} Plugin loaded.`);
