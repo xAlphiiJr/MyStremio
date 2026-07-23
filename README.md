@@ -82,7 +82,7 @@ The board includes a hero section with rotating titles. The Theme is made by [Fx
 #### 📖 Detail view with metadata and stream sidebar
 
 The Data Enrichment Plugin by MrBlu03 (if a TMDB API key is set under **Settings → MyStremio → API Keys**) offers an enhanced detail page with cast and similar titles.
-The StreamUI plugin offers a clean and modern sidebar with folders to pick streams from. (The plugin works for the follwing addons: Most torrent addons, [WatchHub](https://stremio-addons.net/addons/watchhub), [Ratings Aggregator](https://stremio-addons.net/addons/ratings-aggregator), [IMDb Ratings](https://stremio-addons.net/addons/imdb-ratings), [AfterCredits](https://aftercredits.almosteffective.com/configure.html)).
+The StreamUI plugin offers a clean and modern sidebar with folders to pick streams from. (The plugin works for the follwing addons: Most torrent addons, most usenet addons, [WatchHub](https://stremio-addons.net/addons/watchhub), [Ratings Aggregator](https://stremio-addons.net/addons/ratings-aggregator), [IMDb Ratings](https://stremio-addons.net/addons/imdb-ratings), [AfterCredits](https://aftercredits.almosteffective.com/configure.html)).
 
 
 
@@ -176,10 +176,10 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 - **Cast Overlay** — Enabled by default on first install (still freely toggleable; updates never re-enable a plugin)
 - **Next Episode** — No longer double-skips to the episode after next
-- **Detail Slogan** — New plugin shows the TMDB tagline under the title/logo (based on Stremio-Kai / allecsc; author credited in plugin metadata)
-- **StreamUI** — Moved from Player to Interface plugins; display name is StreamUI (no space). Optional merge of Debrid Search / Intelligent Debrid Search / StremThru Store into one accordion
-- **Data Enrichment** — Big update, now features Cast, Directors and Genres with pictures/symbols and disables native information so its not displayed twice.
-- **Player menus** — Picture Settings and TiDB contribute panels use the same Cast/Anime4K glass (`rgba(42,42,46,0.58)`)
+- **Detail Slogan** — New plugin shows the TMDB tagline under the title/logo (based on allecsc's/Stremio-Kai; author credited in plugin metadata)
+- **StreamUI** — Moved from Player to Interface plugins. Optional merge of Debrid Search / Intelligent Debrid Search / StremThru Store into one accordion
+- **Data Enrichment** — Big update, now features Cast, Directors and Genres with pictures/symbols and disables native information so its not displayed twice
+- **Player menus** — Now use the same background opacity.
 - **Plugins** — Enable/disable in Settings applies live (no Ctrl+R) for all plugins now.
 
 ### 2.3.4
@@ -228,39 +228,15 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 - **UI scaling settings** — New **Settings → Interface → UI Scaling** dropdown (75%–200%), independent of Windows display scaling, persisted across restarts via WebView2 zoom.
 
 
-
-### 2.2.9
-
-- **Board hero banner (native React)** — Featured titles are rendered directly in the board route. This required shipping a **bundled local Web UI** instead of the public Stremio website, and moving **Settings → MyStremio** into native React (autoskip, favorite languages, plugin toggles, Discord, API keys) for a stable settings experience without DOM injection.
-- **Hero loading** — Banner-area loading state instead of a Breaking Bad fallback flash.
-- **Settings persistence** — Login, plugins, volume, autoskip, Discord, preload, language, library, and onboarding flags are restored from `%APPDATA%\MyStremio\mystremio-settings.json` before `main.js` loads, so restarts and updates no longer reset user configuration.
-- **Stream buffering and player loading** — Reworked playback startup and buffering: configurable preload, and a more stable hand-off when a stream starts loading.
-- **TheIntroDB timestamp submission** — Submit intro, outro, recap, and preview timestamps to [TheIntroDB](https://theintrodb.org/) from the player (mark start/end, pick segment type, submit with your API key).
-- **Seek buttons** — Skip backward and forward from the player control bar with a configurable interval (Settings → MyStremio → Plugins).
-- **In-app updater** — Checks GitHub Releases for `MyStremioSetup-v*_x64.exe`, verifies `SHA256SUMS.txt`, and installs updates via the existing Stremio update banner (still in testing).
-- **Player brightness** — Brightness control in the left player bar with MPV tone adjustment, draggable slider, and compact popup UI.
-- **Board scroll** — Fixed rubberbanding on the first scroll after app start; scroll position restore only runs when returning from detail/player within the same session.
-- **Plugin and player adjustments** — Updates to StreamUI, TheIntroDB skip logic, continue-watching covers, metadata hover panels, and data enrichment mount targeting.
-- **Player shell assets** — Updated player loading overlay, glass-style controls, playback API integration, and seek-buffer handling.
-- **Custom board scrollbar** — Always-visible scrollbar on the board and other main catalog views, alongside mouse-wheel scrolling.
-- **Scroll behavior in panels and menus** — Plugin dropdown menu, metadata hover panels, and library context menus behavior fixed.
-- **Navigation during tab switches** — The horizontal navigation bar stays in place while routes load, without jumping or briefly disappearing.
-- **Meta Hover Panel** — Removed duplicated year display.
-- **Plugin live updates** — Partially added live updates when plugins are toggled.
-- **Artifacts** — Fixed artifacts appearing in the subtitle settings and shortcuts section.
-- **StreamUI** — Added Usenet grouping to StreamUI plugin (still in testing). Fixed UI language.
-
 ---
 
 
 
 ### Known Issues
 
-- **Board stream start:** When starting the stream through the "Continue Watching" section, the video may remain frozen on the first start. One click into the seek bar fixes the issue.
 - **Cast Search Addon:** The Cast Search Addon is not compatible with the StreamUI plugin as the cast members load the same way as video streams which messes with correct grouping.
 - **Formatter:** Flags don't display correctly.
-- **Hover timestamps:** When starting a stream from the "Continue Watching" segment on the board, the hover timestamps won't load. Starting the stream from the details page fixes this problem.
-- **Antivirus (e.g. Avast):** Some security tools may repeatedly scan MyStremio because it runs unsigned binaries from `%LOCALAPPDATA%\Programs\MyStremio`, a local streaming runtime, and writable data under `%APPDATA%\MyStremio` (plus occasional update installers under `%APPDATA%\MyStremio\updates`). Prefer folder exclusions for those paths over disabling antivirus entirely. Authenticode signing (when available) is the proper long-term fix.
+- **Antivirus (e.g. Avast):** Some security tools may repeatedly scan MyStremio because it runs unsigned binaries from `%LOCALAPPDATA%\Programs\MyStremio`, a local streaming runtime, and writable data under `%APPDATA%\MyStremio` (plus occasional update installers under `%APPDATA%\MyStremio\updates`). Prefer folder exclusions for those paths over disabling antivirus entirely.
 
 ---
 
@@ -334,7 +310,7 @@ MyStremio includes parts of the following independent community projects:
 - [REVENGE977/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced)
 - [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme)
 - [Bo0ii/StreamGo](https://github.com/Bo0ii/StreamGo)
-- [allecsc/Stremio-Kai](https://github.com/allecsc/Stremio-Kai) — Detail Slogan / tagline feature (adapted for MyStremio)
+- [allecsc/Stremio-Kai](https://github.com/allecsc/Stremio-Kai)
 - [bloc97/Anime4K](https://github.com/bloc97/Anime4K)
 - [TheIntroDB](https://theintrodb.org/)
 - [IntroDB](https://introdb.app/)
