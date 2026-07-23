@@ -2,7 +2,8 @@
  * @name Anime4K
  * @description Upscale anime with Anime4K GLSL shaders (mpv gpu-next). Mode via player control-bar button.
  * @version 1.3.0
- * @author MyStremio
+ * @author bloc97; adapted by MyStremio
+ * @credit Shaders by bloc97/Anime4K (https://github.com/bloc97/Anime4K)
  * @category player
  */
 /* jshint esversion: 11, browser: true, devel: true */

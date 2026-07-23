@@ -150,18 +150,22 @@ function Ensure-StreamUiSchema {
     param([string]$PluginsDir)
 
     if (-not (Test-Path $PluginsDir)) { return }
-    $schemaSource = Join-Path (Join-Path $PSScriptRoot "..\..\..\assets-bundle\plugins\player") "stream-ui.plugin.schema.json"
+    $schemaSource = Join-Path (Join-Path $PSScriptRoot "..\..\..\assets-bundle\plugins\interface") "stream-ui.plugin.schema.json"
     if (-not (Test-Path $schemaSource)) {
         $schemaSource = Join-Path (Join-Path $PSScriptRoot "..\assets") "stream-ui.plugin.schema.json"
     }
     if (-not (Test-Path $schemaSource)) { return }
-    $schemaTarget = Join-Path $PluginsDir "player\stream-ui.plugin.schema.json"
+    $schemaTargetDir = Join-Path $PluginsDir "interface"
+    if (-not (Test-Path $schemaTargetDir)) {
+        New-Item -ItemType Directory -Path $schemaTargetDir -Force | Out-Null
+    }
+    $schemaTarget = Join-Path $schemaTargetDir "stream-ui.plugin.schema.json"
 
     try {
         Copy-Item -Path $schemaSource -Destination $schemaTarget -Force
-        Write-Host "Ensured Stream UI schema in $PluginsDir"
+        Write-Host "Ensured StreamUI schema in $PluginsDir"
     } catch {
-        Write-Warning ("Could not copy Stream UI schema to " + $PluginsDir + ": " + $_)
+        Write-Warning ("Could not copy StreamUI schema to " + $PluginsDir + ": " + $_)
     }
 }
 
@@ -169,7 +173,10 @@ function Patch-StreamUiPlugin {
     param([string]$PluginsDir)
 
     if (-not (Test-Path $PluginsDir)) { return }
-    $pluginPath = Join-Path $PluginsDir "player\stream-ui.plugin.js"
+    $pluginPath = Join-Path $PluginsDir "interface\stream-ui.plugin.js"
+    if (-not (Test-Path $pluginPath)) {
+        $pluginPath = Join-Path $PluginsDir "player\stream-ui.plugin.js"
+    }
     if (-not (Test-Path $pluginPath)) { return }
 
     try {
@@ -184,9 +191,9 @@ function Patch-StreamUiPlugin {
             # Keep existing modern patch unchanged once present.
             if ($patched -ne $raw) {
                 Set-Content -Path $pluginPath -Value $patched -Encoding UTF8
-                Write-Host "Updated Stream UI plugin to preserve open groups across list rebuilds."
+                Write-Host "Updated StreamUI plugin to preserve open groups across list rebuilds."
             } else {
-                Write-Host "Stream UI plugin already has session accordion memory patch."
+                Write-Host "StreamUI plugin already has session accordion memory patch."
             }
             return
         }
@@ -200,10 +207,10 @@ function Patch-StreamUiPlugin {
         )
         if ($patched -ne $raw) {
             Set-Content -Path $pluginPath -Value $patched -Encoding UTF8
-            Write-Host "Patched legacy Stream UI plugin."
+            Write-Host "Patched legacy StreamUI plugin."
         }
     } catch {
-        Write-Warning ("Could not patch Stream UI plugin in " + $PluginsDir + ": " + $_)
+        Write-Warning ("Could not patch StreamUI plugin in " + $PluginsDir + ": " + $_)
     }
 }
 
@@ -216,6 +223,9 @@ function Remove-DeprecatedAssets {
     $deprecatedPlugins = @(
         "player\picture-in-picture.plugin.js",
         "player\filter-streams.plugin.js",
+        "player\stream-ui.plugin.js",
+        "player\stream-ui.plugin.json",
+        "player\stream-ui.plugin.schema.json",
         "interface\enhancements-tweaks.plugin.js",
         "interface\horizontal-navigation.plugin.js",
         "interface\hero-div.plugin.js",

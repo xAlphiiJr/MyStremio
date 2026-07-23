@@ -290,7 +290,7 @@
   const DYNAMIC_HERO_METADATA = {
     name: 'Dynamic Hero',
     version: '26.2.0',
-    author: 'MyStremio',
+    author: 'Fxy6969; adapted by MyStremio',
     description: 'Rotating hero banner on the board with featured titles.',
     category: 'interface',
   };
@@ -1246,7 +1246,6 @@
     'interface/',
     'metadata/',
     'addons/',
-    'player/stream-ui.plugin.js',
   ];
 
   function isIdleDuringPlayback(pluginRef) {
@@ -1286,7 +1285,7 @@
 
   /**
    * Stops player-only plugin timers/observers/locks while off the player route.
-   * Do NOT include Stream UI / Meta-Hover here — those must stay alive on detail/board.
+   * Do NOT include StreamUI / Meta-Hover here — those must stay alive on detail/board.
    * Soft-suspend for those plugins is self-managed via their own route listeners.
    */
   function suspendPlayerPluginRuntime() {
@@ -1682,7 +1681,7 @@
     ensurePlayerTransparencyFix();
     const onPlayer = isPlayerRoute();
     // Only tear down player-plugin runtime when leaving the player — not on every
-    // board/detail hop (Stream UI / seek/brightness must stay usable on re-entry).
+    // board/detail hop (StreamUI / seek/brightness must stay usable on re-entry).
     if (routeWasPlayer && !onPlayer) {
       suspendPlayerPluginRuntime();
     }

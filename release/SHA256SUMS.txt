@@ -1,1 +1,1 @@
-183ad5dfeccc4886a7d6d7e63264cef07e851c2916be55a1171fbc1e1504e272  MyStremioSetup-v2.3.5_x64.exe
+bb615ae8974599e3d64f7aa6dbcf3c0354cdb8feeacc87c5a073f69ae661cb53  MyStremioSetup-v2.3.5_x64.exe

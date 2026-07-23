@@ -1,8 +1,8 @@
 /**
- * @name Stream UI
+ * @name StreamUI
  * @description Unified stream-list UI: AfterCredits, WatchHub, ratings, accordions.
- * @version 2.0.5
- * @category player
+ * @version 2.0.7
+ * @category interface
  * @author MyStremio
  */
 /* global StremioEnhancedAPI */
@@ -16,11 +16,14 @@
   const STYLE_ID = 'stream-ui-styles';
   const SETTING_TORRENT = 'enable_torrent_accordions';
   const SETTING_USENET = 'enable_usenet_accordions';
+  const SETTING_MERGE_DEBRID = 'enable_merge_debrid_search';
   const SETTING_RATINGS = 'enable_ratings_aggregator';
   const SETTING_IMDB = 'enable_imdb_ratings';
   const SETTING_WATCHHUB = 'enable_watchhub';
   const SETTING_AFTERCREDITS = 'enable_aftercredits';
   const PLUGIN_ID = 'stream-ui';
+  /** Shared accordion title when merge-debrid-search is enabled. */
+  const MERGE_DEBRID_SEARCH_CANONICAL = 'Debrid Search';
 
   function getSetting(key) {
     const a = api();
@@ -30,6 +33,7 @@
   const state = {
     torrent: true,
     usenet: true,
+    mergeDebridSearch: true,
     ratings: true,
     imdb: true,
     watchhub: true,
@@ -70,6 +74,7 @@
 
     state.torrent = asToggle(torrent, true);
     state.usenet = asToggle(await getSetting(SETTING_USENET), true);
+    state.mergeDebridSearch = asToggle(await getSetting(SETTING_MERGE_DEBRID), true);
     state.ratings = asToggle(await getSetting(SETTING_RATINGS), true);
     state.imdb = asToggle(await getSetting(SETTING_IMDB), true);
     state.watchhub = asToggle(await getSetting(SETTING_WATCHHUB), true);
@@ -101,7 +106,7 @@
   }
 
   /**
-   * True while Stream UI is allowed to mutate the streams list (detail/meta only).
+   * True while StreamUI is allowed to mutate the streams list (detail/meta only).
    * @returns {boolean}
    */
   function canRunStreamUiWork() {
@@ -198,6 +203,36 @@
 
   function getAccordionAddonName(el, box) {
     return box ? resolveTorrentAddonName(el, box) : getDirectAddonTitle(el);
+  }
+
+  /**
+   * Whether this addon display name belongs to the shared Debrid Search cluster
+   * (Intelligent Debrid Search, Debrid Search, StremThru Store / Store | RD|TB|…).
+   * @param {string} name
+   * @returns {boolean}
+   */
+  function isMergeDebridSearchAddon(name) {
+    const n = String(name || '')
+      .trim()
+      .replace(/\s+/g, ' ');
+    if (!n) return false;
+    if (/^(?:intelligent\s+)?debrid\s+search$/i.test(n)) return true;
+    if (/^stremthru\s*store$/i.test(n)) return true;
+    if (/^store\s*\|?\s*(?:rd|tb|ad|pm|dl)\b/i.test(n)) return true;
+    if (/^storerd$|^storetb$/i.test(n)) return true;
+    return false;
+  }
+
+  /**
+   * Collapse configured Debrid Search addons into one accordion name when enabled.
+   * @param {string} name
+   * @returns {string}
+   */
+  function canonicalTorrentGroupName(name) {
+    const n = String(name || '').trim();
+    if (!n || !state.mergeDebridSearch) return n;
+    if (isMergeDebridSearchAddon(n)) return MERGE_DEBRID_SEARCH_CANONICAL;
+    return n;
   }
 
   const WATCHHUB_ADDON_RE = /watch\s*hub|guidebox/i;
@@ -335,7 +370,9 @@
     for (let i = 0; i < links.length; i++) {
       const el = links[i];
       if (!shouldGroupAsTorrent(el, box)) continue;
-      const name = getDirectAddonTitle(el) || resolveTorrentAddonName(el, box);
+      const rawName = getDirectAddonTitle(el) || resolveTorrentAddonName(el, box);
+      if (!rawName || isExcludedAddon(rawName)) continue;
+      const name = canonicalTorrentGroupName(rawName);
       if (!name || isExcludedAddon(name)) continue;
       const key = `torrent:${name}`;
       if (!map.has(key)) {
@@ -406,7 +443,7 @@
   overflow:hidden!important;pointer-events:none!important;border:none!important
 }
 
-/* Hide raw native stream rows until Stream UI has built once (or pending timeout). */
+/* Hide raw native stream rows until StreamUI has built once (or pending timeout). */
 html.sui-pending [class*="streams-container-"] > a[class*="stream-container-"],
 html.sui-pending [class*="streams-container-"] > button[class*="stream-container-"]{
   visibility:hidden!important;height:0!important;min-height:0!important;
@@ -758,13 +795,13 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     }
 
     function classifyForAccordion(el, box) {
-      const name = getDirectAddonTitle(el) || resolveTorrentAddonName(el, box);
-      if (!name) return null;
-      if (state.usenet && shouldGroupAsUsenet(el, box) && isUsenetGroup(name, [el], box)) {
-        return { type: 'usenet', name };
+      const rawName = getDirectAddonTitle(el) || resolveTorrentAddonName(el, box);
+      if (!rawName) return null;
+      if (state.usenet && shouldGroupAsUsenet(el, box) && isUsenetGroup(rawName, [el], box)) {
+        return { type: 'usenet', name: rawName };
       }
-      if (state.torrent && shouldGroupAsTorrent(el, box) && isTorrentGroup(name, [el], box)) {
-        return { type: 'torrent', name };
+      if (state.torrent && shouldGroupAsTorrent(el, box) && isTorrentGroup(rawName, [el], box)) {
+        return { type: 'torrent', name: canonicalTorrentGroupName(rawName) };
       }
       return null;
     }
@@ -2007,7 +2044,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
   }
 
   /**
-   * Hides native stream rows until Stream UI finishes its first build (or timeout).
+   * Hides native stream rows until StreamUI finishes its first build (or timeout).
    */
   function markStreamsPending() {
     if (!isStreamUiRoute()) return;

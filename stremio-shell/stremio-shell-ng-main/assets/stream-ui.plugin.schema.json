@@ -14,6 +14,13 @@
     "defaultValue": true
   },
   {
+    "key": "enable_merge_debrid_search",
+    "type": "toggle",
+    "label": "Merge Debrid Search addons",
+    "description": "Put Intelligent Debrid Search, Debrid Search, and StremThru Store (Store | RD/TB/…) into one accordion. Turn off to keep separate folders.",
+    "defaultValue": true
+  },
+  {
     "key": "enable_ratings_aggregator",
     "type": "toggle",
     "label": "Show ratings panel",

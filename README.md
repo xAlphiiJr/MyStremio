@@ -176,7 +176,8 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 - **Cast Overlay** — Enabled by default on first install (still freely toggleable; updates never re-enable a plugin)
 - **Next Episode** — No longer double-skips to the episode after next
-- **Detail Slogan** — New plugin shows the TMDB tagline under the title/logo
+- **Detail Slogan** — New plugin shows the TMDB tagline under the title/logo (based on Stremio-Kai / allecsc; author credited in plugin metadata)
+- **StreamUI** — Moved from Player to Interface plugins; display name is StreamUI (no space). Optional merge of Debrid Search / Intelligent Debrid Search / StremThru Store into one accordion
 - **Data Enrichment** — Big update, now features Cast, Directors and Genres with pictures/symbols and disables native information so its not displayed twice.
 - **Player menus** — Picture Settings and TiDB contribute panels use the same Cast/Anime4K glass (`rgba(42,42,46,0.58)`)
 - **Plugins** — Enable/disable in Settings applies live (no Ctrl+R) for all plugins now.
@@ -186,7 +187,7 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 - **Nav menu icons** — Settings, Addons, and Help icons no longer disappear after opening the profile menu
 - **Updater** — Update banner now says MyStremio instead of Stremio and sends requests less frequently
 - **Anime4K** — Is now adjustable via button inside the player. Shader quality (S/M/L/VL/UL) selectable in plugin settings, default L
-- **Stream UI** — Fixed performance issues caused by Stream UI plugin. Fixed an issue where it would place a second folder into the first one on usenet addons
+- **StreamUI** — Fixed performance issues caused by StreamUI plugin. Fixed an issue where it would place a second folder into the first one on usenet addons
 - **Discord Rich Presence** — Fixed an issue where it would not display current page correctly
 - **Library** — Harded library updating after title change
 - **Plugin sync** — Fixed new bundled plugins (e.g. Picture Settings) not installing on upgrade; user-deleted plugins still stay removed
@@ -214,7 +215,7 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 - **NEW Cast Overlay Plugin** — Optional player cast bubble with TMDB photos; TV series use TMDB Series Cast (`aggregate_credits`).
 - **Data Enrichment cast** — TV detail cast also uses `aggregate_credits` so Series Cast matches TMDB instead of a tiny credits subset.
-- **Rating links** — Stream UI rating cards now clickable and open the correct source pages.
+- **Rating links** — StreamUI rating cards now clickable and open the correct source pages.
 - **Intro Skip Plugin** — Added +/- buttons to allow for small corrections before submitting.
 - **Hover Timestamps and Brightness** — Switched the Hover Timestamps and Brightness features from native settings to plugins to allow more individualisation.
 
@@ -239,7 +240,7 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 - **In-app updater** — Checks GitHub Releases for `MyStremioSetup-v*_x64.exe`, verifies `SHA256SUMS.txt`, and installs updates via the existing Stremio update banner (still in testing).
 - **Player brightness** — Brightness control in the left player bar with MPV tone adjustment, draggable slider, and compact popup UI.
 - **Board scroll** — Fixed rubberbanding on the first scroll after app start; scroll position restore only runs when returning from detail/player within the same session.
-- **Plugin and player adjustments** — Updates to Stream UI, TheIntroDB skip logic, continue-watching covers, metadata hover panels, and data enrichment mount targeting.
+- **Plugin and player adjustments** — Updates to StreamUI, TheIntroDB skip logic, continue-watching covers, metadata hover panels, and data enrichment mount targeting.
 - **Player shell assets** — Updated player loading overlay, glass-style controls, playback API integration, and seek-buffer handling.
 - **Custom board scrollbar** — Always-visible scrollbar on the board and other main catalog views, alongside mouse-wheel scrolling.
 - **Scroll behavior in panels and menus** — Plugin dropdown menu, metadata hover panels, and library context menus behavior fixed.
@@ -333,7 +334,7 @@ MyStremio includes parts of the following independent community projects:
 - [REVENGE977/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced)
 - [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme)
 - [Bo0ii/StreamGo](https://github.com/Bo0ii/StreamGo)
-- [allecsc/Stremio-Kai](https://github.com/allecsc/Stremio-Kai) (detail page slogan / tagline inspiration)
+- [allecsc/Stremio-Kai](https://github.com/allecsc/Stremio-Kai) — Detail Slogan / tagline feature (adapted for MyStremio)
 - [bloc97/Anime4K](https://github.com/bloc97/Anime4K)
 - [TheIntroDB](https://theintrodb.org/)
 - [IntroDB](https://introdb.app/)

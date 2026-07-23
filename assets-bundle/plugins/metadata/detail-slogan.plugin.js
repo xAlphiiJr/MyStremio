@@ -1,9 +1,9 @@
 /**
  * @name Detail Slogan
  * @description Shows the TMDB tagline on the detail page below the title/logo.
- * @version 1.0.1
- * @author MyStremio
- * @credit Feature inspired by Stremio-Kai by allecsc (https://github.com/allecsc/Stremio-Kai)
+ * @version 1.0.2
+ * @author allecsc / Stremio-Kai; adapted by MyStremio
+ * @credit Tagline feature based on Stremio-Kai by allecsc (https://github.com/allecsc/Stremio-Kai)
  * @category Metadata
  */
 
@@ -350,7 +350,7 @@
     }
 
     scheduleCheck(100);
-    console.log('[DetailSlogan] Plugin loaded v1.0.1 (inspired by Stremio-Kai / allecsc)');
+    console.log('[DetailSlogan] Plugin loaded v1.0.2 (based on Stremio-Kai / allecsc; adapted by MyStremio)');
   }
 
   /**

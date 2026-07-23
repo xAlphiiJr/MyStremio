@@ -2,5 +2,6 @@
   "enable_imdb_ratings": true,
   "enable_ratings_aggregator": true,
   "enable_torrent_accordions": true,
-  "enable_usenet_accordions": true
+  "enable_usenet_accordions": true,
+  "enable_merge_debrid_search": true
 }
