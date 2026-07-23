@@ -173,17 +173,13 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 ### 2.3.5
 
-- **Cast Overlay** — Enabled by default on first install (still freely toggleable; updates never re-enable a plugin the user turned off)
-- **Next Episode** — No longer double-skips to the episode after next (MPV end-reason map: `stop` vs `eof`); player session / viewport transparency only when MPV has a live stream (dead `#/player` stays opaque — no black hole); Back/Next uses stock Stremio navigation
-- **Meta Hover Panel** — Panel no longer covers the top navigation tabs (nav stays clickable above the hover panel)
-- **Detail Slogan** — New plugin shows the TMDB tagline under the title/logo without moving the logo; following meta content shifts down; slogan uses a thicker rounded italic sans (PlusJakartaSans)
-- **Detail layout** — Fixed nav stacking no longer collapses the detail page (title/sidebar stay below the top chrome)
-- **Data Enrichment** — Genres as cast-style pills with Lucide-style SVG icons; Crime fingerprint, Drama theater masks, War crossed swords; lean remount (`detailKey` + mount identity + debounced forceRemount, no duplicate hashchange); IMDb score pinned from Cinemeta so meta-addons cannot replace it with TMDB scores; Similar/Collection use `#/detail/type/tt/tt`
+
+- **Cast Overlay** — Enabled by default on first install (still freely toggleable; updates never re-enable a plugin)
+- **Next Episode** — No longer double-skips to the episode after next
+- **Detail Slogan** — New plugin shows the TMDB tagline under the title/logo
+- **Data Enrichment** — Big update, now features Cast, Directors and Genres with pictures/symbols and disables native information so its not displayed twice.
 - **Player menus** — Picture Settings and TiDB contribute panels use the same Cast/Anime4K glass (`rgba(42,42,46,0.58)`)
-- **MPV quality** — Stock Stremio defaults (`spline36`, `bt.2390` tone-mapping, `deband`, `gpu-next,gpu` VO / D3D11 colorspace hints) so playback sharpness matches native shell-ng
-- **Detail backdrop** — Soft opacity fade on the detail background layer to ease the MetaPreview→Meta image handoff
-- **Stream UI** — After Credits panel subtitles are English
-- **Plugins** — Enable/disable in Settings applies live (no Ctrl+R) for enrichment, slogan, covers, titlebar, SlashToSearch, TIDB, and player plugins
+- **Plugins** — Enable/disable in Settings applies live (no Ctrl+R) for all plugins now.
 
 ### 2.3.4
 
