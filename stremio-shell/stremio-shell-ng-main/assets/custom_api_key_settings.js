@@ -15,6 +15,7 @@
     { pattern: /introdb/i, key: 'introdb_api_key', base: 'tidb' },
     { pattern: /rpdb/i, key: 'rpdbApiKey', base: 'data-enrichment' },
     { pattern: /tmdb/i, key: 'tmdbApiKey', base: 'data-enrichment' },
+    { pattern: /mdblist/i, key: 'mdblistApiKey', base: 'data-enrichment' },
   ];
 
   function api() {

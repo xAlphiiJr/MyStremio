@@ -1,7 +1,7 @@
 /**
  * @name StreamUI
  * @description Unified stream-list UI: AfterCredits, WatchHub, ratings, accordions.
- * @version 2.0.7
+ * @version 2.1.2
  * @category interface
  * @author MyStremio
  */
@@ -13,7 +13,7 @@
   if (window.__stremioStreamUiReady) return;
   window.__stremioStreamUiReady = true;
 
-  const STYLE_ID = 'stream-ui-styles';
+  const STYLE_ID = 'stream-ui-styles-v4';
   const SETTING_TORRENT = 'enable_torrent_accordions';
   const SETTING_USENET = 'enable_usenet_accordions';
   const SETTING_MERGE_DEBRID = 'enable_merge_debrid_search';
@@ -47,6 +47,104 @@
   function pauseStreamUi(ms = 1200) {
     state.pauseUntil = Date.now() + ms;
     teardownAll(true);
+  }
+
+  // ── Stream language codes → Twemoji flags ───────────────────────────────────
+
+  const FLAG_CODE_MAP = {
+    DE: 'DE', AT: 'AT', CH: 'CH', GB: 'GB', UK: 'GB', EN: 'GB', US: 'US', AU: 'AU',
+    CA: 'CA', NZ: 'NZ', IE: 'IE', FR: 'FR', ES: 'ES', MX: 'MX', AR: 'AR', CL: 'CL',
+    CO: 'CO', IT: 'IT', PT: 'PT', BR: 'BR', NL: 'NL', BE: 'BE', PL: 'PL', RU: 'RU',
+    UA: 'UA', JP: 'JP', JA: 'JP', KR: 'KR', KO: 'KR', CN: 'CN', ZH: 'CN', TW: 'TW',
+    HK: 'HK', IN: 'IN', HI: 'IN', TR: 'TR', SE: 'SE', SV: 'SE', NO: 'NO', NB: 'NO',
+    DK: 'DK', DA: 'DK', FI: 'FI', CZ: 'CZ', CS: 'CZ', HU: 'HU', RO: 'RO', GR: 'GR',
+    EL: 'GR', IL: 'IL', HE: 'IL', SA: 'SA', AE: 'AE', TH: 'TH', VI: 'VN', VN: 'VN',
+    ID: 'ID', PH: 'PH', BG: 'BG', HR: 'HR', SK: 'SK', SL: 'SI', SI: 'SI', LT: 'LT',
+    LV: 'LV', EE: 'EE',
+  };
+  const FLAG_CODE_RE = new RegExp(`\\b(${Object.keys(FLAG_CODE_MAP).join('|')})\\b`, 'g');
+  let flagDecorating = false;
+
+  /**
+   * @param {string} countryCode
+   * @returns {string}
+   */
+  function countryToFlag(countryCode) {
+    const cc = String(countryCode || '').toUpperCase();
+    if (!/^[A-Z]{2}$/.test(cc)) return '';
+    return String.fromCodePoint(...[...cc].map((ch) => 0x1f1e6 - 65 + ch.charCodeAt(0)));
+  }
+
+  /**
+   * Replaces UPPERCASE ISO2 tokens with flag emoji (skips size units like 30 GB).
+   * Case-sensitive so English words like "in"/"at" are never rewritten.
+   * @param {string} text
+   * @returns {string}
+   */
+  function replaceLanguageCodesWithFlags(text) {
+    return String(text || '').replace(FLAG_CODE_RE, (match, code, offset, full) => {
+      const upper = String(code);
+      if ((upper === 'GB' || upper === 'MB' || upper === 'TB' || upper === 'KB') && offset > 0) {
+        const before = full.slice(Math.max(0, offset - 4), offset);
+        if (/\d\s*$/.test(before) || /\d$/.test(before)) return match;
+      }
+      const country = FLAG_CODE_MAP[upper];
+      return country ? countryToFlag(country) || match : match;
+    });
+  }
+
+  /**
+   * @param {Element} root
+   */
+  function decorateStreamFlagsIn(root) {
+    if (!root || root.nodeType !== 1) return;
+    root.style.fontFamily = 'inherit, TwemojiFlags, sans-serif';
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    const nodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      nodes.push(node);
+      node = walker.nextNode();
+    }
+    for (const textNode of nodes) {
+      const raw = textNode.nodeValue;
+      if (!raw) continue;
+      FLAG_CODE_RE.lastIndex = 0;
+      if (!FLAG_CODE_RE.test(raw)) continue;
+      FLAG_CODE_RE.lastIndex = 0;
+      const next = replaceLanguageCodesWithFlags(raw);
+      if (next !== raw) textNode.nodeValue = next;
+    }
+  }
+
+  /**
+   * Converts ISO2 codes in stream rows only (never episode plot descriptions).
+   */
+  function decorateStreamFlags() {
+    if (flagDecorating) return;
+    flagDecorating = true;
+    try {
+      const roots = [];
+      const box = findStreamsBox();
+      if (box) roots.push(box);
+      else {
+        const list = document.querySelector('[class*="streams-list"]');
+        if (list) roots.push(list);
+      }
+      if (!roots.length) return;
+
+      for (const root of roots) {
+        root
+          .querySelectorAll(
+            '[class*="stream-container"] [class*="description-container-"], ' +
+              '[class*="stream-container"] [class*="addon-name-"], ' +
+              '[class*="stream-container"] [class*="info-container-"]'
+          )
+          .forEach((el) => decorateStreamFlagsIn(el));
+      }
+    } finally {
+      flagDecorating = false;
+    }
   }
 
   function api() {
@@ -437,6 +535,13 @@
       document.head.appendChild(s);
     }
     s.textContent = `
+/* Regional-indicator emoji need TwemojiFlags — Liquid Glass * { Inter !important } overrides inline styles */
+[class*="stream-container"] [class*="description-container-"],
+[class*="stream-container"] [class*="addon-name-"],
+[class*="stream-container"] [class*="info-container-"]{
+  font-family:"PlusJakartaSans","Arial","Helvetica","TwemojiFlags",sans-serif!important
+}
+
 .sui-hidden-stream{
   display:none!important;visibility:hidden!important;height:0!important;
   min-height:0!important;margin:0!important;padding:0!important;
@@ -535,32 +640,27 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
 .sui-ratings-panel.sui-ratings-side{flex:0 0 auto;width:max-content;max-width:36%;min-width:0;align-self:flex-start}
 .sui-ratings-bundle-row .sui-ratings-panel:only-child{flex:1 1 100%!important;max-width:100%!important}
 #sui-watchhub-root{
-  padding:14px 14px 12px;border-radius:16px;
-  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 10px 32px rgba(0,0,0,.22)
+  padding:12px 12px 10px;border-radius:14px;
+  background:linear-gradient(135deg,rgba(14,165,233,.10),rgba(255,255,255,.04) 42%,rgba(255,255,255,.03));
+  border:1px solid rgba(56,189,248,.22);
+  box-shadow:inset 0 1px 0 rgba(125,211,252,.12),0 8px 24px rgba(0,0,0,.18);
 }
 #sui-watchhub-root .sui-watchhub-header{
-  display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;
-  padding:0 0 2px;
+  display:flex;align-items:center;gap:10px;user-select:none;
+  padding:0 2px 10px;margin-bottom:2px;
+  border-bottom:1px solid rgba(125,211,252,.14);
+  cursor:default;
 }
 #sui-watchhub-root .sui-watchhub-meta{flex:1;min-width:0}
 #sui-watchhub-root .sui-watchhub-badge{
-  flex:none;min-width:1.6rem;padding:4px 10px;border-radius:999px;text-align:center;
-  font-size:10px;font-weight:700;color:rgba(255,255,255,.65);
-  background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);
+  flex:none;min-width:1.5rem;padding:3px 8px;border-radius:8px;text-align:center;
+  font-size:10px;font-weight:700;color:rgba(186,230,253,.9);
+  background:rgba(14,165,233,.16);border:1px solid rgba(56,189,248,.28);
 }
-#sui-watchhub-root .sui-watchhub-caret{
-  flex:none;font-size:10px;color:rgba(255,255,255,.35);transition:transform .25s,color .2s;
+#sui-watchhub-root .sui-panel-icon{
+  background:rgba(14,165,233,.16);border-color:rgba(56,189,248,.28);color:#7dd3fc;
 }
-#sui-watchhub-root.open .sui-watchhub-caret{
-  transform:rotate(180deg);color:rgba(255,255,255,.55);
-}
-#sui-watchhub-root .sui-watchhub-body{
-  display:none;pointer-events:none;
-}
-#sui-watchhub-root.open .sui-watchhub-body{
-  display:block;pointer-events:auto;margin-top:8px;
-}
+#sui-watchhub-root .sui-watchhub-body{display:block;margin-top:2px}
 #sui-aftercredits-root{
   padding:14px 14px 12px;border-radius:16px;
   background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);
@@ -601,18 +701,45 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
 .sui-rc-age-box{min-width:38px;padding:6px 8px;border-radius:8px;background:#f5c518;color:#111;font-size:1.05rem;font-weight:800;line-height:1;text-align:center}
 .sui-rc-votes{font-size:.62rem;color:rgba(255,255,255,.32);margin-top:4px;text-align:center;white-space:nowrap}
 
-.sui-wh-list{display:flex;flex-direction:column;gap:6px}
-.sui-wh-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;cursor:pointer;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05);transition:background .2s,border-color .2s,transform .2s}
-.sui-wh-row:hover{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.1);transform:translateY(-1px)}
-.sui-wh-logo-wrap{flex:none;width:30px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);overflow:hidden}
+.sui-wh-list{
+  display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;
+}
+.sui-wh-row{
+  display:flex;flex-direction:column;align-items:center;
+  gap:3px;
+  width:calc(25% - 6px);min-width:72px;max-width:110px;flex:1 1 72px;
+  padding:8px 6px 6px;border-radius:12px;cursor:pointer;box-sizing:border-box;
+  background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.08);
+  transition:background .18s,border-color .18s,transform .18s,box-shadow .18s;
+}
+.sui-wh-row:hover{
+  background:rgba(14,165,233,.12);border-color:rgba(56,189,248,.35);
+  transform:translateY(-1px);box-shadow:0 6px 16px rgba(0,0,0,.2);
+}
+.sui-wh-logo-wrap{
+  flex:none;width:32px;height:32px;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);overflow:hidden;
+}
 .sui-wh-logo{width:18px;height:18px;object-fit:contain;display:block}
 .sui-wh-logo-fb{font-size:12px;font-weight:800;color:#fff;width:100%;height:100%;display:flex;align-items:center;justify-content:center}
-.sui-wh-name{flex:1;min-width:0;font-size:12px;font-weight:600;color:rgba(255,255,255,.92);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sui-wh-badge{flex:none;padding:4px 10px;border-radius:999px;font-size:10px;font-weight:700}
-.sui-wh-sub{color:#c4b5fd;background:rgba(167,139,250,.14);border:1px solid rgba(167,139,250,.22)}
+.sui-wh-name{
+  width:100%;min-height:2.2em;font-size:10px;font-weight:650;color:rgba(255,255,255,.9);
+  text-align:center;line-height:1.15;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;
+}
+.sui-wh-badge{
+  margin-top:auto;
+  padding:1px 6px;border-radius:5px;font-size:9px;font-weight:700;letter-spacing:.02em;
+  line-height:1.15;box-sizing:border-box;
+}
+.sui-wh-sub{color:#7dd3fc;background:rgba(14,165,233,.16);border:1px solid rgba(56,189,248,.28)}
 .sui-wh-buy{color:#fdba74;background:rgba(251,146,60,.14);border:1px solid rgba(251,146,60,.22)}
 .sui-wh-rent{color:#fde047;background:rgba(250,204,21,.12);border:1px solid rgba(250,204,21,.22)}
 .sui-wh-free{color:#86efac;background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.22)}
+@media (max-width:520px){
+  .sui-wh-row{width:calc(33.333% - 6px);min-width:64px}
+}
 `;
   }
 
@@ -1025,6 +1152,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       redistribute(box);
       removeEmptyAccordions();
       lastSig = sig(box);
+      decorateStreamFlags();
       if (!obs || observedBox !== box) {
         if (obs) {
           obs.disconnect();
@@ -1073,8 +1201,15 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
   /**
    * @returns {string|null}
    */
+  /**
+   * Prefers the detail metaId segment from the hash.
+   * @returns {string|null}
+   */
   function extractImdbIdFromPage() {
-    const match = (location.hash || location.href || '').match(/tt\d{7,8}/i);
+    const hash = String(location.hash || location.href || '');
+    const meta = hash.match(/#\/(?:detail|metadetails|meta)\/[^/]+\/(tt\d{7,8})/i);
+    if (meta) return meta[1].toLowerCase();
+    const match = hash.match(/tt\d{7,8}/i);
     return match ? match[0].toLowerCase() : null;
   }
 
@@ -1451,26 +1586,49 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       lastSig = '';
     }
 
-    function findAnchor(box, aggStreams, imdbStreams) {
-      const allLinks = getStreamLinks(box);
-      const candidates = [...aggStreams, ...imdbStreams].filter(Boolean);
-      if (!candidates.length) return null;
-      candidates.sort((a, b) => allLinks.indexOf(a) - allLinks.indexOf(b));
-      return candidates[0];
+    /**
+     * Picks aggregator/IMDb streams for the current title.
+     * @param {Element[]} streams
+     * @param {string|null} imdbId
+     * @returns {Element[]}
+     */
+    function pickCurrentStreams(streams, imdbId) {
+      if (!streams?.length) return [];
+      if (!imdbId) return streams.slice(-1);
+      const matching = streams.filter((el) => {
+        const blob = `${getRawStreamTitle(el)}\n${getStreamText(el)}\n${el.getAttribute?.('href') || ''}`;
+        return new RegExp(imdbId, 'i').test(blob);
+      });
+      return matching.length ? matching.slice(-1) : streams.slice(-1);
     }
 
     function build(box) {
-      const aggStreams = state.ratings ? getStreamLinks(box).filter(isAggregator) : [];
-      const imdbStreams = state.imdb ? getStreamLinks(box).filter(isImdbRatings) : [];
-      const allStreams = [...aggStreams, ...imdbStreams];
+      const contentKey = getContentKey();
+      const imdbId = extractImdbIdFromPage();
+      const aggAll = state.ratings ? getStreamLinks(box).filter(isAggregator) : [];
+      const imdbAll = state.imdb ? getStreamLinks(box).filter(isImdbRatings) : [];
+      const aggStreams = pickCurrentStreams(aggAll, imdbId);
+      const imdbStreams = pickCurrentStreams(imdbAll, imdbId);
+      const allStreams = [...new Set([...aggAll, ...imdbAll])];
 
-      if (!allStreams.length) {
+      if (!aggAll.length && !imdbAll.length) {
         teardown(true);
         return;
       }
+      if (!aggStreams.length && !imdbStreams.length) {
+        // Leftover rows from another title — hide them, drop stale panel.
+        hideAll(allStreams);
+        document.getElementById(ROOT)?.remove();
+        lastSig = '';
+        return;
+      }
 
-      const aggParsed = aggStreams.length ? parseAggregatorText(aggStreams.map(getStreamText).join('\n')) : [];
-      const imdbParsed = imdbStreams.length ? parseImdbText(imdbStreams.map(getStreamText).join('\n')) : [];
+      const aggParsed = aggStreams.length
+        ? parseAggregatorText(aggStreams.map(getStreamText).join('\n'))
+        : [];
+      const imdbParsed = imdbStreams.length
+        ? parseImdbText(imdbStreams.map(getStreamText).join('\n'))
+        : [];
 
       if (!aggParsed.length && !imdbParsed.length) {
         teardown(true);
@@ -1478,6 +1636,8 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       }
 
       const sig = [
+        contentKey,
+        imdbId || '',
         aggParsed.map((r) => `a:${r.key}:${r.value}`).join(','),
         imdbParsed.map((r) => `i:${r.key}:${r.value}`).join(','),
       ].join('|');
@@ -1513,6 +1673,8 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
 
       const root = document.createElement('div');
       root.id = ROOT;
+      root.dataset.contentKey = contentKey;
+      root.dataset.imdbId = imdbId || '';
       root.innerHTML = `<div class="sui-ratings-bundle-row${panels.length > 1 ? ' has-both' : ''}">${panels.join('')}</div>`;
       box.insertBefore(root, getUiInsertAfterWatchHub(box));
       bindRatingCardClicks(root, aggStreams, imdbStreams);
@@ -1523,12 +1685,9 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
           if (hideTimer) clearTimeout(hideTimer);
           hideTimer = setTimeout(() => {
             hideTimer = null;
-            const current = [
-              ...(state.ratings ? getStreamLinks(box).filter(isAggregator) : []),
-              ...(state.imdb ? getStreamLinks(box).filter(isImdbRatings) : []),
-            ];
-            hideAll(current);
-          }, 60);
+            // Rebuild when streams change — hide-only left stale "Ratings" from prior titles.
+            build(box);
+          }, 80);
         });
         hideObs.observe(box, { childList: true, subtree: true });
       }
@@ -1764,7 +1923,6 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
   const watchhub = (() => {
     const ROOT = 'sui-watchhub-root';
     const HIDE = 'sui-hidden-stream';
-    const OPEN_KEY = 'sui-watchhub-open';
     const WH_RE = /watch\s*hub|guidebox/i;
     const TYPE_RE = /^(subscription|buy|rent|free|ads|stream|flatrate|purchase)$/i;
     const CDN = 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg';
@@ -1804,20 +1962,6 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     let timer = null;
     const hidden = new Set();
 
-    function isOpen() {
-      try {
-        return sessionStorage.getItem(OPEN_KEY) === 'true';
-      } catch (_) {
-        return false;
-      }
-    }
-
-    function setOpen(open) {
-      try {
-        sessionStorage.setItem(OPEN_KEY, open ? 'true' : 'false');
-      } catch (_) {}
-    }
-
     function normType(raw) {
       const t = String(raw || '').trim().toLowerCase();
       if (!t) return 'stream';
@@ -1829,8 +1973,25 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       return t;
     }
 
+    /**
+     * Collapses WatchHub name variants (e.g. "HBO Max Amazon Channels" → "HBO Max").
+     * @param {string} name
+     * @returns {string}
+     */
+    function canonicalProviderName(name) {
+      const raw = String(name || '').trim();
+      const key = raw.toLowerCase();
+      if (/hbo\s*max|\bmax\b/.test(key)) return 'HBO Max';
+      if (/prime\s*video|amazon\s*(prime|video)|amazon$/.test(key)) return 'Amazon Video';
+      if (/google\s*play/.test(key)) return 'Google Play Movies';
+      if (/disney\+?/.test(key)) return 'Disney+';
+      if (/paramount\+?/.test(key)) return 'Paramount+';
+      if (/apple\s*tv/.test(key)) return 'Apple TV';
+      return raw;
+    }
+
     function resolve(name) {
-      const key = name.toLowerCase().trim();
+      const key = canonicalProviderName(name).toLowerCase().trim();
       if (PROVIDERS[key]) return PROVIDERS[key];
       for (const [k, v] of Object.entries(PROVIDERS)) {
         if (key.includes(k) || k.includes(key)) return v;
@@ -1892,11 +2053,13 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     function collect(box) {
       const items = [];
       for (const el of getStreamLinks(box).filter((l) => isWatchHubStream(l))) {
-        items.push(...parseStream(el));
+        for (const p of parseStream(el)) {
+          items.push({ ...p, name: canonicalProviderName(p.name) });
+        }
       }
       const seen = new Set();
       return items.filter((p) => {
-        const k = `${p.name}|${p.type}`;
+        const k = `${p.name.toLowerCase()}|${p.type}`;
         if (seen.has(k)) return false;
         seen.add(k);
         return true;
@@ -1960,37 +2123,17 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       hideAll(whStreams);
       const root = document.createElement('div');
       root.id = ROOT;
-      root.classList.toggle('open', isOpen());
       root.innerHTML = `
-<div class="sui-watchhub-header" role="button" tabindex="0" aria-expanded="${isOpen() ? 'true' : 'false'}">
-  <div class="sui-panel-icon">▶</div>
+<div class="sui-watchhub-header">
+  <div class="sui-panel-icon" aria-hidden="true">▶</div>
   <div class="sui-watchhub-meta">
     <div class="sui-panel-title">Available on</div>
     <div class="sui-panel-sub">${providers.length} streaming service${providers.length === 1 ? '' : 's'}</div>
   </div>
   <span class="sui-watchhub-badge">${providers.length}</span>
-  <span class="sui-watchhub-caret">▾</span>
 </div>
 <div class="sui-watchhub-body"><div class="sui-wh-list">${providers.map(row).join('')}</div></div>`;
       box.insertBefore(root, getUiInsertAfterAfterCredits(box));
-      const header = root.querySelector('.sui-watchhub-header');
-      const toggle = () => {
-        const open = !root.classList.contains('open');
-        root.classList.toggle('open', open);
-        if (header) header.setAttribute('aria-expanded', String(open));
-        setOpen(open);
-      };
-      header?.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        toggle();
-      });
-      header?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          toggle();
-        }
-      });
       root.addEventListener('click', (e) => {
         const r = e.target.closest('[data-sui-wh]');
         if (!r) return;
@@ -2002,10 +2145,15 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       if (!obs) {
         obs = new MutationObserver(() => {
           const current = getStreamLinks(box).filter((l) => isWatchHubStream(l));
-          if (collect(box).map((p) => `${p.name}:${p.type}`).join('|') !== lastSig) {
+          const nextSig = collect(box).map((p) => `${p.name}:${p.type}`).join('|');
+          // React may wipe #sui-watchhub-root while signature stays the same —
+          // rebuild instead of only re-hiding native rows (panel would stay gone).
+          if (nextSig !== lastSig || !document.getElementById(ROOT)) {
             if (timer) clearTimeout(timer);
             timer = setTimeout(() => build(box), 400);
-          } else hideAll(current);
+          } else {
+            hideAll(current);
+          }
         });
         obs.observe(box, { childList: true, subtree: true });
       }
@@ -2152,6 +2300,8 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
 
     if (state.torrent || state.usenet) accordions.build(box);
     else accordions.teardown();
+
+    decorateStreamFlags();
 
     if (!firstBuildDone && isStreamUiRoute()) {
       const hasCustomUi = Boolean(

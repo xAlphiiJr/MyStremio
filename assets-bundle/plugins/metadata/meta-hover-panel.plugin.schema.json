@@ -6,5 +6,13 @@
     "label": "TMDB API Key",
     "placeholder": "Enter your TMDB API key",
     "type": "input"
+  },
+  {
+    "defaultValue": "",
+    "description": "Shared with Data Enrichment — unlocks full multi-source ratings in Meta Hover. Free key: https://mdblist.com/preferences/",
+    "key": "mdblistApiKey",
+    "label": "MDBList API Key (Ratings)",
+    "placeholder": "Enter your MDBList API key",
+    "type": "input"
   }
 ]

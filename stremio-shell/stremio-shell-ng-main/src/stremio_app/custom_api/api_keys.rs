@@ -36,6 +36,12 @@ pub fn service_id_for_field_key(key: &str) -> String {
     if lower.contains("rpdb") {
         return "rpdb".to_string();
     }
+    if lower.contains("trakt") {
+        return "trakt".to_string();
+    }
+    if lower.contains("mdblist") {
+        return "mdblist".to_string();
+    }
     if lower == "tidb_api_key"
         || lower.contains("theintrodb")
         || (lower.contains("tidb") && lower.contains("api"))
@@ -63,6 +69,8 @@ fn service_label(service_id: &str) -> String {
     match service_id {
         "tmdb" => "TMDB API Key".to_string(),
         "rpdb" => "RPDB API Key".to_string(),
+        "trakt" => "Trakt Client ID".to_string(),
+        "mdblist" => "MDBList API Key (Ratings)".to_string(),
         "theintrodb" => "TheIntroDB API Key".to_string(),
         "introdb" => "IntroDB API Key".to_string(),
         other => format!("{} API Key", title_case(other)),
@@ -71,7 +79,10 @@ fn service_label(service_id: &str) -> String {
 
 /// Whether this service has a canonical display name (ignore schema "API Key").
 fn is_known_service(service_id: &str) -> bool {
-    matches!(service_id, "tmdb" | "rpdb" | "theintrodb" | "introdb")
+    matches!(
+        service_id,
+        "tmdb" | "rpdb" | "trakt" | "mdblist" | "theintrodb" | "introdb"
+    )
 }
 
 /// Resolves the hub / status label for a service.
@@ -94,6 +105,8 @@ fn service_docs_url(service_id: &str) -> &'static str {
     match service_id {
         "tmdb" => "https://www.themoviedb.org/settings/api",
         "rpdb" => "https://ratingposterdb.com/",
+        "trakt" => "https://trakt.tv/oauth/applications",
+        "mdblist" => "https://mdblist.com/preferences/",
         "theintrodb" => "https://theintrodb.org/docs",
         "introdb" => "https://introdb.app/account",
         _ => "",
@@ -339,6 +352,8 @@ pub fn ensure_api_keys_migrated() {
             ("data-enrichment", "tmdbApiKey"),
             ("cast-overlay", "tmdbApiKey"),
             ("data-enrichment", "rpdbApiKey"),
+            ("data-enrichment", "mdblistApiKey"),
+            ("meta-hover-panel", "mdblistApiKey"),
             ("tidb", "tidb_api_key"),
             ("tidb", "introdb_api_key"),
             ("meta-hover-panel", "tmdbApiKey"),

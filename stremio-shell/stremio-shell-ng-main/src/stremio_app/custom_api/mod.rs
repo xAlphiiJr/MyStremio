@@ -2,6 +2,7 @@ mod aniskip_proxy;
 mod api_keys;
 mod introdb_proxy;
 mod paths;
+mod ratings_proxy;
 mod storage;
 
 use crate::stremio_app::discord_presence;
@@ -332,6 +333,22 @@ pub fn handle_request(message: &Value) -> Option<String> {
             let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("");
             match aniskip_proxy::resolve_mal_from_kitsu_title(title) {
                 Ok(mal_id) => json!({ "malId": mal_id }),
+                Err(error) => return Some(error_response(id, &error)),
+            }
+        }
+        "get-title-ratings" => {
+            let imdb_id = params.get("imdbId").and_then(|v| v.as_str()).unwrap_or("");
+            let media_type = params.get("type").and_then(|v| v.as_str()).unwrap_or("movie");
+            let season = params
+                .get("season")
+                .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()))
+                .map(|n| n as u32);
+            let episode = params
+                .get("episode")
+                .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()))
+                .map(|n| n as u32);
+            match ratings_proxy::get_title_ratings(imdb_id, media_type, season, episode) {
+                Ok(payload) => json!(payload),
                 Err(error) => return Some(error_response(id, &error)),
             }
         }

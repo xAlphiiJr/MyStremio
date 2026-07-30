@@ -300,6 +300,7 @@ impl PartialUi for WebView {
                                 include_str!("../../../assets/custom_route_change.js"),
                                 include_str!("../../../assets/custom_bootstrap.js"),
                                 include_str!("../../../assets/custom_scroll_restore.js"),
+                                include_str!("../../../assets/custom_board_row_nav.js"),
                                 include_str!("../../../assets/custom_player_glass.js"),
                                 include_str!("../../../assets/custom_player_loading.js"),
                                 include_str!("../../../assets/custom_liquid_glass_nav.js"),
@@ -323,6 +324,7 @@ impl PartialUi for WebView {
                                 include_str!("../../../assets/custom_volume_persist.js"),
                                 include_str!("../../../assets/custom_player_disable_hold_speed.js"),
                                 include_str!("../../../assets/custom_track_label_fix.js"),
+                                include_str!("../../../assets/custom_search_suggestions.js"),
                             ] {
                                 wv.execute_script(script, |_| Ok(()))
                                     .expect("Cannot add MyStremio module");

@@ -306,6 +306,18 @@ impl MainWindow {
                             .ok();
                         continue;
                     }
+                    // Ratings fan-out is slow (many HTTP calls) — never block the IPC loop.
+                    if value.get("method").and_then(|method| method.as_str())
+                        == Some("get-title-ratings")
+                    {
+                        let tx = web_tx_web.clone();
+                        thread::spawn(move || {
+                            if let Some(response) = custom_api::handle_request(&value) {
+                                tx.send(response).ok();
+                            }
+                        });
+                        continue;
+                    }
                     if let Some(response) = custom_api::handle_request(&value) {
                         web_tx_web.send(response).ok();
                     }

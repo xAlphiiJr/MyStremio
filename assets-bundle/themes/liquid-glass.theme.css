@@ -9,14 +9,15 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap");
 
 * {
-    font-family: "Inter", sans-serif !important;
+    /* TwemojiFlags must stay in the stack so regional-indicator emoji render as flags */
+    font-family: "Inter", "TwemojiFlags", sans-serif !important;
 }
 
 /* change the accent color from purple to white; neutralize native purple glow */
 :root {
     --primary-accent-color: #fff;
     --secondary-background-color: #1a1a1e;
-    --modal-background-color: rgba(28, 28, 32, 0.96);
+    --modal-background-color: rgb(20, 20, 20);
     --outer-glow: 0 8px 28px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
     --background: rgb(20, 20, 20);
 
@@ -849,20 +850,67 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
     height: 100%;
     object-fit: cover;
     display: block;
+}
 
-    -webkit-mask-image:
-        linear-gradient(to top, transparent, black 45%),
-        linear-gradient(to right, transparent, black 75%);
-    -webkit-mask-repeat: no-repeat;
-    -webkit-mask-size: cover;
-    -webkit-mask-composite: intersect;
+/*
+ * Vignette only inside the image layer (sibling of overlay) so copy/buttons stay above.
+ * Slot ::after is avoided — WebView paints it over overlay even with higher z-index.
+ */
+#app [class*="board-content"] [class*="hero-slot"] > [class*="hero-image-stack"],
+#app [class*="board-content"] [class*="hero-slot"] > [class*="hero-container"] {
+    z-index: 1 !important;
+}
 
-    mask-image:
-        linear-gradient(to top, transparent, black 45%),
-        linear-gradient(to right, transparent, black 75%);
-    mask-repeat: no-repeat;
-    mask-size: cover;
-    mask-composite: intersect;
+#app [class*="board-content"] [class*="hero-slot"] [class*="hero-container"] {
+    z-index: 0 !important;
+}
+
+#app [class*="board-content"] [class*="hero-slot"] > [class*="hero-image-stack"]::after,
+#app [class*="board-content"] [class*="hero-slot"] > [class*="hero-container"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background:
+        linear-gradient(
+            to bottom,
+            rgba(0, 0, 0, 0.42) 0%,
+            rgba(0, 0, 0, 0.32) 6%,
+            rgba(0, 0, 0, 0.2) 14%,
+            rgba(0, 0, 0, 0.1) 24%,
+            rgba(0, 0, 0, 0.04) 34%,
+            rgba(0, 0, 0, 0) 46%
+        ),
+        linear-gradient(
+            to top,
+            rgb(20, 20, 20) 0%,
+            rgba(20, 20, 20, 0.92) 6%,
+            rgba(20, 20, 20, 0.72) 14%,
+            rgba(20, 20, 20, 0.48) 24%,
+            rgba(20, 20, 20, 0.26) 36%,
+            rgba(20, 20, 20, 0.12) 46%,
+            rgba(20, 20, 20, 0.04) 56%,
+            rgba(20, 20, 20, 0) 68%
+        ),
+        linear-gradient(
+            to right,
+            rgba(0, 0, 0, 0.48) 0%,
+            rgba(0, 0, 0, 0.34) 10%,
+            rgba(0, 0, 0, 0.18) 22%,
+            rgba(0, 0, 0, 0.08) 34%,
+            rgba(0, 0, 0, 0.02) 46%,
+            rgba(0, 0, 0, 0) 58%
+        );
+}
+
+#app [class*="board-content"] [class*="hero-overlay"] {
+    z-index: 10 !important;
+}
+
+#app [class*="board-content"] [class*="hero-controls"],
+#app [class*="board-content"] [class*="hero-indicators"] {
+    z-index: 11 !important;
 }
 
 .hero-overlay {
@@ -3781,6 +3829,20 @@ body.ghost-clicking #heroLoadingScreen {
     margin-left: 0 !important;
     margin-right: 0 !important;
     width: 100% !important;
+}
+
+/* Detail-only: flush backdrop (do not touch Board nav overflow — stock clip keeps hero edge clean) */
+#app [class*="metadetails-container"] {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+
+#app [class*="metadetails-container"] [class*="background-image-layer"] {
+    background-color: var(--background) !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
 }
 
 [class*="hero-row"] {

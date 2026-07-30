@@ -95,6 +95,10 @@ function Test-WebUiAlreadyPatched {
     # Updater banner rebranded to MyStremio.
     if (-not (Select-String -Path $mainJs.FullName -Pattern 'A new version of MyStremio is available' -Quiet)) { return $false }
 
+    # Board catalog LoadNextPage + catalog-index sync for row chevrons.
+    if (-not (Select-String -Path $mainJs.FullName -Pattern '__mystremioBoardLoadNextPage' -Quiet)) { return $false }
+    if (-not (Select-String -Path $mainJs.FullName -Pattern '__mystremioBoardSyncCatalogIndices' -Quiet)) { return $false }
+
     return $true
 }
 
@@ -186,6 +190,14 @@ function Repair-WebUiLanguageEmbeds {
         Invoke-WebUiPython $updaterBrandingScript $mainJs.FullName
         if ($LASTEXITCODE -ne 0) {
             throw "Updater branding patch failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    $boardCatalogScript = Join-Path $ScriptRoot "fix-webui-board-catalog-pages.py"
+    if (Test-Path $boardCatalogScript) {
+        Invoke-WebUiPython $boardCatalogScript $mainJs.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Board catalog pages patch failed with exit code $LASTEXITCODE"
         }
     }
 

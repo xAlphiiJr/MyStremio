@@ -1,7 +1,7 @@
 /**
  * @name Enhanced Title Bar
  * @description Enhances the title bar with additional information.
- * @version 26.0.5
+ * @version 26.0.9
  * @author Fxy
  */
 
@@ -25,6 +25,8 @@ let enhanceTimeout = null;
 let mutationObserver = null;
 let titlebarPollInterval = null;
 let isEnhancing = false;
+let enhanceQueued = false;
+let applyingEnhancement = false;
 let lastEnhanceRun = 0;
 const MIN_RUN_INTERVAL = 800;
 
@@ -269,14 +271,16 @@ function extractImdbIdFromDetailLink(detailLink) {
 }
 
 function extractImdbId(posterImg, detailLink, cardOrContainer) {
-  const posterId = extractImdbIdFromPoster(posterImg);
-  if (posterId) {
-    return posterId;
-  }
-
+  // Prefer detail href — Enhanced Covers owns CW poster URLs/data-imdb-id and can be stale
+  // after React reuses a Continue Watching card for another title.
   const linkId = extractImdbIdFromDetailLink(detailLink);
   if (linkId) {
     return linkId;
+  }
+
+  const posterId = extractImdbIdFromPoster(posterImg);
+  if (posterId) {
+    return posterId;
   }
 
   if (cardOrContainer?.dataset) {
@@ -296,13 +300,7 @@ function resolveTileLinks(posterImg, detailLink, itemRoot) {
   if (link && itemRoot && !itemRoot.contains(link)) {
     link = null;
   }
-
-  const posterId = extractImdbIdFromPoster(posterImg);
-  const linkId = extractImdbIdFromDetailLink(link);
-  if (posterId && linkId && posterId !== linkId) {
-    link = null;
-  }
-
+  // Keep href even when poster Metahub/data-imdb-id disagrees (CW remount reuse).
   return link;
 }
 
@@ -353,7 +351,10 @@ function restoreLibraryNativeTitlebars() {
 
 async function enhanceMediaContainers() {
   if (!shouldEnhancePage()) return;
-  if (isEnhancing) return;
+  if (isEnhancing) {
+    enhanceQueued = true;
+    return;
+  }
   isEnhancing = true;
   lastEnhanceRun = Date.now();
 
@@ -361,6 +362,10 @@ async function enhanceMediaContainers() {
     await enhanceMediaContainersImpl();
   } finally {
     isEnhancing = false;
+    if (enhanceQueued) {
+      enhanceQueued = false;
+      scheduleEnhancement();
+    }
   }
 }
 
@@ -385,15 +390,16 @@ async function enhanceMetaItemContainer(itemRoot) {
     return;
   }
 
+  const titlebar = itemRoot.querySelector(
+    '[class*="title-bar-container"], [class*="title-bar"]',
+  );
+
   const posterImg =
     itemRoot.querySelector('img[src*="tt"]') || itemRoot.querySelector("img");
   if (!posterImg) {
     return;
   }
 
-  const titlebar = itemRoot.querySelector(
-    '[class*="title-bar-container"], [class*="title-bar"]',
-  );
   if (!titlebar) {
     return;
   }
@@ -403,6 +409,17 @@ async function enhanceMetaItemContainer(itemRoot) {
     itemRoot.querySelector('a[href^="stremio:///detail/"], a[href*="#/detail/"]');
 
   detailLink = resolveTileLinks(posterImg, detailLink, itemRoot);
+
+  const hrefId = extractImdbIdFromDetailLink(detailLink);
+  // Force rebind when React reused the CW card (href drifted) even if enhancedComplete.
+  if (
+    hrefId &&
+    (titlebar.dataset.enhancedId || titlebar.dataset.enhancedSlotKey) &&
+    (titlebar.dataset.enhancedId !== hrefId ||
+      titlebar.dataset.enhancedSlotKey !== hrefId)
+  ) {
+    clearEnhancedState(titlebar);
+  }
 
   const slotKey = computeTitlebarSlotKey(posterImg, detailLink, itemRoot);
   if (!slotKey) {
@@ -476,30 +493,39 @@ async function applyTitlebarEnhancement(
 
   console.log(`Enhancing: "${originalTitle}" with IMDb ID: ${imdbId}`);
 
-  // Mark as enhanced and store ID
-  titlebar.classList.add("enhanced-title-bar");
+  applyingEnhancement = true;
+  try {
+    // Store original content before we rewrite the titlebar.
+    if (!titlebar.dataset.originalContent) {
+      titlebar.dataset.originalContent = titlebar.innerHTML;
+    }
 
-  // Store original content if not already stored
-  if (!titlebar.dataset.originalContent && !titlebar.classList.contains("enhanced-title-bar")) {
-    titlebar.dataset.originalContent = titlebar.innerHTML;
+    // Mark as enhanced and store ID
+    titlebar.classList.add("enhanced-title-bar");
+
+    // Create enhanced structure
+    titlebar.innerHTML = "";
+
+    const title = document.createElement("div");
+    title.className = "enhanced-title";
+    title.textContent = originalTitle || "…";
+    titlebar.appendChild(title);
+
+    const metadataContainer = document.createElement("div");
+    metadataContainer.className = "enhanced-metadata";
+
+    const loading = document.createElement("div");
+    loading.className = "enhanced-loading";
+    metadataContainer.appendChild(loading);
+
+    titlebar.appendChild(metadataContainer);
+  } finally {
+    applyingEnhancement = false;
   }
 
-  // Create enhanced structure
-  titlebar.innerHTML = "";
-
-  const title = document.createElement("div");
-  title.className = "enhanced-title";
-  title.textContent = originalTitle || "…";
-  titlebar.appendChild(title);
-
-  const metadataContainer = document.createElement("div");
-  metadataContainer.className = "enhanced-metadata";
-
-  const loading = document.createElement("div");
-  loading.className = "enhanced-loading";
-  metadataContainer.appendChild(loading);
-
-  titlebar.appendChild(metadataContainer);
+  const title = titlebar.querySelector(".enhanced-title");
+  const metadataContainer = titlebar.querySelector(".enhanced-metadata");
+  if (!title || !metadataContainer) return;
 
   // Determine type hints for metadata fetching
   const typeHints = [];
@@ -526,6 +552,8 @@ async function applyTitlebarEnhancement(
       return;
     }
 
+    applyingEnhancement = true;
+    try {
     if (metadata) {
       if (metadata.title) {
         title.textContent = metadata.title;
@@ -559,8 +587,16 @@ async function applyTitlebarEnhancement(
         scheduleEnhancement();
       }
     }
+    } finally {
+      applyingEnhancement = false;
+    }
   } catch (error) {
-    metadataContainer.innerHTML = "";
+    applyingEnhancement = true;
+    try {
+      metadataContainer.innerHTML = "";
+    } finally {
+      applyingEnhancement = false;
+    }
     console.log("Metadata fetch failed:", error);
     titlebar.dataset.enhancedPending = "false";
     titlebar.dataset.enhancedComplete = "false";
@@ -575,11 +611,8 @@ async function applyTitlebarEnhancement(
 }
 
 function isOwnEnhancementMutation(target) {
-  return (
-    target &&
-    typeof target.closest === "function" &&
-    target.closest(".enhanced-title-bar")
-  );
+  // Only ignore mutations we ourselves cause while applying DOM writes.
+  return applyingEnhancement;
 }
 
 function scheduleEnhancement(mutationTarget) {
@@ -593,6 +626,7 @@ function scheduleEnhancement(mutationTarget) {
     enhanceTimeout = null;
     const now = Date.now();
     if (isEnhancing || now - lastEnhanceRun < MIN_RUN_INTERVAL) {
+      enhanceQueued = true;
       return;
     }
     enhanceMediaContainers();
@@ -617,7 +651,20 @@ function init() {
   if (typeof MutationObserver !== "undefined") {
     mutationObserver = new MutationObserver((mutations) => {
       for (let i = 0; i < mutations.length; i++) {
-        const target = mutations[i].target;
+        const mutation = mutations[i];
+        if (mutation.type === "attributes") {
+          const name = mutation.attributeName || "";
+          if (
+            name === "href" ||
+            name === "src" ||
+            name === "data-imdb-id"
+          ) {
+            scheduleEnhancement(mutation.target);
+            return;
+          }
+          continue;
+        }
+        const target = mutation.target;
         if (!isOwnEnhancementMutation(target)) {
           scheduleEnhancement(target);
           return;
@@ -628,6 +675,8 @@ function init() {
       mutationObserver.observe(document.body, {
         childList: true,
         subtree: true,
+        attributes: true,
+        attributeFilter: ["href", "src", "data-imdb-id"],
       });
     }
   }

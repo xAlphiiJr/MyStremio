@@ -1,7 +1,7 @@
 /**
  * @name Meta Hover Panel
  * @description Rich movie/series info panel on poster hover using Cinemeta metadata.
- * @version 2.0.4
+ * @version 2.1.4
  * @author MyStremio
  * @category Metadata
  */
@@ -94,6 +94,40 @@
     .meta-hover-panel-rating {
       font-weight: 700;
       color: #f5c518;
+    }
+
+    .meta-hover-panel-ratings-host {
+      display: inline-flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      min-height: 22px;
+      max-width: 100%;
+      margin-top: 0.15rem;
+    }
+
+    .meta-hover-panel-meta .mystremio-ratings-bar {
+      margin-top: 0.1rem;
+    }
+
+    .meta-hover-panel-ratings-skeleton {
+      display: inline-block;
+      width: 148px;
+      height: 14px;
+      border-radius: 4px;
+      background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.08),
+        rgba(255, 255, 255, 0.18),
+        rgba(255, 255, 255, 0.08)
+      );
+      background-size: 200% 100%;
+      animation: meta-hover-ratings-shimmer 1.1s ease-in-out infinite;
+    }
+
+    @keyframes meta-hover-ratings-shimmer {
+      0% { background-position: 100% 0; }
+      100% { background-position: -100% 0; }
     }
 
     .meta-hover-panel-section {
@@ -195,12 +229,23 @@
 
   function getPosterImdbId(root) {
     if (!root) return null;
-    const nodes = [root, ...root.querySelectorAll('img, a[href], [data-imdb-id], [data-id]')];
+    // Prefer detail href over poster Metahub / data-imdb-id (CW reuse).
+    const hrefCandidates = [];
+    if (root.getAttribute?.('href')) hrefCandidates.push(root.getAttribute('href'));
+    if (root.href) hrefCandidates.push(root.href);
+    root.querySelectorAll?.('[href]').forEach((node) => {
+      const href = node.getAttribute('href');
+      if (href) hrefCandidates.push(href);
+    });
+    for (const value of hrefCandidates) {
+      const id = extractImdbFromSource(value);
+      if (id) return id;
+    }
+    const nodes = [root, ...root.querySelectorAll('img, [data-imdb-id], [data-id]')];
     for (const node of nodes) {
       const attrs = [
         node.getAttribute?.('data-imdb-id'),
         node.getAttribute?.('data-id'),
-        node.getAttribute?.('href'),
         node.getAttribute?.('src'),
         node.getAttribute?.('data-src'),
         node.getAttribute?.('data-original'),
@@ -365,69 +410,24 @@
     return null;
   }
 
-  function getCardIndex(root) {
-    const list = root.closest('[class*="meta-items-container"]');
-    if (!list) return -1;
-
-    const card = root.closest('[class*="meta-item"]');
-    if (card && list.contains(card)) {
-      const cards = Array.from(list.querySelectorAll(':scope > [class*="meta-item"]'));
-      const index = cards.indexOf(card);
-      if (index >= 0) return index;
-    }
-
-    const container = root.closest('[class*="meta-item-container"]');
-    if (container) {
-      const containers = Array.from(list.querySelectorAll('[class*="meta-item-container"]'));
-      const index = containers.indexOf(container);
-      if (index >= 0) return index;
-    }
-
-    return -1;
-  }
-
-  function isContinueWatchingRow(root) {
-    const row = root.closest('[class*="meta-row-container"], [class*="continue-watching"]');
-    if (!row) {
-      return /#\/continuewatching/i.test(location.hash);
-    }
-
-    if (row.className.includes('continue-watching')) return true;
-
-    const title = row.querySelector('[class*="title-container"]')?.textContent || '';
-    return /continue watching|weiterschauen|continuar|reprise|seguir/i.test(title);
-  }
-
-  async function resolveByRowIndex(root) {
-    const index = getCardIndex(root);
-    if (index < 0) return null;
-
-    const models = isContinueWatchingRow(root)
-      ? ['continue_watching', 'continue_watching_preview']
-      : /#\/continuewatching/i.test(location.hash)
-        ? ['continue_watching']
-        : [];
-
-    for (const model of models) {
-      try {
-        const state = await window.services?.core?.transport?.getState(model);
-        const items = state?.items || state?.catalog || [];
-        const media = mediaFromCatalogItem(items[index]);
-        if (media) return media;
-      } catch {
-        // Try next model.
-      }
-    }
-
-    return null;
-  }
-
   async function resolveFromCatalog(root) {
-    const byIndex = await resolveByRowIndex(root);
-    if (byIndex) return byIndex;
-
     const title = getItemTitle(root);
-    const posterImdbId = getPosterImdbId(root);
+    const hrefId = (() => {
+      const hrefCandidates = new Set();
+      [root.getAttribute?.('href'), root.href]
+        .filter(Boolean)
+        .forEach((href) => hrefCandidates.add(href));
+      root.querySelectorAll('[href]').forEach((node) => {
+        const href = node.getAttribute('href');
+        if (href) hrefCandidates.add(href);
+      });
+      for (const href of hrefCandidates) {
+        const media = parseMediaFromHref(href);
+        if (media?.id && /^tt\d{7,}$/i.test(media.id)) return media.id.toLowerCase();
+      }
+      return null;
+    })();
+    const posterImdbId = hrefId || getPosterImdbId(root);
     if (!title && !posterImdbId) return null;
 
     const items = await loadCatalogItems();
@@ -488,26 +488,23 @@
     const datasetId = root.dataset.metaHoverId;
     if (!datasetId || !/^tt\d{7,}$/i.test(datasetId)) return false;
 
-    const posterId = getPosterImdbId(root);
-    if (posterId && posterId !== datasetId.toLowerCase()) return false;
-
-    const title = getItemTitle(root);
-    if (title) {
-      const hrefCandidates = new Set();
-      [root.getAttribute?.('href'), root.href]
-        .filter(Boolean)
-        .forEach((href) => hrefCandidates.add(href));
-      root.querySelectorAll('[href]').forEach((node) => {
-        const href = node.getAttribute('href');
-        if (href) hrefCandidates.add(href);
-      });
-      for (const href of hrefCandidates) {
-        const media = parseMediaFromHref(href);
-        if (media?.id && /^tt\d{7,}$/i.test(media.id) && media.id.toLowerCase() !== datasetId.toLowerCase()) {
-          return false;
-        }
+    const hrefCandidates = new Set();
+    [root.getAttribute?.('href'), root.href]
+      .filter(Boolean)
+      .forEach((href) => hrefCandidates.add(href));
+    root.querySelectorAll('[href]').forEach((node) => {
+      const href = node.getAttribute('href');
+      if (href) hrefCandidates.add(href);
+    });
+    for (const href of hrefCandidates) {
+      const media = parseMediaFromHref(href);
+      if (media?.id && /^tt\d{7,}$/i.test(media.id)) {
+        return media.id.toLowerCase() === datasetId.toLowerCase();
       }
     }
+
+    const posterId = getPosterImdbId(root);
+    if (posterId && posterId !== datasetId.toLowerCase()) return false;
 
     return true;
   }
@@ -543,11 +540,7 @@
     let resolvedId = null;
     let resolvedType = inferSeriesFromRoot(root) ? 'series' : 'movie';
 
-    const posterId = getPosterImdbId(root);
-    if (posterId) {
-      resolvedId = posterId;
-    }
-
+    // Href first (CW React reuse leaves stale poster data-imdb-id).
     const href = root.href || root.getAttribute('href') || '';
     const media = parseMediaFromHref(href) || parseMediaFromText(root.textContent || '');
     if (media && /^tt\d{7,}$/i.test(media.id)) {
@@ -557,12 +550,18 @@
 
     if (!resolvedId) {
       root.querySelectorAll('[href]').forEach((node) => {
+        if (resolvedId) return;
         const nodeMedia = parseMediaFromHref(node.getAttribute('href') || '');
         if (nodeMedia && /^tt\d{7,}$/i.test(nodeMedia.id)) {
           resolvedId = nodeMedia.id.toLowerCase();
           resolvedType = nodeMedia.type || resolvedType;
         }
       });
+    }
+
+    if (!resolvedId) {
+      const posterId = getPosterImdbId(root);
+      if (posterId) resolvedId = posterId;
     }
 
     if (resolvedId) {
@@ -589,16 +588,6 @@
       clearResolvedMedia(root);
     }
 
-    const posterId = getPosterImdbId(root);
-    if (posterId) {
-      const media = {
-        type: inferSeriesFromRoot(root) ? 'series' : 'movie',
-        id: posterId,
-      };
-      storeResolvedMedia(root, media);
-      return media;
-    }
-
     const hrefCandidates = new Set();
     [root.getAttribute?.('href'), root.href]
       .filter(Boolean)
@@ -609,6 +598,7 @@
       if (href) hrefCandidates.add(href);
     });
 
+    // Prefer detail href over poster Metahub/data-imdb-id (CW card reuse after Detail).
     for (const href of hrefCandidates) {
       const media = parseMediaFromHref(href);
       if (!media) continue;
@@ -628,10 +618,14 @@
       }
     }
 
-    const byIndex = await resolveByRowIndex(root);
-    if (byIndex) {
-      storeResolvedMedia(root, byIndex);
-      return byIndex;
+    const posterId = getPosterImdbId(root);
+    if (posterId) {
+      const media = {
+        type: inferSeriesFromRoot(root) ? 'series' : 'movie',
+        id: posterId,
+      };
+      storeResolvedMedia(root, media);
+      return media;
     }
 
     const fromRootText = parseMediaFromText(root.textContent || '');
@@ -1015,6 +1009,111 @@
     return section;
   }
 
+  /**
+   * Starts a background ratings fetch so the hover panel can paint from cache.
+   * @param {string} imdbId
+   * @param {string} [typeHint]
+   */
+  function prefetchHoverRatings(imdbId, typeHint) {
+    const bar = window.__mystremioRatingsBar;
+    if (!bar?.fetchRatings || !imdbId) return;
+    try {
+      bar.fetchRatings(imdbId, typeHint);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  /**
+   * @param {Element} host
+   * @param {object} meta
+   */
+  function renderImdbFallback(host, meta) {
+    if (!host || !meta?.imdbRating) return;
+    host.replaceChildren();
+    const imdb = document.createElement('span');
+    imdb.className = 'meta-hover-panel-imdb';
+    imdb.textContent = 'IMDb';
+    const rating = document.createElement('span');
+    rating.className = 'meta-hover-panel-rating';
+    rating.textContent = meta.imdbRating;
+    host.append(imdb, rating);
+  }
+
+  /**
+   * @param {Element} host
+   */
+  function showRatingsSkeleton(host) {
+    if (!host) return;
+    host.replaceChildren();
+    const sk = document.createElement('span');
+    sk.className = 'meta-hover-panel-ratings-skeleton';
+    sk.setAttribute('aria-hidden', 'true');
+    host.appendChild(sk);
+  }
+
+  /**
+   * @param {Element} host
+   * @param {object} bar
+   * @param {object[]} ratings
+   * @param {object} meta
+   * @param {string} type
+   * @param {string} imdbId
+   */
+  function paintHoverRatings(host, bar, ratings, meta, type, imdbId) {
+    // Do not require isConnected — renderPanel paints before the panel is mounted.
+    if (!host || !ratings?.length) return;
+    bar.ensureStyles?.();
+    host.replaceChildren();
+    const wrap = document.createElement('div');
+    bar.renderInto(wrap, ratings, {
+      compact: true,
+      imdbId,
+      title: meta?.name || '',
+      type: type || 'movie',
+    });
+    const inner = wrap.firstElementChild;
+    if (inner) host.appendChild(inner);
+    else host.appendChild(wrap);
+  }
+
+  /**
+   * Replaces the ratings host with the shared multi-ratings bar when scores load.
+   * Prefers cache/skeleton over an IMDb→bar pop-in.
+   * @param {Element} host
+   * @param {object} meta
+   * @param {string} type
+   * @returns {Promise<void>}
+   */
+  async function fillHoverRatings(host, meta, type) {
+    const bar = window.__mystremioRatingsBar;
+    if (!host || !bar?.fetchRatings || !bar?.renderInto) return;
+    const imdbId = bar.normalizeImdbId?.(meta?.id || meta?.imdb_id || '');
+    if (!imdbId) return;
+
+    const cached = bar.peekCachedRatings?.(imdbId);
+    if (cached?.length) {
+      paintHoverRatings(host, bar, cached, meta, type, imdbId);
+      return;
+    }
+
+    if (!host.querySelector('.meta-hover-panel-ratings-skeleton')) {
+      showRatingsSkeleton(host);
+    }
+
+    try {
+      const ratings = await bar.fetchRatings(imdbId, type);
+      if (!host.isConnected) return;
+      if (!ratings?.length) {
+        renderImdbFallback(host, meta);
+        return;
+      }
+      paintHoverRatings(host, bar, ratings, meta, type, imdbId);
+    } catch (_) {
+      renderImdbFallback(host, meta);
+    }
+  }
+
   function renderPanel(meta, type) {
     const panel = document.createElement('div');
     panel.className = 'meta-hover-panel';
@@ -1035,15 +1134,20 @@
       span.textContent = info;
       metaLine.appendChild(span);
     }
-    if (meta.imdbRating) {
-      const imdb = document.createElement('span');
-      imdb.className = 'meta-hover-panel-imdb';
-      imdb.textContent = 'IMDb';
-      const rating = document.createElement('span');
-      rating.className = 'meta-hover-panel-rating';
-      rating.textContent = meta.imdbRating;
-      metaLine.append(imdb, rating);
+    const ratingsHost = document.createElement('span');
+    ratingsHost.className = 'meta-hover-panel-ratings-host';
+    const bar = window.__mystremioRatingsBar;
+    const imdbId = bar?.normalizeImdbId?.(meta?.id || meta?.imdb_id || '');
+    const cached = imdbId ? bar.peekCachedRatings?.(imdbId) : null;
+    if (cached?.length && bar?.renderInto) {
+      paintHoverRatings(ratingsHost, bar, cached, meta, type, imdbId);
+    } else if (bar?.fetchRatings && imdbId) {
+      showRatingsSkeleton(ratingsHost);
+    } else if (meta.imdbRating) {
+      renderImdbFallback(ratingsHost, meta);
     }
+    metaLine.appendChild(ratingsHost);
+    fillHoverRatings(ratingsHost, meta, type);
 
     header.append(title, metaLine);
     panel.appendChild(header);
@@ -1152,6 +1256,39 @@
   }
 
   /**
+   * @param {number} x
+   * @param {number} y
+   * @param {DOMRect} rect
+   * @param {number} [pad]
+   * @returns {boolean}
+   */
+  function pointInRect(x, y, rect, pad = 0) {
+    return (
+      x >= rect.left - pad &&
+      x <= rect.right + pad &&
+      y >= rect.top - pad &&
+      y <= rect.bottom + pad
+    );
+  }
+
+  /**
+   * True while pointer remains over the poster or the open panel footprint.
+   * Panel uses pointer-events:none, so elementFromPoint alone is not enough.
+   * @param {number} x
+   * @param {number} y
+   * @returns {boolean}
+   */
+  function isPointerOverHoverTarget(x, y) {
+    if (activeAnchor?.isConnected && pointInRect(x, y, activeAnchor.getBoundingClientRect(), 4)) {
+      return true;
+    }
+    if (activePanel?.isConnected && pointInRect(x, y, activePanel.getBoundingClientRect(), 4)) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Hover panels are only for browse surfaces — never on detail/player routes.
    * @returns {boolean}
    */
@@ -1164,8 +1301,7 @@
 
   function isPointerOverAnchor(anchor, x, y) {
     if (!anchor?.isConnected) return false;
-    const rect = anchor.getBoundingClientRect();
-    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    return pointInRect(x, y, anchor.getBoundingClientRect(), 0);
   }
 
   function validateActivePanel(pointer) {
@@ -1181,13 +1317,8 @@
       return;
     }
 
-    if (pointer && !isPointerOverAnchor(activeAnchor, pointer.x, pointer.y)) {
-      const anchorUnderPointer = getMetaItemAnchor(
-        document.elementFromPoint(pointer.x, pointer.y)
-      );
-      if (anchorUnderPointer !== activeAnchor) {
-        clearHoverState();
-      }
+    if (pointer && !isPointerOverHoverTarget(pointer.x, pointer.y)) {
+      clearHoverState();
     }
   }
 
@@ -1218,6 +1349,9 @@
       removePanel();
       return;
     }
+
+    // Overlap network with meta/cast so the bar is warm when the panel paints.
+    prefetchHoverRatings(imdbId, media.type);
 
     const result = await fetchMetaWithFallback(media.type, imdbId);
     if (!result || !stillValid()) {
@@ -1280,6 +1414,9 @@
       if (!isHoverRouteAllowed() || !isHoverIntentActive(anchor)) return;
       const media = await extractMediaInfo(anchor);
       if (!isHoverRouteAllowed() || !media || !isHoverIntentActive(anchor)) return;
+      if (media.id && /^tt\d{7,}/i.test(String(media.id))) {
+        prefetchHoverRatings(media.id, media.type);
+      }
       showPanel(anchor, media);
     }, CONFIG.HOVER_DELAY);
   }
@@ -1296,13 +1433,24 @@
         clearHoverState();
         return;
       }
-      const anchor = getMetaItemAnchor(document.elementFromPoint(event.clientX, event.clientY));
+
+      const x = event.clientX;
+      const y = event.clientY;
+
+      // Keep an open panel while the pointer stays over poster or panel area.
+      if (activePanel && isPointerOverHoverTarget(x, y)) {
+        validateActivePanel({ x, y });
+        repositionActivePanel();
+        return;
+      }
+
+      const anchor = getMetaItemAnchor(document.elementFromPoint(x, y));
       if (!anchor) {
         clearHoverState();
         return;
       }
 
-      validateActivePanel({ x: event.clientX, y: event.clientY });
+      validateActivePanel({ x, y });
 
       if (activePanel && activeAnchor === anchor) {
         repositionActivePanel();
@@ -1326,8 +1474,21 @@
     }
   }
 
-  function handleScroll() {
+  /**
+   * Dismiss hover on vertical board/window scroll only — ignore horizontal catalog row pans.
+   * @param {Event} event
+   */
+  function handleScroll(event) {
     if (!activePanel) return;
+    const target = event?.target;
+    if (target instanceof Element) {
+      if (
+        target.closest('[class*="meta-items-container"]') ||
+        target.closest('.meta-hover-panel')
+      ) {
+        return;
+      }
+    }
     clearHoverState();
   }
 
@@ -1406,7 +1567,11 @@
       }
       if (isCatalogMutation(mutations)) {
         invalidateCatalogCache();
-        clearHoverState();
+        // Row-nav chevrons / width freezes mutate the catalog constantly — only tear down
+        // when the hovered poster itself was removed from the DOM.
+        if (activeAnchor && !activeAnchor.isConnected) {
+          clearHoverState();
+        }
         mutations.forEach((mutation) => {
           if (mutation.target instanceof Element) {
             const container = mutation.target.closest('[class*="meta-items-container"], [class*="meta-row-container"]');

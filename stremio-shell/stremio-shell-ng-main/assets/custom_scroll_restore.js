@@ -285,8 +285,8 @@
   }
 
   /**
-   * Extend the board hero through the live scrollbar gutter so the #141414
-   * hero-slot fallback color cannot show as a fat gray stripe.
+   * Full-bleed hero: zero board-content padding (no 100vw, no negative margins).
+   * Row padding restores the former 1rem inset for catalog rows only.
    */
   function applyBoardHeroGutterFix() {
     const boardScroll = getBoardScrollEl();
@@ -299,7 +299,6 @@
       return;
     }
 
-    const gutter = measureScrollbarGutter(boardScroll);
     let style = document.getElementById(HERO_GUTTER_STYLE_ID);
     if (!style) {
       style = document.createElement('style');
@@ -307,23 +306,34 @@
       (document.head || document.documentElement).appendChild(style);
     }
 
-    const gutterPx = `${gutter}px`;
     style.textContent = `
+      #app [class*="board-container"] [class*="board-content"]:has([class*="hero-slot"]) {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+      }
       #app [class*="board-content"] [class*="hero-slot"] {
-        width: calc(100vw + ${gutterPx}) !important;
-        max-width: none !important;
-        left: auto !important;
+        left: 0 !important;
         right: auto !important;
-        margin-left: calc(50% - 50vw) !important;
-        margin-right: calc(50% - 50vw - ${gutterPx}) !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        width: 100% !important;
+        max-width: none !important;
         background-color: transparent !important;
       }
       #app [class*="board-content"] [class*="hero-slot"] [class*="hero-container"] {
         width: 100% !important;
       }
-      #app [class*="board-content"] {
-        scrollbar-width: thin;
-        scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+      #app [class*="board-container"] [class*="board-content"]:has([class*="hero-slot"])
+        [class*="meta-row-container"],
+      #app [class*="board-container"] [class*="board-content"]:has([class*="hero-slot"])
+        [class*="continue-watching-row"],
+      #app [class*="board-container"] [class*="board-content"]:has([class*="hero-slot"])
+        [class*="board-row"] {
+        padding-left: 1rem;
+        padding-right: 1rem;
+        box-sizing: border-box;
       }
       #app [class*="board-content"]::-webkit-scrollbar {
         width: 6px !important;

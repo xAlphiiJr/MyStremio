@@ -2,7 +2,7 @@
  * @name EnhancedCovers
  * @description Widens the cover images in the Continue Watching section using background images with logo overlay.
  * @updateUrl none
- * @version 26.0.5
+ * @version 26.0.6
  * @author Fxy rewritten and improved by MrBlu03
  */
 
@@ -259,7 +259,8 @@
       const gen = String((Number(img.dataset.enhanceGen) || 0) + 1);
       img.dataset.enhanceGen = gen;
       img.dataset.enhancedCover = "true";
-      img.dataset.originalSrc = img.dataset.originalSrc || img.src;
+      // Always capture the live React poster for this title (never sticky across reuse).
+      img.dataset.originalSrc = img.src;
       img.dataset.imdbId = imdbId;
 
       const posterContainer = img.closest('[class*="poster-container"]');
@@ -357,11 +358,21 @@
           }
         }
 
-        // Check for attribute changes on images (src changes)
-        if (mutation.type === "attributes" && mutation.attributeName === "src") {
+        // Check for attribute changes on posters / detail links (CW card reuse).
+        if (mutation.type === "attributes") {
           const target = mutation.target;
-          if (target.matches?.('img[class*="poster-image"]')) {
+          if (
+            mutation.attributeName === "src" &&
+            target.matches?.('img[class*="poster-image"]')
+          ) {
             shouldUpdate = true;
+          }
+          if (
+            mutation.attributeName === "href" &&
+            target.closest?.('[class*="continue-watching"]')
+          ) {
+            shouldUpdate = true;
+            hasRemovedNodes = true; // force cleanup before rebind
           }
         }
 
@@ -384,7 +395,7 @@
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["src"],
+      attributeFilter: ["src", "href"],
     });
   }
 

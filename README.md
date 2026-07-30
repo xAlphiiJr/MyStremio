@@ -2,7 +2,7 @@
 
 **MyStremio** is a personalized Windows desktop client built on the Stremio shell stack.
 It combines UI upgrades, player improvements, plugins/themes and library tools in one installer.
-Current release: **2.3.5**
+Current release: **2.3.6**
 
 > **Disclaimer:** MyStremio is an independent community project and is not affiliated with official Stremio.
 
@@ -171,6 +171,16 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 
 
+### 2.3.6
+
+- **WatchHub** — Redesigned “Available on” panel with provider logos, Sub/Buy/Rent/Free badges, and a cleaner tile grid (StreamUI)
+- **Board catalog navigation** — Per-row chevrons, horizontal scroll, and LoadNextPage so board catalogs go beyond the first preview strip
+- **Multi-source ratings** — Shared ratings on Detail (Data Enrichment) and Meta Hover (IMDb, TMDb, Metacritic, RT, Trakt, …) via shell proxy; optional MDBList key under Settings → API Keys unlocks the full set
+- **Search suggestions** — Cinemeta typeahead above the search bar (posters, ranking, recent picks, keyboard navigation)
+- **Stream flags** — Language codes in stream rows render as Twemoji flags (Liquid Glass no longer strips them)
+- **Board hero** — Fixed the left grey gutter / full-bleed hero shading on the board
+- **Continue Watching** — Enhanced Titlebar + Enhanced Covers stay in sync after card reuse; row chevrons re-center after landscape covers load
+
 ### 2.3.5
 
 
@@ -235,7 +245,6 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 ### Known Issues
 
 - **Cast Search Addon:** The Cast Search Addon is not compatible with the StreamUI plugin as the cast members load the same way as video streams which messes with correct grouping.
-- **Formatter:** Flags don't display correctly.
 - **Antivirus (e.g. Avast):** Some security tools may repeatedly scan MyStremio because it runs unsigned binaries from `%LOCALAPPDATA%\Programs\MyStremio`, a local streaming runtime, and writable data under `%APPDATA%\MyStremio` (plus occasional update installers under `%APPDATA%\MyStremio\updates`). Prefer folder exclusions for those paths over disabling antivirus entirely.
 
 ---
@@ -245,7 +254,7 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 ## 💾 Installation
 
 1. Download the latest installer from this repository's **Releases** page.
-2. Run `MyStremioSetup-v2.3.5_x64.exe` (or the latest version).
+2. Run `MyStremioSetup-v2.3.6_x64.exe` (or the latest version).
 3. The installer sets up:
   - App binaries (`mystremio-shell.exe`, streaming server, FFmpeg, libmpv)
   - Bundled plugins and themes
@@ -285,7 +294,7 @@ cd stremio-shell\stremio-shell-ng-main
 .\package-release.ps1
 ```
 
-Output: `release\MyStremioSetup-v2.3.5_x64.exe`
+Output: `release\MyStremioSetup-v2.3.6_x64.exe`
 
 The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle. To rebuild the Web UI from source, clone [stremio-web](https://github.com/Stremio/stremio-web) into `.tmp/stremio-web`, apply MyStremio patches, then run the build script again.
 

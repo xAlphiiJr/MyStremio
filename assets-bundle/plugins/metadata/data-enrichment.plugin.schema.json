@@ -16,6 +16,14 @@
     "type": "input"
   },
   {
+    "defaultValue": "",
+    "description": "Ratings (Detail + Meta Hover): Metacritic, Trakt, RT, MC Users and more via MDBList. Without a key: Aggregator + Cinemeta only. Free key: https://mdblist.com/preferences/",
+    "key": "mdblistApiKey",
+    "label": "MDBList API Key (Ratings)",
+    "placeholder": "Enter your MDBList API key",
+    "type": "input"
+  },
+  {
     "defaultValue": true,
     "key": "enhancedCast",
     "label": "Enhanced Cast Section",
