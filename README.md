@@ -246,6 +246,7 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 - **Cast Search Addon:** The Cast Search Addon is not compatible with the StreamUI plugin as the cast members load the same way as video streams which messes with correct grouping.
 - **Antivirus (e.g. Avast):** Some security tools may repeatedly scan MyStremio because it runs unsigned binaries from `%LOCALAPPDATA%\Programs\MyStremio`, a local streaming runtime, and writable data under `%APPDATA%\MyStremio` (plus occasional update installers under `%APPDATA%\MyStremio\updates`). Prefer folder exclusions for those paths over disabling antivirus entirely.
+- **Data Enrichment:** Shows Metadata from another title in the "Continue Watching" bar when switching back from episode detail page to series detail page. This only happens for titles in the CW bar!
 
 ---
 
