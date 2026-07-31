@@ -77,7 +77,7 @@ The board includes a hero section with rotating titles. The Theme is made by [Fx
 
    While browsing catalogs, hover cards show key information (plot, genres, cast) without forcing a page change.
 
-![Catalog Hover Metadata](./images/02-catalog-hover.png)
+
 
 #### 📖 Detail view with metadata and stream sidebar
 
