@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Patch bundled stremio-web main.js so board catalog rows can show all loaded
-items and expose CatalogsWithExtra LoadNextPage for MyStremio row chevrons.
+Patch bundled stremio-web main.js for MyStremio board row chevrons:
+CatalogsWithExtra LoadNextPage + growing MetaRow preview reveal slice.
 """
 
 from __future__ import annotations
@@ -64,6 +64,9 @@ HOOK_V2 = (
     'var t=c.content&&c.content.type;'
     'return t==="Ready"||t==="Err";'
     '}'
+    'window.__mystremioBoardRequestRender=function(){'
+    'mystremioBumpReveal(function(x){return x+1})'
+    '};'
     'window.__mystremioBoardLoadNextPage=function(n){'
     'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadNextPage",args:n}},"board")'
     '};'
@@ -106,23 +109,58 @@ HOOK_V2 = (
     'try{delete window.__mystremioBoardLoadNextPage}catch(_){}'
     'try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}'
     'try{delete window.__mystremioBoardSyncCatalogIndices}catch(_){}'
+    'try{delete window.__mystremioBoardRequestRender}catch(_){}'
     '}'
-    '},[e]);'
+    '},[e,mystremioBumpReveal]);'
 )
 
 LOAD_RANGE_REPLACEMENT = (
     'a=i.useCallback(function(t){e.transport.dispatch({action:"CatalogsWithExtra",'
     'args:{action:"LoadRange",args:t}},"board")},[]);'
+    'var mystremioRevealState=i.useState(0),mystremioBumpReveal=mystremioRevealState[1];'
     + HOOK_V2
     + 'return[E({model:"board",action:t}),a]'
+)
+
+# Prior shipped hook without RequestRender / useState — upgrade in place.
+HOOK_V2_LEGACY_PREFIX = (
+    'a=i.useCallback(function(t){e.transport.dispatch({action:"CatalogsWithExtra",'
+    'args:{action:"LoadRange",args:t}},"board")},[]);'
+    'i.useEffect(function(){'
+    'function mystremioCatalogLabel'
+)
+HOOK_V2_LEGACY_CLEANUP = (
+    'return function(){'
+    'try{delete window.__mystremioBoardLoadNextPage}catch(_){}'
+    'try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}'
+    'try{delete window.__mystremioBoardSyncCatalogIndices}catch(_){}'
+    '}'
+    '},[e]);'
 )
 
 # Ensure HOOK_V2 / LOAD_RANGE_REPLACEMENT are single strings (not tuples).
 assert isinstance(HOOK_V2, str)
 assert isinstance(LOAD_RANGE_REPLACEMENT, str)
 
+# Stock preview slice → growing reveal driven by window.__mystremioBoardReveal[index].
 SLICE_NEEDLE = ".slice(0,I.CATALOG_PREVIEW_SIZE)"
-SLICE_REPLACEMENT = ""
+SLICE_REPLACEMENT = (
+    ".slice(0,(window.__mystremioBoardReveal&&window.__mystremioBoardReveal"
+    "[mystremioCatalogIndex])||I.CATALOG_PREVIEW_SIZE)"
+)
+# When a previous build removed the slice entirely, re-insert the reveal form.
+SLICE_REMOVED_NEEDLE = (
+    'meta-items-container"]},_.isValidElementType(n)?N.map(function(e,t){'
+    "return r.createElement(n,E(E({},e)"
+)
+SLICE_REMOVED_REPLACEMENT = (
+    'meta-items-container"]},_.isValidElementType(n)?N.slice(0,(window.__mystremioBoardReveal'
+    "&&window.__mystremioBoardReveal[mystremioCatalogIndex])||10).map(function(e,t){"
+    "return r.createElement(n,E(E({},e)"
+)
+REVEAL_SLICE_MARKER = (
+    "window.__mystremioBoardReveal&&window.__mystremioBoardReveal[mystremioCatalogIndex]"
+)
 
 PLACEHOLDER_NEEDLE = "Array(Math.max(0,I.CATALOG_PREVIEW_SIZE-N.length))"
 PLACEHOLDER_REPLACEMENT = "Array(Math.max(0,N.length?0:8))"
@@ -202,14 +240,54 @@ def patch_file(path: Path) -> int:
             file=sys.stderr,
         )
 
-    if SLICE_NEEDLE in text:
+    if REVEAL_SLICE_MARKER in text:
+        print(f"MetaRow reveal slice already present in {path}")
+    elif SLICE_NEEDLE in text:
         text = text.replace(SLICE_NEEDLE, SLICE_REPLACEMENT, 1)
         changed += 1
-        print(f"Removed MetaRow CATALOG_PREVIEW_SIZE slice in {path}")
-    elif "N.map(function(e,t){return r.createElement(n,E(E({},e)" in text:
-        print(f"MetaRow slice already removed in {path}")
+        print(f"Patched MetaRow preview slice to growing reveal in {path}")
+    elif SLICE_REMOVED_NEEDLE in text:
+        text = text.replace(SLICE_REMOVED_NEEDLE, SLICE_REMOVED_REPLACEMENT, 1)
+        changed += 1
+        print(f"Re-inserted MetaRow reveal slice in {path}")
     else:
         print(f"WARNING: MetaRow slice needle not found in {path}", file=sys.stderr)
+
+    if "window.__mystremioBoardRequestRender" in text and "mystremioBumpReveal" in text:
+        print(f"Board RequestRender hook already present in {path}")
+    elif HOOK_V2_LEGACY_PREFIX in text:
+        text = text.replace(
+            HOOK_V2_LEGACY_PREFIX,
+            (
+                'a=i.useCallback(function(t){e.transport.dispatch({action:"CatalogsWithExtra",'
+                'args:{action:"LoadRange",args:t}},"board")},[]);'
+                "var mystremioRevealState=i.useState(0),mystremioBumpReveal=mystremioRevealState[1];"
+                "i.useEffect(function(){"
+                "window.__mystremioBoardRequestRender=function(){"
+                "mystremioBumpReveal(function(x){return x+1})"
+                "};"
+                "function mystremioCatalogLabel"
+            ),
+            1,
+        )
+        changed += 1
+        print(f"Upgraded Board hook with RequestRender useState in {path}")
+        if HOOK_V2_LEGACY_CLEANUP in text:
+            text = text.replace(
+                HOOK_V2_LEGACY_CLEANUP,
+                (
+                    "return function(){"
+                    "try{delete window.__mystremioBoardLoadNextPage}catch(_){}"
+                    "try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}"
+                    "try{delete window.__mystremioBoardSyncCatalogIndices}catch(_){}"
+                    "try{delete window.__mystremioBoardRequestRender}catch(_){}"
+                    "}"
+                    "},[e,mystremioBumpReveal]);"
+                ),
+                1,
+            )
+            changed += 1
+            print(f"Updated Board hook cleanup/deps for RequestRender in {path}")
 
     if PLACEHOLDER_NEEDLE in text:
         text = text.replace(PLACEHOLDER_NEEDLE, PLACEHOLDER_REPLACEMENT, 1)

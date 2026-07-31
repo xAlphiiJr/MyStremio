@@ -71,18 +71,20 @@ MyStremio offers its own UI enhancements and combines it with already existing p
 
 The board includes a hero section with rotating titles. The Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme) and just slightly optimized by me.
 
-
+![Board Hero Home](./images/01-board-hero.png)
 
 #### 🖱️ Hover metadata in catalogs
 
    While browsing catalogs, hover cards show key information (plot, genres, cast) without forcing a page change.
 
-
+![Catalog Hover Metadata](./images/02-catalog-hover.png)
 
 #### 📖 Detail view with metadata and stream sidebar
 
 The Data Enrichment Plugin by MrBlu03 (if a TMDB API key is set under **Settings → MyStremio → API Keys**) offers an enhanced detail page with cast and similar titles.
 The StreamUI plugin offers a clean and modern sidebar with folders to pick streams from. (The plugin works for the follwing addons: Most torrent addons, most usenet addons, [WatchHub](https://stremio-addons.net/addons/watchhub), [Ratings Aggregator](https://stremio-addons.net/addons/ratings-aggregator), [IMDb Ratings](https://stremio-addons.net/addons/imdb-ratings), [AfterCredits](https://aftercredits.almosteffective.com/configure.html)).
+
+![Metadata and Stream UI](./images/03-detail-metadata-stream-sidebar.png)
 
 
 

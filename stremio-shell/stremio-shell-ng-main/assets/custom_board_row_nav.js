@@ -1,10 +1,11 @@
 /**
  * Board row horizontal navigation: lock board-content.scrollLeft so the hero
  * cannot shift, give meta rows their own overflow-x scrollport, left/right
- * chevrons, arrow-key focus scrolling, and CatalogsWithExtra LoadNextPage.
+ * chevrons, arrow-key focus scrolling, and on-demand catalog growth.
  *
- * Item sizing stays stock (poster/landscape flex ratios). After LoadNextPage
- * growth, item widths are frozen so extras scroll instead of shrinking.
+ * MetaRow starts at CATALOG_PREVIEW_SIZE items. At the end of a row, the right
+ * chevron raises window.__mystremioBoardReveal and only then may LoadNextPage.
+ * Item widths are frozen after growth so extras scroll instead of shrinking.
  */
 (function () {
   'use strict';
@@ -20,11 +21,10 @@
   const OVERLAY_CLASS = 'mystremio-board-row-nav-overlay';
   const WIDTH_FROZEN_ATTR = 'data-mystremio-width-frozen';
   const LOAD_EXHAUSTED_ATTR = 'data-mystremio-load-exhausted';
-  const PREFETCH_ATTR = 'data-mystremio-prefetching';
   const SCROLL_EPS = 8;
   const LOAD_WAIT_MS = 1200;
-  /** Prefetch next catalog page once the user has scrolled this far into the row. */
-  const PREFETCH_PROGRESS = 0.45;
+  /** Matches stremio-web CATALOG_PREVIEW_SIZE — reveal grows by this step. */
+  const CATALOG_PREVIEW_SIZE = 10;
   /** Debounce enhance while the board mutates during fast vertical scroll. */
   const ENHANCE_DEBOUNCE_MS = 180;
   const ITEM_COUNT_ATTR = 'data-mystremio-nav-items';
@@ -110,6 +110,8 @@
       /* Unhide stock nth-child{display:none} only — NEVER display:flex (breaks poster/title layout). */
       #app [class*="board-container"] [class*="meta-items-container"].${ROW_SCROLLPORT_CLASS} > [class*="meta-item"] {
         display: revert !important;
+        content-visibility: auto;
+        contain-intrinsic-size: auto 280px;
       }
       #app [class*="board-container"] [class*="meta-items-container"].${ROW_SCROLLPORT_CLASS} {
         width: 100% !important;
@@ -486,11 +488,71 @@
   }
 
   /**
-   * Lazy-load next catalog page on demand, then pan the row right.
+   * @param {Element} rowItems
+   * @returns {boolean}
+   */
+  function rowNearEnd(rowItems) {
+    return (
+      rowItems.scrollLeft + rowItems.clientWidth >=
+      rowItems.scrollWidth - SCROLL_EPS * 3
+    );
+  }
+
+  /**
+   * @param {number} idx
+   * @returns {number}
+   */
+  function getRevealLimit(idx) {
+    const map = window.__mystremioBoardReveal;
+    if (!map || typeof map !== 'object') return CATALOG_PREVIEW_SIZE;
+    const v = Number(map[idx]);
+    return Number.isFinite(v) && v > 0 ? v : CATALOG_PREVIEW_SIZE;
+  }
+
+  /**
+   * Raise MetaRow slice limit and ask Board to re-render (see webui hook).
+   * @param {number} idx
+   * @returns {number}
+   */
+  function bumpRevealLimit(idx) {
+    if (!window.__mystremioBoardReveal || typeof window.__mystremioBoardReveal !== 'object') {
+      window.__mystremioBoardReveal = {};
+    }
+    const next = getRevealLimit(idx) + CATALOG_PREVIEW_SIZE;
+    window.__mystremioBoardReveal[idx] = next;
+    const force = window.__mystremioBoardRequestRender;
+    if (typeof force === 'function') {
+      try {
+        force();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    return next;
+  }
+
+  /**
+   * @returns {Promise<void>}
+   */
+  function waitTwoFrames() {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => resolve());
+      });
+    });
+  }
+
+  /**
+   * Pan right; only at the end reveal more items / LoadNextPage once.
    * @param {Element} rowItems
    * @returns {Promise<void>}
    */
   async function scrollRowForward(rowItems) {
+    if (rowItems.closest('[class*="continue-watching-row"]') || !rowNearEnd(rowItems)) {
+      rowItems.scrollBy({ left: rowStep(rowItems), behavior: 'smooth' });
+      return;
+    }
+
     const idx = await catalogIndexForRow(rowItems);
     const itemsBefore = getRowDirectItems(rowItems);
     const prevCount = itemsBefore.length;
@@ -503,76 +565,50 @@
     const root = getRowRoot(rowItems);
     const exhausted = root?.hasAttribute(LOAD_EXHAUSTED_ATTR);
 
-    if (idx >= 0 && !exhausted) {
-      const requested = requestLoadNextPage(idx);
-      if (requested) {
-        const grew = await waitForRowGrowth(rowItems, prevCount, prevWidth, LOAD_WAIT_MS);
-        if (grew) {
-          freezeRowItemWidths(rowItems, freezeWidth);
-          root?.removeAttribute(LOAD_EXHAUSTED_ATTR);
-          console.info('[BoardRowNav] load grew', {
-            catalogIndex: idx,
-            title: getRowTitle(rowItems),
-          });
-        } else {
-          root?.setAttribute(LOAD_EXHAUSTED_ATTR, '1');
-          console.info('[BoardRowNav] load no-growth', {
-            catalogIndex: idx,
-            title: getRowTitle(rowItems),
-          });
+    if (idx >= 0) {
+      bumpRevealLimit(idx);
+      await waitTwoFrames();
+
+      let grew =
+        countRowMetaItems(rowItems) > prevCount || rowItems.scrollWidth > prevWidth + 24;
+
+      if (!grew && !exhausted) {
+        const requested = requestLoadNextPage(idx);
+        if (requested) {
+          grew = await waitForRowGrowth(rowItems, prevCount, prevWidth, LOAD_WAIT_MS);
+          if (grew) {
+            const shown = countRowMetaItems(rowItems);
+            window.__mystremioBoardReveal[idx] = Math.max(getRevealLimit(idx), shown);
+            const force = window.__mystremioBoardRequestRender;
+            if (typeof force === 'function') {
+              try {
+                force();
+              } catch (_) {
+                /* ignore */
+              }
+            }
+            await waitTwoFrames();
+            freezeRowItemWidths(rowItems, freezeWidth);
+            root?.removeAttribute(LOAD_EXHAUSTED_ATTR);
+            console.info('[BoardRowNav] load grew', {
+              catalogIndex: idx,
+              title: getRowTitle(rowItems),
+            });
+          } else {
+            root?.setAttribute(LOAD_EXHAUSTED_ATTR, '1');
+            console.info('[BoardRowNav] load no-growth', {
+              catalogIndex: idx,
+              title: getRowTitle(rowItems),
+            });
+          }
         }
+      } else if (grew) {
+        freezeRowItemWidths(rowItems, freezeWidth);
+        root?.removeAttribute(LOAD_EXHAUSTED_ATTR);
       }
     }
 
     rowItems.scrollBy({ left: rowStep(rowItems), behavior: 'smooth' });
-  }
-
-  /**
-   * Prefetch LoadNextPage once the user is ~halfway through the row scroll.
-   * Fire-and-forget — does not pan the row.
-   * @param {Element} rowItems
-   */
-  function prefetchIfNearEnd(rowItems) {
-    if (!isBoardRoute()) return;
-    if (rowItems.closest('[class*="continue-watching-row"]')) return;
-    const root = getRowRoot(rowItems);
-    if (!root || root.hasAttribute(LOAD_EXHAUSTED_ATTR) || root.hasAttribute(PREFETCH_ATTR)) {
-      return;
-    }
-    const maxScroll = Math.max(0, rowItems.scrollWidth - rowItems.clientWidth);
-    if (maxScroll <= 12) return;
-    if (rowItems.scrollLeft / maxScroll < PREFETCH_PROGRESS) return;
-
-    void (async () => {
-      const idx = await catalogIndexForRow(rowItems);
-      if (idx < 0 || !isBoardRoute()) return;
-      if (root.hasAttribute(LOAD_EXHAUSTED_ATTR) || root.hasAttribute(PREFETCH_ATTR)) return;
-      root.setAttribute(PREFETCH_ATTR, '1');
-      const itemsBefore = getRowDirectItems(rowItems);
-      const prevCount = itemsBefore.length;
-      const prevWidth = rowItems.scrollWidth;
-      const freezeWidth =
-        itemsBefore[0] instanceof HTMLElement
-          ? itemsBefore[0].getBoundingClientRect().width
-          : 0;
-      const requested = requestLoadNextPage(idx);
-      if (!requested) {
-        root.removeAttribute(PREFETCH_ATTR);
-        return;
-      }
-      const grew = await waitForRowGrowth(rowItems, prevCount, prevWidth, LOAD_WAIT_MS);
-      root.removeAttribute(PREFETCH_ATTR);
-      if (!isBoardRoute()) return;
-      if (grew) {
-        freezeRowItemWidths(rowItems, freezeWidth);
-        root.removeAttribute(LOAD_EXHAUSTED_ATTR);
-      } else {
-        root.setAttribute(LOAD_EXHAUSTED_ATTR, '1');
-      }
-      const leftBtn = root.querySelector(`:scope > .${OVERLAY_CLASS} > .${CHEVRON_LEFT}`);
-      const rightBtn = root.querySelector(`:scope > .${OVERLAY_CLASS} > .${CHEVRON_RIGHT}`);
-      refreshChevrons(rowItems, leftBtn, rightBtn);
-    })();
   }
 
   /**
@@ -872,7 +908,6 @@
                 const leftBtn = host?.querySelector(`:scope > .${CHEVRON_LEFT}`);
                 const rightBtn = host?.querySelector(`:scope > .${CHEVRON_RIGHT}`);
                 refreshChevrons(row, leftBtn, rightBtn);
-                prefetchIfNearEnd(row);
               });
             },
             { passive: true }
@@ -1070,7 +1105,6 @@
       .forEach((el) => el.remove());
     document.querySelectorAll(`.${ROW_WRAP_CLASS}`).forEach((el) => {
       el.classList.remove(ROW_WRAP_CLASS);
-      el.removeAttribute(PREFETCH_ATTR);
     });
     document.querySelectorAll(`.${ROW_SCROLLPORT_CLASS}`).forEach((el) => {
       el.classList.remove(ROW_SCROLLPORT_CLASS);
@@ -1078,6 +1112,11 @@
       el.removeAttribute(ITEM_COUNT_ATTR);
       delete el.dataset.mystremioRowScrollBound;
     });
+    try {
+      window.__mystremioBoardReveal = {};
+    } catch (_) {
+      /* ignore */
+    }
     document
       .querySelectorAll(
         '[class*="board-container"] [class*="meta-row-container"], ' +
