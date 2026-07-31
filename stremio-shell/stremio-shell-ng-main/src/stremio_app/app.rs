@@ -1,6 +1,5 @@
 use native_windows_derive::NwgUi;
 use native_windows_gui as nwg;
-use serde_json;
 use std::{
     cell::RefCell,
     io::Read,
@@ -157,11 +156,13 @@ impl MainWindow {
         self.window.set_visible(!self.start_hidden);
         self.tray.tray_show_hide.set_checked(!self.start_hidden);
         if self.no_splash {
-            self.splash_screen.hide();
+            // Controller may not exist yet; hide notice reveals WebView when ready.
+            self.hide_splash_notice.sender().notice();
         } else {
+            // Safety net only — normal hide is mystremio-ui-ready (~2.5s JS deadline).
             let hide_splash_sender = self.hide_splash_notice.sender();
             thread::spawn(move || {
-                thread::sleep(time::Duration::from_secs(4));
+                thread::sleep(time::Duration::from_secs(3));
                 hide_splash_sender.notice();
             });
         }
@@ -353,7 +354,8 @@ impl MainWindow {
                     }
                     Some("quit") => quit_sender.notice(),
                     Some("app-ready") => {
-                        hide_splash_sender.notice();
+                        // Do NOT hide splash here — stock/web can fire this before plugins
+                        // load (BAD cold-start). Splash drops on mystremio-ui-ready instead.
                         web_tx_web
                             .send(RPCResponse::visibility_change(true, 1, false))
                             .ok();
@@ -367,6 +369,9 @@ impl MainWindow {
                         if !command_ref.is_empty() {
                             web_tx_web.send(RPCResponse::open_media(command_ref)).ok();
                         }
+                    }
+                    Some("mystremio-ui-ready") => {
+                        hide_splash_sender.notice();
                     }
                     Some("app-error") => {
                         hide_splash_sender.notice();
@@ -561,8 +566,37 @@ impl MainWindow {
             self.webview.fit_to_window(Some(hwnd));
         }
     }
+    fn dismiss_startup_overlays_in_webview(&self) {
+        // Splash hide and safety timeout MUST clear boot seal — otherwise a hung
+        // bootstrap leaves a permanent black screen that survives tray hide/show.
+        self.webview.execute_script(
+            r#"try{window.__stremioCustomDismissStartupOverlays&&window.__stremioCustomDismissStartupOverlays();window.__stremioCustomRemoveBootSeal&&window.__stremioCustomRemoveBootSeal();}catch(e){}"#,
+        );
+    }
+
+    fn wake_webview_after_show(&self) {
+        if let Some(hwnd) = self.window.handle.hwnd() {
+            self.webview.fit_to_window(Some(hwnd));
+        }
+        self.webview.set_visible(true);
+        // JS resume clears overlays only after bootstrap-ready (not during cold splash).
+        self.webview.execute_script(
+            r#"try{window.__stremioCustomOnWindowResumed&&window.__stremioCustomOnWindowResumed('shell-show');}catch(e){}"#,
+        );
+        if let Ok(web_channel) = self.webview.channel.try_borrow() {
+            if let Some((web_tx, _)) = web_channel.as_ref() {
+                web_tx.send(RPCResponse::window_resumed()).ok();
+            }
+        }
+    }
+
     fn on_hide_splash_notice(&self) {
         self.splash_screen.hide();
+        if let Some(hwnd) = self.window.handle.hwnd() {
+            self.webview.fit_to_window(Some(hwnd));
+        }
+        self.webview.set_visible(true);
+        self.dismiss_startup_overlays_in_webview();
     }
     fn on_focus_notice(&self) {
         self.window.set_visible(true);
@@ -571,6 +605,7 @@ impl MainWindow {
                 saved_style.set_active(hwnd);
             }
         }
+        self.wake_webview_after_show();
     }
     fn on_toggle_pip_notice(&self) {
         if let Some(hwnd) = self.window.handle.hwnd() {
@@ -612,6 +647,7 @@ impl MainWindow {
             saved_style.set_active(hwnd);
         }
         self.tray.tray_show_hide.set_checked(self.window.visible());
+        self.wake_webview_after_show();
         self.transmit_window_state_change();
         self.transmit_window_visibility_change();
     }

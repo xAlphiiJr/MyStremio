@@ -108,4 +108,7 @@ impl RPCResponse {
     pub fn media_key(action: &str) -> String {
         Self::response_message(Some(json!(["media-key", action])))
     }
+    pub fn window_resumed() -> String {
+        Self::response_message(Some(json!(["mystremio-window-resumed"])))
+    }
 }

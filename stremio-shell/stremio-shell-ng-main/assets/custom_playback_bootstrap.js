@@ -40,6 +40,8 @@
   }
 
   function canReportAppReady() {
+    // Wait for MyStremio bootstrap + plugins — early app-ready hides splash on the BAD path.
+    if (!window.__stremioCustomBootstrapReady) return false;
     const app = document.getElementById('app');
     return Boolean(app && app.childElementCount > 0);
   }
@@ -58,7 +60,7 @@
         return;
       }
       window.__stremioShellAppReadySent = true;
-      console.info('[StremioCustom] app-ready fallback sent');
+      console.info('[StremioCustom] app-ready fallback sent (after bootstrap)');
     } catch (error) {
       console.warn('[StremioCustom] app-ready fallback failed:', error);
     }

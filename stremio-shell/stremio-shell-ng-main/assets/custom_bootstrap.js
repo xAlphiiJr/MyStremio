@@ -11,7 +11,12 @@
   let appliedThemeName = null;
   let pathsCache = null;
 
-  function invoke(method, params) {
+  /**
+   * @param {string} method
+   * @param {object} [params]
+   * @param {number} [timeoutMs] Default 15s; use shorter for cold-boot critical path.
+   */
+  function invoke(method, params, timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
       const id = requestId++;
       pending.set(id, { resolve, reject });
@@ -23,12 +28,13 @@
         pending.delete(id);
         reject(error);
       }
+      const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 15000;
       setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
           reject(new Error(`Custom API timeout: ${method}`));
         }
-      }, 15000);
+      }, ms);
     });
   }
 
@@ -95,15 +101,35 @@
     else entry.resolve(data.result);
   };
 
+  function maybeHandleWindowResumedMessage(data) {
+    try {
+      const args = Array.isArray(data?.args) ? data.args : null;
+      if (!args || args[0] !== 'mystremio-window-resumed') return false;
+      if (typeof window.__stremioCustomOnWindowResumed === 'function') {
+        window.__stremioCustomOnWindowResumed('shell-rpc');
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function hookShellMessages() {
-    if (!window.chrome?.webview) return;
-    window.chrome.webview.addEventListener('message', (ev) => {
-      try {
-        const raw = ev?.data;
-        const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        if (data?.stremioCustom) window.__stremioCustomDeliverApiMessage(data);
-      } catch (_) {}
-    });
+    if (window.__stremioCustomShellMessagesHooked) return;
+    window.__stremioCustomShellMessagesHooked = true;
+    if (window.chrome?.webview) {
+      window.chrome.webview.addEventListener('message', (ev) => {
+        try {
+          const raw = ev?.data;
+          const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          if (data?.stremioCustom) {
+            window.__stremioCustomDeliverApiMessage(data);
+            return;
+          }
+          maybeHandleWindowResumedMessage(data);
+        } catch (_) {}
+      });
+    }
     const transport = window.qt?.webChannelTransport;
     if (!transport) return;
     const original = transport.onmessage;
@@ -115,6 +141,7 @@
           window.__stremioCustomDeliverApiMessage(data);
           return;
         }
+        if (maybeHandleWindowResumedMessage(data)) return;
       } catch (_) {}
       if (typeof original === 'function') original.call(this, ev);
     };
@@ -1046,7 +1073,10 @@
     }
     document.getElementById('stremio-custom-active-theme')?.remove();
     appliedThemeName = targetTheme;
-    const css = await api.readTheme(targetTheme);
+    const css = await invoke('read-theme', { fileName: targetTheme }, 4000).catch((error) => {
+      console.warn('[StremioCustom] Theme read failed:', error);
+      return null;
+    });
     if (!css) {
       console.warn('[StremioCustom] Theme not found:', targetTheme);
       return false;
@@ -1086,11 +1116,26 @@
     return String(fileRef).replace(/[\\/]/g, '__');
   }
 
+  /** @type {string[]|null} */
+  let pluginsInventoryCache = null;
+  let pluginsInventoryCacheAt = 0;
+
+  async function listPluginsCached(force = false) {
+    const now = Date.now();
+    if (!force && pluginsInventoryCache && now - pluginsInventoryCacheAt < 8000) {
+      return pluginsInventoryCache;
+    }
+    const plugins = await api.listPlugins();
+    pluginsInventoryCache = Array.isArray(plugins) ? plugins : [];
+    pluginsInventoryCacheAt = now;
+    return pluginsInventoryCache;
+  }
+
   async function resolvePluginRef(fileRef) {
     const normalized = String(fileRef || '').replace(/\\/g, '/');
     if (!normalized) return null;
     if (isHeroPluginRef(normalized)) return DYNAMIC_HERO_PLUGIN;
-    const plugins = await api.listPlugins();
+    const plugins = await listPluginsCached();
     if (plugins.includes(normalized)) return normalized;
     const baseName = normalized.split('/').pop();
     return plugins.find((p) => p.split('/').pop() === baseName) || null;
@@ -1102,7 +1147,7 @@
 
     let plugins = [];
     try {
-      plugins = await api.listPlugins();
+      plugins = await listPluginsCached();
     } catch (error) {
       console.warn('[StremioCustom] listPlugins failed during migrate; keeping enabled list', error);
       return enabled;
@@ -1110,11 +1155,15 @@
     // Never wipe the enabled list when the disk inventory is briefly empty/unavailable.
     if (!Array.isArray(plugins) || !plugins.length) return enabled;
 
+    // Non-destructive: keep unresolved refs (partial inventory must not shrink disk).
+    // Persist only when a path was rewritten to a known inventory entry.
     const migrated = [];
+    let renamed = false;
     for (const fileRef of enabled) {
       const normalized = String(fileRef || '').replace(/\\/g, '/');
       if (!normalized) continue;
       if (isHeroPluginRef(normalized)) {
+        if (normalized !== DYNAMIC_HERO_PLUGIN) renamed = true;
         migrated.push(DYNAMIC_HERO_PLUGIN);
         continue;
       }
@@ -1124,9 +1173,16 @@
       }
       const baseName = normalized.split('/').pop();
       const resolved = plugins.find((p) => p.split('/').pop() === baseName) || null;
-      if (resolved) migrated.push(resolved);
+      if (resolved) {
+        if (resolved !== normalized) renamed = true;
+        migrated.push(resolved);
+      } else {
+        migrated.push(normalized);
+      }
     }
-    if (JSON.stringify(migrated) !== JSON.stringify(enabled)) setEnabledPlugins(migrated);
+    if (renamed && JSON.stringify(migrated) !== JSON.stringify(enabled)) {
+      setEnabledPlugins(migrated);
+    }
     return migrated;
   }
 
@@ -1137,14 +1193,9 @@
     );
   }
 
-  async function loadPlugin(fileRef) {
-    const resolved = await resolvePluginRef(fileRef);
-    if (!resolved) return false;
-    if (isHeroPluginRef(resolved)) return true;
+  function injectPluginScript(resolved, rawContent) {
     const scriptId = toScriptId(resolved);
     if (document.getElementById(scriptId)) return true;
-    const rawContent = await api.readPlugin(resolved);
-    if (!rawContent) return false;
     const content = stripUnsafePluginPreamble(rawContent);
     const pluginBaseName = resolved.split('/').pop().replace(PLUGIN_EXT, '');
     const scopedScript = `(function(){const StremioEnhancedAPI={logger:{info:(m)=>window.StremioEnhancedAPI?.info('${pluginBaseName}',m),warn:(m)=>window.StremioEnhancedAPI?.warn('${pluginBaseName}',m),error:(m)=>window.StremioEnhancedAPI?.error('${pluginBaseName}',m)},getSetting:(k)=>window.StremioEnhancedAPI?.getSetting('${pluginBaseName}',k),saveSetting:(k,v)=>window.StremioEnhancedAPI?.saveSetting('${pluginBaseName}',k,v),registerSettings:(s)=>window.StremioEnhancedAPI?.registerSettings('${pluginBaseName}',s),onSettingsSaved:(cb)=>window.StremioEnhancedAPI?.onSettingsSaved('${pluginBaseName}',cb),showAlert:async(t,ti,m)=>{window.alert(ti+'\\n\\n'+m);return 0},showPrompt:async(ti,m,d)=>window.prompt(ti+'\\n\\n'+m,d||'')};try{${content}}catch(err){console.error('[StremioCustom] Plugin crashed: ${resolved}',err);}})();`;
@@ -1153,6 +1204,35 @@
     script.textContent = scopedScript;
     (document.head || document.body || document.documentElement).appendChild(script);
     return true;
+  }
+
+  async function loadPlugin(fileRef) {
+    const resolved = await resolvePluginRef(fileRef);
+    if (!resolved) return false;
+    if (isHeroPluginRef(resolved)) return true;
+    if (document.getElementById(toScriptId(resolved))) return true;
+    const rawContent = await api.readPlugin(resolved);
+    if (!rawContent) return false;
+    return injectPluginScript(resolved, rawContent);
+  }
+
+  /**
+   * Cold-boot first-paint load: try canonical paths directly (no list-plugins roundtrip).
+   * @param {string} fileRef
+   * @returns {Promise<boolean>}
+   */
+  async function loadPluginDirect(fileRef) {
+    const normalized = normalizePluginRef(fileRef);
+    if (!normalized) return false;
+    if (isHeroPluginRef(normalized)) return true;
+    if (document.getElementById(toScriptId(normalized))) return true;
+    try {
+      const raw = await invoke('read-plugin', { fileRef: normalized }, 4000);
+      if (raw) return injectPluginScript(normalized, raw);
+    } catch (error) {
+      console.warn('[StremioCustom] Direct plugin read failed:', normalized, error);
+    }
+    return loadPlugin(normalized);
   }
 
   function unloadPlugin(fileRef) {
@@ -1242,35 +1322,289 @@
     'player/anime4k.plugin.js',
   ]);
 
+  /** Board chrome visible on first paint — load before splash/UI ready. */
+  const BOARD_FIRST_PAINT_PLUGINS = new Set([
+    'interface/hero-div.plugin.js',
+    'interface/enhanced-covers.plugin.js',
+    'interface/enhanced-titlebar.plugin.js',
+    'interface/context-menu-fix.plugin.js',
+    'metadata/meta-hover-panel.plugin.js',
+  ]);
+
   const IDLE_DURING_PLAYBACK_PREFIXES = [
     'interface/',
     'metadata/',
     'addons/',
   ];
 
+  function normalizePluginRef(pluginRef) {
+    return String(pluginRef || '').replace(/\\/g, '/');
+  }
+
+  function pluginBaseName(pluginRef) {
+    return normalizePluginRef(pluginRef).split('/').pop() || '';
+  }
+
   function isIdleDuringPlayback(pluginRef) {
-    const normalized = String(pluginRef || '').replace(/\\/g, '/');
+    const normalized = normalizePluginRef(pluginRef);
     if (PLAYBACK_KEEP_PLUGINS.has(normalized)) return false;
+    if ([...PLAYBACK_KEEP_PLUGINS].some((ref) => pluginBaseName(ref) === pluginBaseName(normalized))) {
+      return false;
+    }
     return IDLE_DURING_PLAYBACK_PREFIXES.some(
       (prefix) => normalized === prefix || normalized.startsWith(prefix)
     );
   }
 
-  function filterPluginsForRoute(enabled, playbackActive = isPlayerRoute()) {
-    if (!playbackActive) return enabled;
-    return enabled.filter((pluginRef) => !isIdleDuringPlayback(pluginRef));
+  function isBoardFirstPaintPlugin(pluginRef) {
+    const normalized = normalizePluginRef(pluginRef);
+    if (isHeroPluginRef(normalized)) return true;
+    if (BOARD_FIRST_PAINT_PLUGINS.has(normalized)) return true;
+    const base = pluginBaseName(normalized);
+    return [...BOARD_FIRST_PAINT_PLUGINS].some((ref) => pluginBaseName(ref) === base);
   }
 
-  async function ensurePluginsLoadedForRoute() {
-    const enabled = await migrateEnabledPlugins();
-    const targetPlugins = filterPluginsForRoute(enabled);
-    for (const pluginRef of enabled) {
-      if (!targetPlugins.includes(pluginRef)) await unloadPluginResolved(pluginRef);
+  /**
+   * @param {string[]} enabled
+   * @param {'firstPaint'|'fullBoard'|'playback'} mode
+   * @returns {string[]}
+   */
+  function filterPluginsForPhase(enabled, mode) {
+    if (mode === 'playback') {
+      return enabled.filter((pluginRef) => !isIdleDuringPlayback(pluginRef));
     }
-    for (const pluginRef of targetPlugins) {
-      await loadPlugin(pluginRef);
+    if (mode === 'firstPaint') {
+      return enabled.filter((pluginRef) => isBoardFirstPaintPlugin(pluginRef));
+    }
+    return enabled;
+  }
+
+  function filterPluginsForRoute(enabled, playbackActive = effectivePlaybackActive()) {
+    return filterPluginsForPhase(enabled, playbackActive ? 'playback' : 'fullBoard');
+  }
+
+  /**
+   * True only for a real player session. Transient cold-start #/player (before
+   * bootstrap-ready / while startup-guard blocks) must keep board plugins.
+   * @returns {boolean}
+   */
+  function effectivePlaybackActive() {
+    if (!isPlayerRoute()) return false;
+    try {
+      if (
+        typeof window.__stremioCustomIsColdStartPlayerBlocked === 'function' &&
+        window.__stremioCustomIsColdStartPlayerBlocked()
+      ) {
+        return false;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+    if (!window.__stremioCustomBootstrapReady) return false;
+    return true;
+  }
+
+  /**
+   * @param {'firstPaint'|'fullBoard'|'playback'} [mode]
+   */
+  async function ensurePluginsLoadedForRoute(mode) {
+    const enabled = await migrateEnabledPlugins();
+    const resolvedMode =
+      mode || (effectivePlaybackActive() ? 'playback' : 'fullBoard');
+    const targetPlugins = filterPluginsForPhase(enabled, resolvedMode);
+
+    // firstPaint: only load critical board plugins — never unload deferred ones.
+    // playback: unload board/detail idle plugins.
+    // fullBoard: load all enabled (no unload of enabled set).
+    if (resolvedMode === 'playback') {
+      const toUnload = enabled.filter(
+        (pluginRef) => !targetPlugins.includes(pluginRef) && isIdleDuringPlayback(pluginRef)
+      );
+      await Promise.all(
+        toUnload.map((pluginRef) =>
+          unloadPluginResolved(pluginRef).catch((error) => {
+            console.warn('[StremioCustom] unload failed:', pluginRef, error);
+          })
+        )
+      );
+    }
+
+    await Promise.all(targetPlugins.map((pluginRef) => loadPlugin(pluginRef)));
+  }
+
+  /**
+   * @param {string} fileRef
+   * @returns {Promise<boolean>}
+   */
+  async function isPluginScriptPresent(fileRef) {
+    const resolved = (await resolvePluginRef(fileRef)) || normalizePluginRef(fileRef);
+    if (!resolved) return false;
+    if (isHeroPluginRef(resolved)) return true;
+    if (document.getElementById(toScriptId(resolved))) return true;
+    const baseName = resolved.split('/').pop();
+    if (!baseName) return false;
+    const suffix = `__${baseName.replace(/\\/g, '__')}`;
+    const scripts = document.querySelectorAll('script[id]');
+    for (let i = 0; i < scripts.length; i++) {
+      if (scripts[i].id.endsWith(suffix)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * @param {string[]} refs
+   * @returns {Promise<string[]>}
+   */
+  async function listMissingPluginScripts(refs) {
+    const flags = await Promise.all(refs.map((ref) => isPluginScriptPresent(ref)));
+    return refs.filter((_, i) => !flags[i]);
+  }
+
+  /**
+   * Load phase plugins and re-inject any that are still missing.
+   * @param {'firstPaint'|'fullBoard'|'playback'} [mode]
+   * @param {number} [maxAttempts]
+   * @returns {Promise<boolean>}
+   */
+  async function ensurePluginsLoadedWithRetry(mode = 'firstPaint', maxAttempts = 2) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await ensurePluginsLoadedForRoute(mode);
+      if (effectivePlaybackActive()) return true;
+      const enabled = await migrateEnabledPlugins();
+      const target = filterPluginsForPhase(enabled, mode);
+      const missing = await listMissingPluginScripts(target);
+      if (!missing.length) return true;
+      console.warn(
+        '[StremioCustom] Missing plugin scripts after load, retry',
+        attempt + 1,
+        missing
+      );
+      await Promise.all(
+        missing.map((ref) =>
+          unloadPluginResolved(ref).catch(() => {
+            /* ignore */
+          })
+        )
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40 * (attempt + 1)));
+    }
+    const enabled = await migrateEnabledPlugins();
+    const stillMissing = await listMissingPluginScripts(filterPluginsForPhase(enabled, mode));
+    if (stillMissing.length) {
+      console.error('[StremioCustom] Plugins still missing after retries:', stillMissing);
+      return false;
+    }
+    return true;
+  }
+
+  /** Load deferred board/detail/player plugins after UI reveal. */
+  function scheduleDeferredPluginLoad() {
+    const run = () => {
+      if (effectivePlaybackActive()) return;
+      ensurePluginsLoadedForRoute('fullBoard').catch((error) => {
+        console.warn('[StremioCustom] Deferred plugin load failed:', error);
+      });
+    };
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(() => run(), { timeout: 1500 });
+    } else {
+      setTimeout(run, 0);
     }
   }
+
+  /**
+   * Fast first-paint: heal enabled list from LS only, load canonical plugin paths.
+   * No list-plugins / migrate IPC on the critical path.
+   */
+  async function loadFirstPaintPluginsFast() {
+    const enabled = getEnabledPlugins();
+    const next = [...enabled];
+    let changed = false;
+    for (const ref of BOARD_FIRST_PAINT_PLUGINS) {
+      if (!isPluginEnabled(ref, next)) {
+        next.push(ref);
+        changed = true;
+      }
+    }
+    if (changed) setEnabledPlugins(next);
+    // Warm inventory cache in background for later resolve/migrate.
+    listPluginsCached().catch(() => {});
+    await Promise.all([...BOARD_FIRST_PAINT_PLUGINS].map((ref) => loadPluginDirect(ref)));
+  }
+
+  /**
+   * Idempotent UI reveal — used by happy path and soft deadline recovery.
+   * @param {string} reason
+   */
+  function markUiReady(reason) {
+    if (window.__stremioCustomUiReadyNotified) return;
+    window.__stremioCustomUiReadyNotified = true;
+    window.__stremioCustomBootstrapReady = true;
+    document.dispatchEvent(new CustomEvent('stremio-custom-bootstrap-ready'));
+    try {
+      window.__stremioCustomDismissStartupOverlays?.();
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      window.__stremioCustomHideAppLoadingMask?.();
+    } catch (_) {
+      /* ignore */
+    }
+    notifyShellUiReady();
+    window.__stremioCustomScheduleShellAppReadyFallback?.();
+    console.info('[StremioCustom] UI ready:', reason || 'ok');
+  }
+
+  /**
+   * Warm resume from tray / second-instance focus — no splash, no bootstrap re-run.
+   * @param {string} [source]
+   */
+  async function onWindowResumed(source) {
+    // Cold boot still under splash: do not strip the boot seal.
+    if (!window.__stremioCustomBootstrapReady) {
+      if (isPlayerRoute() && !hasLivePlaybackStream()) {
+        settleBoardRouteBeforePlugins();
+      }
+      return;
+    }
+
+    try {
+      window.__stremioCustomDismissStartupOverlays?.();
+    } catch (_) {
+      /* ignore */
+    }
+    try {
+      window.__stremioCustomRemoveBootSeal?.();
+    } catch (_) {
+      /* ignore */
+    }
+
+    // Dead #/player without MPV stream → board (warm resume only; force redirect).
+    if (isPlayerRoute() && !hasLivePlaybackStream()) {
+      if (typeof window.__stremioCustomRedirectStalePlayer === 'function') {
+        window.__stremioCustomRedirectStalePlayer('Warm resume stale player');
+      } else {
+        settleBoardRouteBeforePlugins();
+      }
+      console.info('[StremioCustom] Warm resume: stale player → board', source || '');
+    }
+
+    ensurePlayerTransparencyFix();
+
+    try {
+      if (effectivePlaybackActive()) {
+        await ensurePluginsLoadedForRoute('playback');
+      } else {
+        await ensurePluginsLoadedForRoute('firstPaint');
+        scheduleDeferredPluginLoad();
+      }
+    } catch (error) {
+      console.warn('[StremioCustom] Warm resume plugin ensure failed:', error);
+    }
+  }
+
+  window.__stremioCustomOnWindowResumed = onWindowResumed;
 
   function injectPlaybackGuard() {
     if (document.getElementById('stremio-custom-playback-guard')) return;
@@ -1282,6 +1616,9 @@
   }
 
   let lastPlaybackActive = null;
+  let routeSyncGen = 0;
+  /** @type {Promise<void>|null} */
+  let routeSyncInFlight = null;
 
   /**
    * Stops player-only plugin timers/observers/locks while off the player route.
@@ -1314,18 +1651,45 @@
     );
   }
 
+  /**
+   * Serialize route plugin sync; ignore stale generations so a late player-unload
+   * cannot strip board plugins after a cold-start redirect to #/board.
+   * @returns {Promise<void>}
+   */
   async function syncPluginsToRoute() {
-    const playbackActive = isPlayerRoute();
+    const playbackActive = effectivePlaybackActive();
     if (playbackActive === lastPlaybackActive) return;
-    lastPlaybackActive = playbackActive;
-    const enabled = await migrateEnabledPlugins();
-    if (playbackActive) {
-      for (const pluginRef of enabled) {
-        if (isIdleDuringPlayback(pluginRef)) await unloadPluginResolved(pluginRef);
+
+    const gen = ++routeSyncGen;
+    const run = (async () => {
+      try {
+        const enabled = await migrateEnabledPlugins();
+        if (gen !== routeSyncGen) return;
+
+        // Re-read after await — hash may have flipped during cold-start redirect.
+        const activeNow = effectivePlaybackActive();
+        if (activeNow) {
+          for (const pluginRef of enabled) {
+            if (gen !== routeSyncGen) return;
+            if (isIdleDuringPlayback(pluginRef)) await unloadPluginResolved(pluginRef);
+          }
+        } else {
+          suspendPlayerPluginRuntime();
+          if (gen !== routeSyncGen) return;
+          await ensurePluginsLoadedForRoute();
+        }
+        if (gen !== routeSyncGen) return;
+        lastPlaybackActive = activeNow;
+      } catch (error) {
+        console.warn('[StremioCustom] syncPluginsToRoute failed:', error);
       }
-    } else {
-      suspendPlayerPluginRuntime();
-      await ensurePluginsLoadedForRoute();
+    })();
+
+    routeSyncInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (routeSyncInFlight === run) routeSyncInFlight = null;
     }
   }
 
@@ -1335,29 +1699,43 @@
 
     const enabled = await migrateEnabledPlugins();
     const defaultsApplied = localStorage.getItem(DEFAULTS_APPLIED_KEY) === 'true';
-    // Recover a wiped enabled list (race) even after defaults were marked applied.
-    if (defaultsApplied && enabled.length > 0) return;
-
     const next = [...enabled];
     let changed = false;
-    for (const ref of all) {
-      const normalized = String(ref || '').replace(/\\/g, '/');
-      const baseName = normalized.split('/').pop() || '';
-      const skip = DEFAULT_DISABLED_PLUGIN_PATTERNS.some(
-        (pattern) => pattern.test(normalized) || pattern.test(baseName)
-      );
-      if (skip) continue;
-      if (!isPluginEnabled(ref, next)) {
-        next.push(normalized);
+
+    // Self-heal: always re-add missing board-first-paint plugins (even after defaultsApplied).
+    for (const ref of BOARD_FIRST_PAINT_PLUGINS) {
+      const resolved =
+        (await resolvePluginRef(ref)) ||
+        all.find((p) => pluginBaseName(p) === pluginBaseName(ref)) ||
+        ref;
+      if (!isPluginEnabled(resolved, next)) {
+        next.push(normalizePluginRef(resolved));
         changed = true;
       }
     }
+
+    // Full default enable only on first apply or wiped list.
+    if (!defaultsApplied || enabled.length === 0) {
+      for (const ref of all) {
+        const normalized = String(ref || '').replace(/\\/g, '/');
+        const baseName = normalized.split('/').pop() || '';
+        const skip = DEFAULT_DISABLED_PLUGIN_PATTERNS.some(
+          (pattern) => pattern.test(normalized) || pattern.test(baseName)
+        );
+        if (skip) continue;
+        if (!isPluginEnabled(ref, next)) {
+          next.push(normalized);
+          changed = true;
+        }
+      }
+    }
+
     if (changed) {
       setEnabledPlugins(next);
-      await ensurePluginsLoadedForRoute();
+      // Do not load plugins here — cold boot loads firstPaint, then deferred fullBoard.
     }
     localStorage.setItem(DEFAULTS_APPLIED_KEY, 'true');
-    persistUserPreferences();
+    if (changed || !defaultsApplied) persistUserPreferences();
   }
 
   /**
@@ -1380,7 +1758,6 @@
     }
     if (changed) {
       setEnabledPlugins(next);
-      await ensurePluginsLoadedForRoute();
     }
     localStorage.setItem(NATIVE_PLAYER_FEATURES_MIGRATED_KEY, 'true');
     persistUserPreferences();
@@ -1415,7 +1792,6 @@
     }
     if (changed) {
       setEnabledPlugins(next);
-      await ensurePluginsLoadedForRoute();
     }
     localStorage.setItem(BRIGHTNESS_TO_PICTURE_MIGRATED_KEY, 'true');
     persistUserPreferences();
@@ -1591,63 +1967,131 @@
     }
   }
 
+  /**
+   * Ensure we are on #/board before any plugin load/unload work.
+   * Prevents the BAD cold-start path (stale #/player → unload race).
+   */
+  function settleBoardRouteBeforePlugins() {
+    // Route only — never re-create the boot seal (splash safety may already
+    // have retired it; recreating caused permanent black screens).
+    const hash = location.hash || '';
+    if (!/#\/player(?:\/|$|\?|#)/.test(hash)) return;
+    const target =
+      (location.pathname || '/index.html') + (location.search || '') + '#/board';
+    try {
+      history.replaceState(null, '', target);
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      document.dispatchEvent(new CustomEvent('stremio-custom-route-change'));
+      console.info('[StremioCustom] Forced #/board (stale player route)');
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function notifyShellUiReady() {
+    try {
+      const payload = JSON.stringify({ id: Date.now(), args: ['mystremio-ui-ready'] });
+      if (window.chrome?.webview?.postMessage) {
+        window.chrome.webview.postMessage(payload);
+      } else if (window.qt?.webChannelTransport?.send) {
+        window.qt.webChannelTransport.send(payload);
+      }
+    } catch (error) {
+      console.warn('[StremioCustom] mystremio-ui-ready notify failed:', error);
+    }
+  }
+
   async function bootstrap() {
     hookShellMessages();
     injectPlaybackGuard();
-    await hydrateUserPreferences();
-    await invoke('apply-ui-scale').catch(() => {});
-    if (localStorage.getItem(DYNAMIC_HERO_ENABLED_KEY) === null) {
-      localStorage.setItem(DYNAMIC_HERO_ENABLED_KEY, '1');
-    }
-    await ensureDefaultPluginsEnabled();
-    await migrateNativePlayerFeaturesToPlugins();
-    await migrateBrightnessToPicturePlugin();
-    await migrateAnime4kPluginEnabled();
-    syncDynamicHeroEnabledFlag();
-    scheduleAuthProfilePersistence();
+    settleBoardRouteBeforePlugins();
 
-    // Theme/plugins before non-critical IPC so a getPaths/language timeout cannot skip them.
-    await ensureThemeApplied();
-    await ensurePluginsLoadedForRoute();
-
-    pathsCache = await api.getPaths().catch((error) => {
-      console.warn('[StremioCustom] getPaths failed:', error);
-      return null;
-    });
-    window.__stremioLanguageNames = await invoke('read-language-names').catch((error) => {
-      console.warn('[StremioCustom] read-language-names failed:', error);
-      return {};
-    });
-
-    safeRun('settingsWatcher', () => window.StremioCustomSettings?.startSettingsWatcher?.(pluginApi));
-    ensurePlayerGlassStyles();
-    ensurePlayerTransparencyFix();
-    if (typeof window.__stremioCustomPlaybackEnsure === 'function') {
-      window.__stremioCustomPlaybackEnsure();
-    }
-    if (typeof window.__stremioCustomVolumePersistEnsure === 'function') {
-      window.__stremioCustomVolumePersistEnsure();
-    }
-    if (typeof window.__stremioCustomSubtitleSyncEnsure === 'function') {
-      window.__stremioCustomSubtitleSyncEnsure();
-    }
-    maybeShowTmdbFirstRunNotice();
-    window.__stremioCustomDismissStartupOverlays?.();
-    window.__stremioCustomHideAppLoadingMask?.();
-    window.__stremioCustomScheduleShellAppReadyFallback?.();
-    document.dispatchEvent(new CustomEvent('stremio-custom-bootstrap-ready'));
-    setTimeout(() => {
-      if (isOnSettingsPage()) {
-        safeRun('settingsCheck', () => window.StremioCustomSettings?.checkSettings?.(pluginApi));
-        safeRun('uiScaleSettings', () => window.StremioCustomUiScale?.scheduleSettingsCheck?.());
-      }
-    }, 500);
-    setTimeout(() => {
-      if (isOnSettingsPage()) {
-        safeRun('settingsCheck', () => window.StremioCustomSettings?.checkSettings?.(pluginApi));
-        safeRun('uiScaleSettings', () => window.StremioCustomUiScale?.scheduleSettingsCheck?.());
-      }
+    // Soft deadline: never leave the user on splash longer than ~2.5s.
+    // Hydrate/migrations used to block for up to 15s IPC timeouts.
+    const revealDeadline = setTimeout(() => {
+      markUiReady('deadline-2.5s');
+      scheduleDeferredPluginLoad();
     }, 2500);
+
+    try {
+      if (localStorage.getItem(DYNAMIC_HERO_ENABLED_KEY) === null) {
+        localStorage.setItem(DYNAMIC_HERO_ENABLED_KEY, '1');
+      }
+      invoke('apply-ui-scale', {}, 3000).catch(() => {});
+
+      // Critical path only: theme + board-first-paint (no hydrate/listPlugins gate).
+      await Promise.all([
+        ensureThemeApplied().catch((error) => {
+          console.warn('[StremioCustom] Theme apply failed on critical path:', error);
+        }),
+        loadFirstPaintPluginsFast().catch((error) => {
+          console.warn('[StremioCustom] First-paint plugins failed:', error);
+        }),
+      ]);
+      settleBoardRouteBeforePlugins();
+      lastPlaybackActive = effectivePlaybackActive();
+
+      clearTimeout(revealDeadline);
+      markUiReady('theme+firstPaint');
+      scheduleDeferredPluginLoad();
+
+      // Non-critical: hydrate, migrations, deferred full board — after UI is up.
+      await hydrateUserPreferences().catch((error) => {
+        console.warn('[StremioCustom] hydrate after reveal failed:', error);
+      });
+      await ensureDefaultPluginsEnabled().catch((error) => {
+        console.warn('[StremioCustom] ensureDefaultPlugins after reveal failed:', error);
+      });
+      await Promise.all([
+        migrateNativePlayerFeaturesToPlugins(),
+        migrateBrightnessToPicturePlugin(),
+        migrateAnime4kPluginEnabled(),
+      ]);
+      syncDynamicHeroEnabledFlag();
+      scheduleAuthProfilePersistence();
+      // Ensure any healed first-paint / deferred plugins are present.
+      scheduleDeferredPluginLoad();
+
+      pathsCache = await api.getPaths().catch((error) => {
+        console.warn('[StremioCustom] getPaths failed:', error);
+        return null;
+      });
+      window.__stremioLanguageNames = await invoke('read-language-names').catch((error) => {
+        console.warn('[StremioCustom] read-language-names failed:', error);
+        return {};
+      });
+
+      safeRun('settingsWatcher', () => window.StremioCustomSettings?.startSettingsWatcher?.(pluginApi));
+      ensurePlayerGlassStyles();
+      ensurePlayerTransparencyFix();
+      if (typeof window.__stremioCustomPlaybackEnsure === 'function') {
+        window.__stremioCustomPlaybackEnsure();
+      }
+      if (typeof window.__stremioCustomVolumePersistEnsure === 'function') {
+        window.__stremioCustomVolumePersistEnsure();
+      }
+      if (typeof window.__stremioCustomSubtitleSyncEnsure === 'function') {
+        window.__stremioCustomSubtitleSyncEnsure();
+      }
+      maybeShowTmdbFirstRunNotice();
+      setTimeout(() => {
+        if (isOnSettingsPage()) {
+          safeRun('settingsCheck', () => window.StremioCustomSettings?.checkSettings?.(pluginApi));
+          safeRun('uiScaleSettings', () => window.StremioCustomUiScale?.scheduleSettingsCheck?.());
+        }
+      }, 500);
+      setTimeout(() => {
+        if (isOnSettingsPage()) {
+          safeRun('settingsCheck', () => window.StremioCustomSettings?.checkSettings?.(pluginApi));
+          safeRun('uiScaleSettings', () => window.StremioCustomUiScale?.scheduleSettingsCheck?.());
+        }
+      }, 2500);
+    } catch (error) {
+      clearTimeout(revealDeadline);
+      markUiReady('bootstrap-error');
+      scheduleDeferredPluginLoad();
+      throw error;
+    }
   }
 
   let bootstrapStarted = false;
@@ -1660,6 +2104,12 @@
     } catch (error) {
       console.error('[StremioCustom] Bootstrap failed:', error);
       bootstrapStarted = false;
+      markUiReady('bootstrap-catch');
+      try {
+        window.__stremioCustomRemoveBootSeal?.();
+      } catch (_) {
+        /* ignore */
+      }
     }
   }
 
@@ -1719,6 +2169,8 @@
   document.addEventListener('stremio-custom-route-change', onShellRouteChange);
   document.addEventListener('stremio-custom-stream-started', () => {
     ensurePlayerTransparencyFix();
+    // Stream makes effectivePlaybackActive true — load player plugins now.
+    syncPluginsToRoute();
   });
   document.addEventListener('stremio-custom-playback-stopped', () => {
     ensurePlayerTransparencyFix();

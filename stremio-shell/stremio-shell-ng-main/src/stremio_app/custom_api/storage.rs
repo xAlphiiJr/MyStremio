@@ -809,11 +809,20 @@ pub fn build_early_storage_restore_script() -> String {
 if(window.__stremioEarlyStorageRestore)return;
 window.__stremioEarlyStorageRestore=true;
 function hasAuthProfile(){{try{{var raw=localStorage.getItem('profile');if(!raw)return false;var p=JSON.parse(raw);return Boolean(p&&p.auth&&p.auth.key);}}catch(_){{return false;}}}}
+function pluginListLen(raw){{try{{var a=JSON.parse(raw);return Array.isArray(a)?a.length:0;}}catch(_){{return 0;}}}}
 var authProfile={auth_json};
 if(authProfile&&!hasAuthProfile()){{try{{localStorage.setItem('profile',authProfile);}}catch(_){{}}}}
 var restore={restore_json};
 var forceRestoreKeys={{"stremio-custom-ui-scale-percent":true}};
-Object.keys(restore).forEach(function(key){{try{{if(forceRestoreKeys[key]||localStorage.getItem(key)===null)localStorage.setItem(key,restore[key]);}}catch(_){{}}}});
+Object.keys(restore).forEach(function(key){{try{{
+  var disk=restore[key];
+  var cur=localStorage.getItem(key);
+  if(forceRestoreKeys[key]||cur===null){{localStorage.setItem(key,disk);return;}}
+  // Repair shrunk enabledPlugins: prefer disk when it has more entries.
+  if(key==='enabledPlugins'&&pluginListLen(disk)>pluginListLen(cur)){{
+    localStorage.setItem(key,disk);
+  }}
+}}catch(_){{}}}});
 }}catch(e){{console.warn('[StremioCustom] early storage restore failed',e);}}}})();"#
     )
 }

@@ -5,7 +5,7 @@ use native_windows_gui::{self as nwg, PartialUi};
 use once_cell::unsync::OnceCell;
 use serde_json::json;
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::mem;
 use std::rc::Rc;
@@ -31,6 +31,8 @@ pub struct WebView {
     pub endpoint: Rc<OnceCell<String>>,
     pub dev_tools: Rc<OnceCell<bool>>,
     pub controller: Rc<OnceCell<Controller>>,
+    /// Desired visibility before/while the controller is still creating.
+    pub deferred_visible: Rc<Cell<bool>>,
     pub channel: ipc::Channel,
     notice: nwg::Notice,
     compute: RefCell<Option<thread::JoinHandle<()>>>,
@@ -47,6 +49,24 @@ impl WebView {
                     controller.put_bounds(rect).ok();
                     apply_ui_scale(controller, hwnd);
                 }
+            }
+        }
+    }
+
+    /// Toggle WebView visibility. Under splash we keep it visible so the board
+    /// can paint while covered; splash + boot seal hide the unfinished UI.
+    pub fn set_visible(&self, visible: bool) {
+        self.deferred_visible.set(visible);
+        if let Some(controller) = self.controller.get() {
+            controller.put_is_visible(visible).ok();
+        }
+    }
+
+    /// Run JS in the top WebView document (splash dismiss, warm resume wake).
+    pub fn execute_script(&self, script: &str) {
+        if let Some(controller) = self.controller.get() {
+            if let Ok(webview) = controller.get_webview() {
+                webview.execute_script(script, |_| Ok(())).ok();
             }
         }
     }
@@ -83,6 +103,7 @@ impl PartialUi for WebView {
             .build(&mut data.notice)
             .ok();
         let controller_clone = data.controller.clone();
+        let deferred_visible = data.deferred_visible.clone();
         let endpoint = data.endpoint.clone();
         let dev_tools = data.dev_tools.clone();
         let webview_flags = concat!(
@@ -331,7 +352,7 @@ impl PartialUi for WebView {
                             }
 
                             wv.execute_script(
-                                r#"try{if(window.self!==window.top){/* skip iframe post-inject */}else{if(window.__stremioCustomDismissStartupOverlays)window.__stremioCustomDismissStartupOverlays();if(document.readyState!=='loading'&&window.runBootstrapOnce)window.runBootstrapOnce();if(window.__stremioCustomPlayerGlassEnsure)window.__stremioCustomPlayerGlassEnsure();if(window.__stremioCustomPlayerLoadingEnsure)window.__stremioCustomPlayerLoadingEnsure();if(window.__stremioCustomHeroLoadingEnsure)window.__stremioCustomHeroLoadingEnsure();if(window.__stremioCustomPlayerTransparencyEnsure)window.__stremioCustomPlayerTransparencyEnsure();if(window.__stremioCustomPlaybackEnsure)window.__stremioCustomPlaybackEnsure();if(window.__stremioCustomVolumePersistEnsure)window.__stremioCustomVolumePersistEnsure();if(window.__stremioDisableHoldSpeedEnsure)window.__stremioDisableHoldSpeedEnsure();if(window.__stremioCustomAudioSyncEnsure)window.__stremioCustomAudioSyncEnsure();if(window.__stremioCustomSubtitleSyncEnsure)window.__stremioCustomSubtitleSyncEnsure();if(window.__stremioCustomLibraryFoldersEnsure)window.__stremioCustomLibraryFoldersEnsure();if(window.__stremioCustomCinebyeAddonsEnsure)window.__stremioCustomCinebyeAddonsEnsure();if(window.__stremioCustomApiKeySettingsEnsure)window.__stremioCustomApiKeySettingsEnsure();}}catch(e){console.error('[StremioCustom] post-inject failed',e);}"#,
+                                r#"try{if(window.self!==window.top){/* skip iframe post-inject */}else{if(document.readyState!=='loading'&&window.runBootstrapOnce)window.runBootstrapOnce();if(window.__stremioCustomPlayerGlassEnsure)window.__stremioCustomPlayerGlassEnsure();if(window.__stremioCustomPlayerLoadingEnsure)window.__stremioCustomPlayerLoadingEnsure();if(window.__stremioCustomHeroLoadingEnsure)window.__stremioCustomHeroLoadingEnsure();if(window.__stremioCustomPlayerTransparencyEnsure)window.__stremioCustomPlayerTransparencyEnsure();if(window.__stremioCustomPlaybackEnsure)window.__stremioCustomPlaybackEnsure();if(window.__stremioCustomVolumePersistEnsure)window.__stremioCustomVolumePersistEnsure();if(window.__stremioDisableHoldSpeedEnsure)window.__stremioDisableHoldSpeedEnsure();if(window.__stremioCustomAudioSyncEnsure)window.__stremioCustomAudioSyncEnsure();if(window.__stremioCustomSubtitleSyncEnsure)window.__stremioCustomSubtitleSyncEnsure();if(window.__stremioCustomLibraryFoldersEnsure)window.__stremioCustomLibraryFoldersEnsure();if(window.__stremioCustomCinebyeAddonsEnsure)window.__stremioCustomCinebyeAddonsEnsure();if(window.__stremioCustomApiKeySettingsEnsure)window.__stremioCustomApiKeySettingsEnsure();}}catch(e){console.error('[StremioCustom] post-inject failed',e);}"#,
                                 |_| Ok(()),
                             )
                             .ok();
@@ -339,7 +360,12 @@ impl PartialUi for WebView {
                         }).expect("Cannot add content loading");
 
                         WebView::resize_to_window_bounds(Some(&controller), Some(hwnd));
-                        controller.put_is_visible(true).ok();
+                        // Paint under splash immediately (splash + boot seal cover unfinished UI).
+                        // deferred_visible still honors explicit hide (e.g. tray).
+                        controller
+                            .put_is_visible(true)
+                            .ok();
+                        deferred_visible.set(true);
                         controller
                             .move_focus(webview2::MoveFocusReason::Programmatic)
                             .ok();

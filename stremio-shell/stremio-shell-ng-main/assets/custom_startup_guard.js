@@ -2,10 +2,13 @@
   'use strict';
 
   /**
-   * Cold-start guard for stale persisted routes and transparent-shell black screens.
+   * Startup / route guard for stale #/player without a live MPV stream.
    *
-   * Stremio may restore #/player from WebView2 storage without an active MPV stream.
-   * The shell WebView is transparent on that route, which looks like a black screen.
+   * - Cold boot: redirect restored #/player → #/board until bootstrap-ready.
+   * - After ready: do NOT redirect (user may be opening the player); keep opaque
+   *   until a live stream allows transparency.
+   * - Warm resume: callers force-redirect dead player sessions.
+   * - Never re-create the boot seal after dismiss (permanent black screen).
    */
 
   if (window.self !== window.top) return;
@@ -15,10 +18,8 @@
   const OPAQUE_STYLE_ID = 'stremio-custom-startup-opaque';
   const PLAYER_ROUTE = /#\/player(?:\/|$|\?|#)/;
   const BOARD_HASH = '#/board';
-  const COLD_START_MS = 8000;
   const ROUTE_WATCH_MS = 250;
 
-  const coldStartEndsAt = Date.now() + COLD_START_MS;
   let streamSessionAllowed = false;
   let routeWatchTimer = null;
 
@@ -26,8 +27,16 @@
     return PLAYER_ROUTE.test(location.hash || '');
   }
 
-  function isColdStartActive() {
-    return Date.now() < coldStartEndsAt && !streamSessionAllowed;
+  function hasLiveStream() {
+    try {
+      return Boolean(window.StremioCustomPlayback?.getMpvSnapshot?.()?.hasStream);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isStalePlayerRoute() {
+    return isPlayerRoute() && !streamSessionAllowed && !hasLiveStream();
   }
 
   function boardUrl() {
@@ -35,7 +44,7 @@
   }
 
   function ensureOpaqueFallback() {
-    if (isPlayerRoute() && streamSessionAllowed) return;
+    if (isPlayerRoute() && (streamSessionAllowed || hasLiveStream())) return;
     let style = document.getElementById(OPAQUE_STYLE_ID);
     if (!style) {
       style = document.createElement('style');
@@ -54,13 +63,27 @@
     document.getElementById(OPAQUE_STYLE_ID)?.remove();
   }
 
-  function redirectStalePlayerRoute(reason) {
-    if (!isPlayerRoute() || streamSessionAllowed) return false;
+  /**
+   * @param {string} reason
+   * @param {{ force?: boolean }} [opts]
+   */
+  function redirectStalePlayerRoute(reason, opts) {
+    const force = Boolean(opts && opts.force);
+    if (!isStalePlayerRoute()) return false;
+    // After bootstrap-ready, only warm-resume (force) may steal the route —
+    // otherwise intentional play navigations get bounced back to board.
+    if (!force && window.__stremioCustomBootstrapReady) return false;
+
     const target = boardUrl();
     if (`${location.pathname}${location.search}${location.hash}` === target) return false;
     console.info(`[StremioCustom] ${reason} — redirecting to board`);
     history.replaceState(null, '', target);
     window.dispatchEvent(new HashChangeEvent('hashchange'));
+    try {
+      document.dispatchEvent(new CustomEvent('stremio-custom-route-change'));
+    } catch (_) {
+      /* ignore */
+    }
     ensureOpaqueFallback();
     return true;
   }
@@ -85,11 +108,11 @@
   function startRouteWatch() {
     if (routeWatchTimer) return;
     routeWatchTimer = window.setInterval(() => {
-      if (!isColdStartActive()) {
+      if (window.__stremioCustomBootstrapReady) {
         stopRouteWatch();
         return;
       }
-      redirectStalePlayerRoute('Stale player route during cold start');
+      redirectStalePlayerRoute('Stale player route without live stream');
     }, ROUTE_WATCH_MS);
   }
 
@@ -98,8 +121,9 @@
     allowPlayerSession('stream-activity');
   }
 
+  /** Blocks treating #/player as real playback until a live stream exists. */
   window.__stremioCustomIsColdStartPlayerBlocked = function () {
-    return isPlayerRoute() && isColdStartActive();
+    return isStalePlayerRoute();
   };
 
   window.__stremioCustomStartupGuardEnsure = function () {
@@ -110,6 +134,11 @@
   window.__stremioCustomDismissStartupOverlays = function () {
     clearOpaqueFallback();
     stopRouteWatch();
+    try {
+      window.__stremioCustomRemoveBootSeal?.();
+    } catch (_) {
+      /* ignore */
+    }
     const mask = document.getElementById('stremio-custom-app-loading-mask');
     if (mask) {
       mask.classList.remove('visible');
@@ -119,13 +148,17 @@
     }
   };
 
+  window.__stremioCustomRedirectStalePlayer = function (reason) {
+    return redirectStalePlayerRoute(reason || 'Forced stale player redirect', { force: true });
+  };
+
   document.addEventListener('stremio-custom-bootstrap-ready', () => {
     window.__stremioCustomBootstrapReady = true;
     window.__stremioCustomDismissStartupOverlays?.();
   });
 
   ensureOpaqueFallback();
-  redirectStalePlayerRoute('Cold start player route without stream');
+  redirectStalePlayerRoute('Player route without live stream');
   startRouteWatch();
 
   document.addEventListener('stremio-custom-stream-started', () => onStreamActivity(), { passive: true });
@@ -138,23 +171,24 @@
   );
 
   window.addEventListener('hashchange', () => {
-    if (window.__stremioCustomBootstrapReady) return;
-    if (!isPlayerRoute()) {
+    if (!window.__stremioCustomBootstrapReady) {
+      if (isStalePlayerRoute()) {
+        ensureOpaqueFallback();
+        redirectStalePlayerRoute('Player route without live stream');
+      } else if (!isPlayerRoute()) {
+        ensureOpaqueFallback();
+      }
+      return;
+    }
+    // After ready: opaque until live stream; never bounce intentional play.
+    if (isStalePlayerRoute()) {
       ensureOpaqueFallback();
       return;
     }
-    if (isColdStartActive()) {
-      ensureOpaqueFallback();
-      redirectStalePlayerRoute('Player route blocked during cold start');
-      return;
+    if (streamSessionAllowed || hasLiveStream()) {
+      clearOpaqueFallback();
     }
-    clearOpaqueFallback();
   });
-
-  window.setTimeout(() => {
-    stopRouteWatch();
-    if (!window.__stremioCustomBootstrapReady && !isPlayerRoute()) ensureOpaqueFallback();
-  }, COLD_START_MS + 50);
 
   console.info('[StremioCustom] Startup guard ready.');
 })();

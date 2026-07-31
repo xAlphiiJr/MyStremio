@@ -91,6 +91,69 @@
     });
   }
 
+  /**
+   * BAD cold-start path: WebView2 restores #/player → board paints under splash
+   * (bottom banner strip) and plugin unload/reload races. Force #/board before
+   * React/HashRouter boots so every launch takes the GOOD path.
+   */
+  function forceBoardHashBeforeReact() {
+    try {
+      const hash = location.hash || '';
+      if (!/#\/player(?:\/|$|\?|#)/.test(hash)) return;
+      const target =
+        (location.pathname || '/index.html') + (location.search || '') + '#/board';
+      history.replaceState(null, '', target);
+      console.info('[StremioCustom] Preboot: cleared stale #/player → #/board');
+    } catch (_) {}
+  }
+
+  /**
+   * Full-viewport seal so board posters cannot paint through gaps in the native
+   * splash (or before plugins finish). Once removed (splash safety / bootstrap
+   * ready), never recreate — that caused permanent black screens after start #3.
+   */
+  function ensureBootSeal() {
+    try {
+      if (window.__stremioCustomBootSealRetired) return;
+      document.documentElement.classList.add('mystremio-booting');
+      let seal = document.getElementById('mystremio-boot-seal');
+      if (!seal) {
+        seal = document.createElement('div');
+        seal.id = 'mystremio-boot-seal';
+        seal.setAttribute('aria-hidden', 'true');
+        seal.style.cssText =
+          'position:fixed;inset:0;z-index:2147483647;background:rgb(20,20,20);' +
+          'pointer-events:all;opacity:1;display:block;';
+        (document.documentElement || document.body).appendChild(seal);
+      }
+      if (!document.getElementById('mystremio-boot-seal-style')) {
+        const style = document.createElement('style');
+        style.id = 'mystremio-boot-seal-style';
+        style.textContent =
+          'html.mystremio-booting #app,html.mystremio-booting #root{' +
+          'visibility:hidden!important;}' +
+          '#mystremio-boot-seal{position:fixed!important;inset:0!important;' +
+          'z-index:2147483647!important;background:rgb(20,20,20)!important;' +
+          'pointer-events:all!important;opacity:1!important;display:block!important;}';
+        (document.head || document.documentElement).appendChild(style);
+      }
+      window.__stremioCustomBootSealActive = true;
+    } catch (_) {}
+  }
+
+  window.__stremioCustomEnsureBootSeal = ensureBootSeal;
+  window.__stremioCustomRemoveBootSeal = function () {
+    try {
+      window.__stremioCustomBootSealRetired = true;
+      document.documentElement.classList.remove('mystremio-booting');
+      document.getElementById('mystremio-boot-seal')?.remove();
+      document.getElementById('mystremio-boot-seal-style')?.remove();
+      window.__stremioCustomBootSealActive = false;
+    } catch (_) {}
+  };
+
+  forceBoardHashBeforeReact();
+  ensureBootSeal();
   sanitizeHeroCache();
   disableServiceWorker();
   installCrashRecovery();
