@@ -173,7 +173,7 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 ### 2.3.7
 
-- **Board catalog navigation** — Optimized catalogue loading on board to reduce lag on weaker hardware
+- **Board catalogue navigation** — Optimized catalogue loading on board to reduce lag on weaker hardware
 - **Enhanced Title Bar** — Optimized enhanced title bar loading to reduce lag on weaker hardware
 - **Search suggestions** — Optimized search suggestion order
 - **Search results** — Fixed issue where search results would appear to big
