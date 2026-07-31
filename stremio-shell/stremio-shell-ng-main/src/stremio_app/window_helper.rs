@@ -8,11 +8,12 @@ use winapi::um::winuser::{
     GetForegroundWindow, GetMonitorInfoA, GetSystemMetrics, GetWindowLongA, GetWindowPlacement,
     GetWindowRect, InvalidateRect, IsIconic, IsZoomed, MonitorFromWindow, SetClassLongPtrW,
     SetForegroundWindow, SetWindowLongA, SetWindowPlacement, SetWindowPos, ShowWindow,
-    GCLP_HBRBACKGROUND, GWL_EXSTYLE, GWL_STYLE, HWND_NOTOPMOST, HWND_TOPMOST, MONITORINFO,
-    MONITOR_DEFAULTTONEAREST, SM_CXSCREEN, SM_CYSCREEN, SWP_FRAMECHANGED, SWP_NOMOVE,
-    SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SW_RESTORE, SW_SHOWMAXIMIZED, WINDOWPLACEMENT,
-    WS_CAPTION, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE, WS_EX_TOPMOST,
-    WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_OVERLAPPEDWINDOW, WS_THICKFRAME, WS_VISIBLE,
+    UpdateWindow, GCLP_HBRBACKGROUND, GWL_EXSTYLE, GWL_STYLE, HWND_NOTOPMOST, HWND_TOP,
+    HWND_TOPMOST, MONITORINFO, MONITOR_DEFAULTTONEAREST, SM_CXSCREEN, SM_CYSCREEN,
+    SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
+    SW_HIDE, SW_RESTORE, SW_SHOWMAXIMIZED, SW_SHOWNORMAL, WINDOWPLACEMENT, WS_CAPTION,
+    WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE, WS_EX_TOPMOST, WS_EX_WINDOWEDGE,
+    WS_MAXIMIZE, WS_OVERLAPPEDWINDOW, WS_THICKFRAME, WS_VISIBLE,
 };
 
 /// Same chrome bits stock stremio-shell-ng clears for fullscreen (proven on Windows).
@@ -155,6 +156,26 @@ impl WindowStyle {
     }
 
     pub fn restore_window_placement(&mut self, hwnd: HWND, placement: WINDOWPLACEMENT) {
+        let show_cmd = self.restore_window_placement_hidden(hwnd, placement);
+        self.show_window_after_splash(hwnd, show_cmd);
+    }
+
+    /**
+     * Apply saved geometry without showing the window (Zaarrg-style: never present
+     * a white client before the native splash has painted).
+     *
+     * @returns Intended showCmd (`SW_SHOWNORMAL` / `SW_SHOWMAXIMIZED`) for the later reveal.
+     */
+    pub fn restore_window_placement_hidden(
+        &mut self,
+        hwnd: HWND,
+        mut placement: WINDOWPLACEMENT,
+    ) -> u32 {
+        let intended_show = if placement.showCmd == SW_SHOWMAXIMIZED as u32 {
+            SW_SHOWMAXIMIZED as u32
+        } else {
+            SW_SHOWNORMAL as u32
+        };
         self.pos = (
             placement.rcNormalPosition.left,
             placement.rcNormalPosition.top,
@@ -163,9 +184,11 @@ impl WindowStyle {
             placement.rcNormalPosition.right - placement.rcNormalPosition.left,
             placement.rcNormalPosition.bottom - placement.rcNormalPosition.top,
         );
+        placement.showCmd = SW_HIDE as u32;
         unsafe {
             SetWindowPlacement(hwnd, &placement);
         }
+        intended_show
     }
 
     /**
@@ -180,6 +203,60 @@ impl WindowStyle {
                 SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, brush as isize);
             }
             InvalidateRect(hwnd, std::ptr::null(), 1);
+        }
+    }
+
+    /**
+     * Force a synchronous paint of the host client (dark brush) before first show.
+     *
+     * @param hwnd Target window.
+     */
+    pub fn update_window_now(&self, hwnd: HWND) {
+        unsafe {
+            InvalidateRect(hwnd, std::ptr::null(), 1);
+            UpdateWindow(hwnd);
+        }
+    }
+
+    /**
+     * Raise a child HWND above siblings (splash over empty client).
+     *
+     * @param child Splash or other covering control.
+     */
+    pub fn bring_child_to_top(&self, child: HWND) {
+        if child.is_null() {
+            return;
+        }
+        unsafe {
+            SetWindowPos(
+                child,
+                HWND_TOP,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+            );
+            InvalidateRect(child, std::ptr::null(), 1);
+            UpdateWindow(child);
+        }
+    }
+
+    /**
+     * Reveal the main window after splash is ready (geometry already applied hidden).
+     *
+     * @param hwnd Target window.
+     * @param show_cmd `SW_SHOWNORMAL` or `SW_SHOWMAXIMIZED`.
+     */
+    pub fn show_window_after_splash(&self, hwnd: HWND, show_cmd: u32) {
+        unsafe {
+            let cmd = if show_cmd == SW_SHOWMAXIMIZED as u32 {
+                SW_SHOWMAXIMIZED
+            } else {
+                SW_SHOWNORMAL
+            };
+            ShowWindow(hwnd, cmd);
+            UpdateWindow(hwnd);
         }
     }
 

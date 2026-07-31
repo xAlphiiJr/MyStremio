@@ -93,17 +93,17 @@
 
   /**
    * BAD cold-start path: WebView2 restores #/player → board paints under splash
-   * (bottom banner strip) and plugin unload/reload races. Force #/board before
-   * React/HashRouter boots so every launch takes the GOOD path.
+   * (bottom banner strip) and plugin unload/reload races. Force `#/` (Board
+   * route path:"/") before React/HashRouter boots — never `#/board` (NotFound).
    */
   function forceBoardHashBeforeReact() {
     try {
       const hash = location.hash || '';
       if (!/#\/player(?:\/|$|\?|#)/.test(hash)) return;
       const target =
-        (location.pathname || '/index.html') + (location.search || '') + '#/board';
+        (location.pathname || '/index.html') + (location.search || '') + '#/';
       history.replaceState(null, '', target);
-      console.info('[StremioCustom] Preboot: cleared stale #/player → #/board');
+      console.info('[StremioCustom] Preboot: cleared stale #/player → #/');
     } catch (_) {}
   }
 

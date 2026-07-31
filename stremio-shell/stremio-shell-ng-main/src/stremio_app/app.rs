@@ -41,6 +41,8 @@ pub struct MainWindow {
     pub autoupdater_setup_file: Arc<Mutex<Option<PathBuf>>>,
     pub requested_fullscreen: Arc<Mutex<Option<bool>>>,
     pub requested_borderless: Arc<Mutex<Option<bool>>>,
+    /// Pending WebView2 DefaultBackgroundColor transparency (MPV punch-through).
+    pub requested_webview_transparent: Arc<Mutex<Option<bool>>>,
     pub saved_window_style: RefCell<WindowStyle>,
     #[nwg_resource]
     pub embed: nwg::EmbedResource,
@@ -80,6 +82,9 @@ pub struct MainWindow {
     #[nwg_control]
     #[nwg_events(OnNotice: [Self::on_toggle_borderless_notice] )]
     pub toggle_borderless_notice: nwg::Notice,
+    #[nwg_control]
+    #[nwg_events(OnNotice: [Self::on_webview_background_notice] )]
+    pub webview_background_notice: nwg::Notice,
     #[nwg_control]
     #[nwg_events(OnNotice: [nwg::stop_thread_dispatch()] )]
     pub quit_notice: nwg::Notice,
@@ -137,24 +142,44 @@ impl MainWindow {
     }
 
     fn on_init(&self) {
-        custom_api::init();
-        self.webview.endpoint.set(self.webui_url.clone()).ok();
-        self.webview.dev_tools.set(self.dev_tools).ok();
+        // Zaarrg/Community-style: never present a white HWND client before splash paints.
+        // 1) dark class brush  2) geometry while hidden  3) splash topmost + UpdateWindow
+        // 4) then ShowWindow. WebView stays visible under splash (dark bg) so Board LoadRange works.
+        let mut intended_show = winapi::um::winuser::SW_SHOWNORMAL as u32;
         if let Some(hwnd) = self.window.handle.hwnd() {
             if let Ok(mut saved_style) = self.saved_window_style.try_borrow_mut() {
                 saved_style.set_dark_window_background(hwnd);
                 saved_style.set_title_bar_color(hwnd);
                 if let Some(window_settings) = WindowSettings::load() {
-                    saved_style
-                        .restore_window_placement(hwnd, window_settings.to_window_placement());
+                    intended_show = saved_style.restore_window_placement_hidden(
+                        hwnd,
+                        window_settings.to_window_placement(),
+                    );
                 } else {
                     saved_style.center_window(hwnd, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT);
+                }
+                saved_style.update_window_now(hwnd);
+                if let Some(splash_hwnd) = self.splash_screen.hwnd() {
+                    saved_style.bring_child_to_top(splash_hwnd);
+                }
+                if !self.start_hidden {
+                    saved_style.show_window_after_splash(hwnd, intended_show);
+                    if let Some(splash_hwnd) = self.splash_screen.hwnd() {
+                        saved_style.bring_child_to_top(splash_hwnd);
+                    }
+                    saved_style.update_window_now(hwnd);
                 }
             }
         }
 
-        self.window.set_visible(!self.start_hidden);
         self.tray.tray_show_hide.set_checked(!self.start_hidden);
+
+        // Bounded wait after the splash is visible (server was spawned during UI build).
+        self.server.wait_ready(time::Duration::from_secs(15));
+
+        custom_api::init();
+        self.webview.endpoint.set(self.webui_url.clone()).ok();
+        self.webview.dev_tools.set(self.dev_tools).ok();
         if self.no_splash {
             // Controller may not exist yet; hide notice reveals WebView when ready.
             self.hide_splash_notice.sender().notice();
@@ -259,6 +284,7 @@ impl MainWindow {
 
         let toggle_fullscreen_sender = self.toggle_fullscreen_notice.sender();
         let toggle_borderless_sender = self.toggle_borderless_notice.sender();
+        let webview_background_sender = self.webview_background_notice.sender();
         let toggle_pip_sender = self.toggle_pip_notice.sender();
         let (pip_response_tx, pip_response_rx) = flume::bounded::<bool>(1);
         custom_api::register_pip_response_sender(pip_response_tx);
@@ -276,6 +302,7 @@ impl MainWindow {
         let autoupdater_setup_mutex = self.autoupdater_setup_file.clone();
         let requested_fullscreen = self.requested_fullscreen.clone();
         let requested_borderless = self.requested_borderless.clone();
+        let requested_webview_transparent = self.requested_webview_transparent.clone();
         thread::spawn(move || loop {
             let Ok(raw) = web_rx.recv() else {
                 break;
@@ -350,6 +377,16 @@ impl MainWindow {
                         {
                             *requested_borderless.lock().unwrap() = Some(enabled);
                             toggle_borderless_sender.notice();
+                        }
+                    }
+                    Some("webview-set-background") => {
+                        if let Some(transparent) = msg
+                            .get_params()
+                            .and_then(|params| params.get("transparent"))
+                            .and_then(|value| value.as_bool())
+                        {
+                            *requested_webview_transparent.lock().unwrap() = Some(transparent);
+                            webview_background_sender.notice();
                         }
                     }
                     Some("quit") => quit_sender.notice(),
@@ -566,6 +603,13 @@ impl MainWindow {
             self.webview.fit_to_window(Some(hwnd));
         }
     }
+
+    /// Apply pending WebView2 background opacity on the UI thread.
+    fn on_webview_background_notice(&self) {
+        if let Some(transparent) = self.requested_webview_transparent.lock().unwrap().take() {
+            self.webview.set_background_transparent(transparent);
+        }
+    }
     fn dismiss_startup_overlays_in_webview(&self) {
         // Splash hide and safety timeout MUST clear boot seal — otherwise a hung
         // bootstrap leaves a permanent black screen that survives tray hide/show.
@@ -597,6 +641,10 @@ impl MainWindow {
         }
         self.webview.set_visible(true);
         self.dismiss_startup_overlays_in_webview();
+        // Re-arm catalog LoadRange after splash hide (retries until Ready / timeout).
+        self.webview.execute_script(
+            r#"try{window.__stremioCustomNudgeBoardCatalogLoadRange&&window.__stremioCustomNudgeBoardCatalogLoadRange('splash-hide');}catch(e){}"#,
+        );
     }
     fn on_focus_notice(&self) {
         self.window.set_visible(true);

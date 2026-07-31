@@ -27,15 +27,47 @@
   const CATALOG_PREVIEW_SIZE = 10;
   /** Debounce enhance while the board mutates during fast vertical scroll. */
   const ENHANCE_DEBOUNCE_MS = 180;
+  /** Pause MutationObserver during fast vertical board scroll; resume after idle. */
+  const SCROLL_IDLE_MS = 180;
+  const WIDTH_RETRY_MS = 200;
+  /** Short TTL for catalog index / buffer count getState round-trips. */
+  const STATE_CACHE_MS = 300;
+  /** Keep Titlebar paused briefly after reveal / LoadNextPage. */
+  const ROW_BUSY_IDLE_MS = 400;
   const ITEM_COUNT_ATTR = 'data-mystremio-nav-items';
   const NAV_READY_ATTR = 'data-mystremio-nav-ready';
 
   let enhancing = false;
+  /** @type {boolean} Schedule another enhance after the current pass finishes. */
+  let enhanceQueued = false;
   let lastSyncAt = 0;
   let containmentPinned = false;
   let heroNotifyPending = false;
+  let observerPaused = false;
+  let scrollIdleTimer = null;
+  let boardVertScrollBound = false;
+  let renderBumpRaf = 0;
+  /** @type {Element|null} Current MutationObserver root (board-container). */
+  let observerRoot = null;
+  let rowBusyIdleTimer = null;
+  /** @type {number[]} */
+  let enterRetryTimers = [];
   /** @type {Map<Element, ResizeObserver|{disconnect(): void}>} */
   const chevronLayoutObservers = new Map();
+  /** Per-catalog LoadNextPage in-flight lock. */
+  const loadInFlight = new Set();
+  /** @type {Set<Element>} Rows waiting for a scoped enhance pass. */
+  const pendingEnhanceRows = new Set();
+  /**
+   * Cached catalog index per row element.
+   * @type {WeakMap<Element, {at: number, index: number}>}
+   */
+  const catalogIndexCache = new WeakMap();
+  /**
+   * Cached Core buffer counts keyed by catalog index.
+   * @type {Map<number, {at: number, count: number}>}
+   */
+  const bufferedCountCache = new Map();
 
   /**
    * @returns {boolean}
@@ -110,6 +142,10 @@
       /* Unhide stock nth-child{display:none} only — NEVER display:flex (breaks poster/title layout). */
       #app [class*="board-container"] [class*="meta-items-container"].${ROW_SCROLLPORT_CLASS} > [class*="meta-item"] {
         display: revert !important;
+      }
+      /* Catalog items only — never on CW (intrinsic size inflated CW→catalog gap). */
+      #app [class*="board-container"] [class*="meta-row-container"]:not([class*="continue-watching"])
+        [class*="meta-items-container"].${ROW_SCROLLPORT_CLASS} > [class*="meta-item"] {
         content-visibility: auto;
         contain-intrinsic-size: auto 280px;
       }
@@ -144,7 +180,6 @@
         cursor: pointer;
         color: #fff;
         background: rgba(20, 20, 20, 0.72);
-        backdrop-filter: blur(8px);
         display: none;
         align-items: center;
         justify-content: center;
@@ -290,6 +325,22 @@
   }
 
   /**
+   * True when the row overlay still has both chevron buttons in the DOM.
+   * @param {Element} row
+   * @returns {boolean}
+   */
+  function rowHasChevrons(row) {
+    const root = getRowRoot(row);
+    if (!root) return false;
+    const host = root.querySelector(`:scope > .${OVERLAY_CLASS}`);
+    if (!host) return false;
+    return !!(
+      host.querySelector(`:scope > .${CHEVRON_LEFT}`) &&
+      host.querySelector(`:scope > .${CHEVRON_RIGHT}`)
+    );
+  }
+
+  /**
    * Row already has scrollport + freeze + chevrons for the current item count.
    * @param {Element} row
    * @returns {boolean}
@@ -298,9 +349,28 @@
     if (!row.classList.contains(ROW_SCROLLPORT_CLASS)) return false;
     if (!row.hasAttribute(WIDTH_FROZEN_ATTR)) return false;
     if (row.getAttribute(NAV_READY_ATTR) !== '1') return false;
+    if (!rowHasChevrons(row)) return false;
     const items = getRowDirectItems(row);
     const prev = Number(row.getAttribute(ITEM_COUNT_ATTR) || '0');
     return prev === items.length && items.length > 0;
+  }
+
+  /**
+   * Coalesce Board re-render bumps to one per animation frame.
+   */
+  function requestBoardRender() {
+    if (renderBumpRaf) return;
+    renderBumpRaf = requestAnimationFrame(() => {
+      renderBumpRaf = 0;
+      const force = window.__mystremioBoardRequestRender;
+      if (typeof force === 'function') {
+        try {
+          force();
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    });
   }
 
   /**
@@ -385,6 +455,34 @@
   }
 
   /**
+   * Pause Titlebar (and similar) while a row reveal / LoadNextPage is in flight.
+   * @param {number} [idleMs]
+   */
+  function pulseBoardRowBusy(idleMs) {
+    const ms = typeof idleMs === 'number' ? idleMs : ROW_BUSY_IDLE_MS;
+    window.__mystremioBoardRowBusy = true;
+    try {
+      document.dispatchEvent(
+        new CustomEvent('mystremio-board-row-busy', { detail: { busy: true } })
+      );
+    } catch (_) {
+      /* ignore */
+    }
+    if (rowBusyIdleTimer) clearTimeout(rowBusyIdleTimer);
+    rowBusyIdleTimer = window.setTimeout(() => {
+      rowBusyIdleTimer = null;
+      window.__mystremioBoardRowBusy = false;
+      try {
+        document.dispatchEvent(
+          new CustomEvent('mystremio-board-row-busy', { detail: { busy: false } })
+        );
+      } catch (_) {
+        /* ignore */
+      }
+    }, ms);
+  }
+
+  /**
    * Resolve Core catalog index (data-attr → title resolve → DOM ordinal).
    * @param {Element} rowItems
    * @returns {Promise<number>}
@@ -392,11 +490,19 @@
   async function catalogIndexForRow(rowItems) {
     if (rowItems.closest('[class*="continue-watching-row"]')) return -1;
 
+    const cached = catalogIndexCache.get(rowItems);
+    if (cached && Date.now() - cached.at < STATE_CACHE_MS) {
+      return cached.index;
+    }
+
     const root = getRowRoot(rowItems);
     const attr = root?.getAttribute('data-mystremio-catalog-index');
     if (attr != null && attr !== '') {
       const n = Number(attr);
-      if (Number.isFinite(n) && n >= 0) return n;
+      if (Number.isFinite(n) && n >= 0) {
+        catalogIndexCache.set(rowItems, { at: Date.now(), index: n });
+        return n;
+      }
     }
 
     const sync = window.__mystremioBoardSyncCatalogIndices;
@@ -407,7 +513,10 @@
       const again = root?.getAttribute('data-mystremio-catalog-index');
       if (again != null && again !== '') {
         const n = Number(again);
-        if (Number.isFinite(n) && n >= 0) return n;
+        if (Number.isFinite(n) && n >= 0) {
+          catalogIndexCache.set(rowItems, { at: Date.now(), index: n });
+          return n;
+        }
       }
     }
 
@@ -418,12 +527,38 @@
         const resolved = await resolve(title);
         if (Number.isFinite(resolved) && resolved >= 0) {
           root?.setAttribute('data-mystremio-catalog-index', String(resolved));
+          catalogIndexCache.set(rowItems, { at: Date.now(), index: resolved });
           return resolved;
         }
       } catch (_) {}
     }
 
-    return catalogIndexDomFallback(rowItems);
+    const fallback = catalogIndexDomFallback(rowItems);
+    catalogIndexCache.set(rowItems, { at: Date.now(), index: fallback });
+    return fallback;
+  }
+
+  /**
+   * Buffered item count already in Core for catalog index (flattened Ready pages).
+   * @param {number} index
+   * @returns {Promise<number>}
+   */
+  async function catalogBufferedItemCount(index) {
+    if (index < 0) return 0;
+    const hit = bufferedCountCache.get(index);
+    if (hit && Date.now() - hit.at < STATE_CACHE_MS) {
+      return hit.count;
+    }
+    const fn = window.__mystremioBoardGetCatalogItemCount;
+    if (typeof fn !== 'function') return 0;
+    try {
+      const n = await fn(index);
+      const count = Number.isFinite(n) && n > 0 ? n : 0;
+      bufferedCountCache.set(index, { at: Date.now(), count });
+      return count;
+    } catch (_) {
+      return 0;
+    }
   }
 
   /**
@@ -432,15 +567,29 @@
    */
   function requestLoadNextPage(index) {
     if (index < 0) return false;
+    if (loadInFlight.has(index)) return false;
     const fn = window.__mystremioBoardLoadNextPage;
     if (typeof fn !== 'function') return false;
     try {
+      loadInFlight.add(index);
+      pulseBoardRowBusy(LOAD_WAIT_MS + ROW_BUSY_IDLE_MS);
+      bufferedCountCache.delete(index);
       fn(index);
       return true;
     } catch (err) {
+      loadInFlight.delete(index);
       console.warn('[BoardRowNav] LoadNextPage failed:', err);
       return false;
     }
+  }
+
+  /**
+   * @param {number} index
+   */
+  function clearLoadInFlight(index) {
+    loadInFlight.delete(index);
+    bufferedCountCache.delete(index);
+    pulseBoardRowBusy(ROW_BUSY_IDLE_MS);
   }
 
   /**
@@ -520,14 +669,8 @@
     }
     const next = getRevealLimit(idx) + CATALOG_PREVIEW_SIZE;
     window.__mystremioBoardReveal[idx] = next;
-    const force = window.__mystremioBoardRequestRender;
-    if (typeof force === 'function') {
-      try {
-        force();
-      } catch (_) {
-        /* ignore */
-      }
-    }
+    pulseBoardRowBusy(ROW_BUSY_IDLE_MS);
+    requestBoardRender();
     return next;
   }
 
@@ -566,45 +709,53 @@
     const exhausted = root?.hasAttribute(LOAD_EXHAUSTED_ATTR);
 
     if (idx >= 0) {
+      const revealBefore = getRevealLimit(idx);
+      const buffered = await catalogBufferedItemCount(idx);
+      // Core already has more items than the MetaRow slice — reveal only, no network.
+      const hasBuffer = buffered > revealBefore;
+
       bumpRevealLimit(idx);
       await waitTwoFrames();
 
       let grew =
         countRowMetaItems(rowItems) > prevCount || rowItems.scrollWidth > prevWidth + 24;
 
-      if (!grew && !exhausted) {
-        const requested = requestLoadNextPage(idx);
-        if (requested) {
-          grew = await waitForRowGrowth(rowItems, prevCount, prevWidth, LOAD_WAIT_MS);
-          if (grew) {
-            const shown = countRowMetaItems(rowItems);
-            window.__mystremioBoardReveal[idx] = Math.max(getRevealLimit(idx), shown);
-            const force = window.__mystremioBoardRequestRender;
-            if (typeof force === 'function') {
-              try {
-                force();
-              } catch (_) {
-                /* ignore */
-              }
-            }
-            await waitTwoFrames();
-            freezeRowItemWidths(rowItems, freezeWidth);
-            root?.removeAttribute(LOAD_EXHAUSTED_ATTR);
-            console.info('[BoardRowNav] load grew', {
-              catalogIndex: idx,
-              title: getRowTitle(rowItems),
-            });
-          } else {
-            root?.setAttribute(LOAD_EXHAUSTED_ATTR, '1');
-            console.info('[BoardRowNav] load no-growth', {
-              catalogIndex: idx,
-              title: getRowTitle(rowItems),
-            });
-          }
-        }
-      } else if (grew) {
+      if (grew) {
         freezeRowItemWidths(rowItems, freezeWidth);
         root?.removeAttribute(LOAD_EXHAUSTED_ATTR);
+        enhanceSingleRow(rowItems);
+      } else if (hasBuffer) {
+        // Buffer exists but DOM missed a frame — one more render, never LoadNextPage.
+        requestBoardRender();
+        await waitTwoFrames();
+        if (
+          countRowMetaItems(rowItems) > prevCount ||
+          rowItems.scrollWidth > prevWidth + 24
+        ) {
+          freezeRowItemWidths(rowItems, freezeWidth);
+          root?.removeAttribute(LOAD_EXHAUSTED_ATTR);
+          enhanceSingleRow(rowItems);
+        }
+      } else if (!exhausted) {
+        const requested = requestLoadNextPage(idx);
+        if (requested) {
+          try {
+            grew = await waitForRowGrowth(rowItems, prevCount, prevWidth, LOAD_WAIT_MS);
+            if (grew) {
+              const shown = countRowMetaItems(rowItems);
+              window.__mystremioBoardReveal[idx] = Math.max(getRevealLimit(idx), shown);
+              requestBoardRender();
+              await waitTwoFrames();
+              freezeRowItemWidths(rowItems, freezeWidth);
+              root?.removeAttribute(LOAD_EXHAUSTED_ATTR);
+              enhanceSingleRow(rowItems);
+            } else {
+              root?.setAttribute(LOAD_EXHAUSTED_ATTR, '1');
+            }
+          } finally {
+            clearLoadInFlight(idx);
+          }
+        }
       }
     }
 
@@ -619,7 +770,7 @@
   }
 
   /**
-   * Own overlay host under the row root so chevrons are not React meta-item children.
+   * Overlay host under the row root so absolute chevrons sit on the cover.
    * @param {Element} root
    * @returns {HTMLElement}
    */
@@ -635,15 +786,13 @@
   }
 
   /**
-   * Vertically center chevrons on the cover/poster (landscape or poster shape).
+   * Place chevrons on the cover midline relative to the row root.
    * @param {Element} rowItems
    * @param {HTMLElement|null} leftBtn
    * @param {HTMLElement|null} rightBtn
    */
   function positionChevronsOnCover(rowItems, leftBtn, rightBtn) {
-    const root = getRowRoot(rowItems);
-    if (!root) return;
-
+    const root = getRowRoot(rowItems) || rowItems;
     const cover =
       rowItems.querySelector('[class*="poster-container"]') ||
       rowItems.querySelector('[class*="meta-item-container"]') ||
@@ -651,14 +800,15 @@
 
     if (!(cover instanceof Element)) return;
 
-    const rootRect = root.getBoundingClientRect();
+    const rowRect = root.getBoundingClientRect();
     const coverRect = cover.getBoundingClientRect();
-    if (coverRect.height < 8) return;
+    if (coverRect.height < 8 || rowRect.width < 8) return;
 
-    const mid = coverRect.top - rootRect.top + coverRect.height / 2;
+    const midY = coverRect.top + coverRect.height / 2 - rowRect.top;
+
     for (const btn of [leftBtn, rightBtn]) {
       if (!(btn instanceof HTMLElement)) continue;
-      btn.style.top = `${Math.round(mid)}px`;
+      btn.style.top = `${Math.round(midY)}px`;
       btn.style.transform = 'translateY(-50%)';
     }
   }
@@ -720,43 +870,37 @@
   }
 
   /**
+   * Ensure left/right chevrons exist under the row overlay host.
    * @param {Element} rowItems
    */
   function ensureChevrons(rowItems) {
     const root = getRowRoot(rowItems);
     if (!root) return;
     root.classList.add(ROW_WRAP_CLASS);
-
     const host = ensureOverlayHost(root);
+
     let leftBtn = host.querySelector(`:scope > .${CHEVRON_LEFT}`);
     let rightBtn = host.querySelector(`:scope > .${CHEVRON_RIGHT}`);
-    const alreadyReady = !!(leftBtn && rightBtn && rowItems.getAttribute(NAV_READY_ATTR) === '1');
 
-    // Legacy: chevrons previously appended directly under the React row root.
-    if (!alreadyReady) {
-      root
-        .querySelectorAll(
-          ':scope > .mystremio-board-row-chevron, :scope > .mystremio-board-row-chevron-left, :scope > .mystremio-board-row-chevron-right'
-        )
-        .forEach((el) => {
-          el.remove();
-        });
-    }
-
-    if (!leftBtn) {
+    if (!(leftBtn instanceof HTMLButtonElement)) {
       leftBtn = createChevron(CHEVRON_LEFT, 'Scroll catalog row left', '15 6 9 12 15 18', () => {
         scrollRowBack(rowItems);
         window.setTimeout(() => refreshChevrons(rowItems, leftBtn, rightBtn), 320);
       });
       host.appendChild(leftBtn);
     }
-    if (!rightBtn) {
-      rightBtn = createChevron(CHEVRON_RIGHT, 'Scroll catalog row right', '9 6 15 12 9 18', () => {
-        Promise.resolve(scrollRowForward(rowItems)).finally(() => {
-          window.setTimeout(() => refreshChevrons(rowItems, leftBtn, rightBtn), 120);
-          window.setTimeout(() => refreshChevrons(rowItems, leftBtn, rightBtn), 500);
-        });
-      });
+
+    if (!(rightBtn instanceof HTMLButtonElement)) {
+      rightBtn = createChevron(
+        CHEVRON_RIGHT,
+        'Scroll catalog row right',
+        '9 6 15 12 9 18',
+        () => {
+          Promise.resolve(scrollRowForward(rowItems)).finally(() => {
+            window.setTimeout(() => refreshChevrons(rowItems, leftBtn, rightBtn), 200);
+          });
+        }
+      );
       host.appendChild(rightBtn);
     }
 
@@ -766,8 +910,7 @@
   }
 
   /**
-   * Enhanced Covers (and similar) often apply after first paint and change CW poster height.
-   * Re-run chevron vertical placement when the row/cover size changes.
+   * Re-run chevron placement when the row/cover size changes.
    * @param {Element} rowItems
    */
   function ensureChevronLayoutWatch(rowItems) {
@@ -780,11 +923,16 @@
         raf = 0;
         if (!document.contains(rowItems)) return;
         const root = getRowRoot(rowItems);
-        const host = root && root.querySelector(`:scope > .${OVERLAY_CLASS}`);
-        if (!host) return;
-        const leftBtn = host.querySelector(`:scope > .${CHEVRON_LEFT}`);
-        const rightBtn = host.querySelector(`:scope > .${CHEVRON_RIGHT}`);
-        if (leftBtn && rightBtn) refreshChevrons(rowItems, leftBtn, rightBtn);
+        const host = root?.querySelector(`:scope > .${OVERLAY_CLASS}`);
+        const leftBtn = host?.querySelector(`:scope > .${CHEVRON_LEFT}`);
+        const rightBtn = host?.querySelector(`:scope > .${CHEVRON_RIGHT}`);
+        if (leftBtn instanceof HTMLElement || rightBtn instanceof HTMLElement) {
+          refreshChevrons(
+            rowItems,
+            leftBtn instanceof HTMLElement ? leftBtn : null,
+            rightBtn instanceof HTMLElement ? rightBtn : null
+          );
+        }
       });
     };
 
@@ -800,10 +948,8 @@
       chevronLayoutObservers.set(rowItems, /** @type {any} */ ({ disconnect() {} }));
     }
 
-    // Styles/images from Enhanced Covers often land shortly after nav binds.
-    [200, 600, 1400].forEach((ms) => {
-      window.setTimeout(schedule, ms);
-    });
+    // One post-mount layout pass; ResizeObserver covers later size changes.
+    schedule();
   }
 
   /**
@@ -850,7 +996,128 @@
     }, 250);
   }
 
-  function enhanceRows() {
+  /**
+   * Bind scrollport / chevrons / width freeze for one meta-items row.
+   * @param {Element} row
+   * @returns {boolean} whether layout was touched
+   */
+  function enhanceSingleRow(row) {
+    if (!(row instanceof Element)) return false;
+    if (!row.closest?.('[class*="board-container"]')) return false;
+    if (!String(row.className || '').includes('meta-items-container')) {
+      const nested = row.querySelector?.('[class*="meta-items-container"]');
+      if (nested) return enhanceSingleRow(nested);
+      return false;
+    }
+
+    let touched = false;
+    // 1) Measure stock slot WHILE extras are still display:none
+    // 2) Freeze flex-basis  3) Then enable scrollport unhide (display:revert)
+    if (!row.classList.contains(ROW_SCROLLPORT_CLASS)) {
+      const first = getRowDirectItems(row)[0];
+      const w =
+        first instanceof HTMLElement ? first.getBoundingClientRect().width : 0;
+      if (w > 40) {
+        freezeRowItemWidths(row, w);
+        row.classList.add(ROW_SCROLLPORT_CLASS);
+        touched = true;
+        delete row.dataset.mystremioWidthRetry;
+      } else if (getRowDirectItems(row).length > 0) {
+        pendingEnhanceRows.add(row);
+        if (!row.dataset.mystremioWidthRetry) {
+          row.dataset.mystremioWidthRetry = '1';
+          window.setTimeout(() => {
+            delete row.dataset.mystremioWidthRetry;
+            if (!isBoardRoute()) return;
+            pendingEnhanceRows.add(row);
+            scheduleEnhance();
+          }, WIDTH_RETRY_MS);
+        }
+      }
+    } else if (row.hasAttribute(WIDTH_FROZEN_ATTR)) {
+      const px = readFrozenWidthPx(row);
+      if (px) {
+        freezeRowItemWidths(row, px);
+        touched = true;
+      }
+    }
+
+    if (!row.classList.contains(ROW_SCROLLPORT_CLASS)) return touched;
+
+    ensureChevrons(row);
+    touched = true;
+    if (!row.dataset.mystremioRowScrollBound) {
+      row.dataset.mystremioRowScrollBound = '1';
+      let scrollRaf = 0;
+      row.addEventListener(
+        'scroll',
+        () => {
+          if (scrollRaf) return;
+          scrollRaf = requestAnimationFrame(() => {
+            scrollRaf = 0;
+            const root = getRowRoot(row);
+            const host = root?.querySelector(`:scope > .${OVERLAY_CLASS}`);
+            const leftBtn = host?.querySelector(`:scope > .${CHEVRON_LEFT}`);
+            const rightBtn = host?.querySelector(`:scope > .${CHEVRON_RIGHT}`);
+            if (leftBtn instanceof HTMLElement || rightBtn instanceof HTMLElement) {
+              refreshChevrons(
+                row,
+                leftBtn instanceof HTMLElement ? leftBtn : null,
+                rightBtn instanceof HTMLElement ? rightBtn : null
+              );
+            }
+          });
+        },
+        { passive: true }
+      );
+    }
+    return touched;
+  }
+
+  /**
+   * Ensure every board meta-items row (including CW) has scrollport + chevrons.
+   */
+  function ensureChevronsPresent() {
+    if (!isBoardRoute()) return;
+    const rows = document.querySelectorAll(
+      '[class*="board-container"] [class*="meta-items-container"]'
+    );
+    for (const row of rows) {
+      if (!row.classList.contains(ROW_SCROLLPORT_CLASS) || !rowHasChevrons(row)) {
+        row.removeAttribute(NAV_READY_ATTR);
+        pendingEnhanceRows.add(row);
+        enhanceSingleRow(row);
+      }
+    }
+  }
+
+  /**
+   * Refresh visibility for every row that already has chevrons.
+   */
+  function refreshAllChevrons() {
+    document
+      .querySelectorAll(
+        `[class*="board-container"] [class*="meta-items-container"].${ROW_SCROLLPORT_CLASS}`
+      )
+      .forEach((row) => {
+        const root = getRowRoot(row);
+        const host = root?.querySelector(`:scope > .${OVERLAY_CLASS}`);
+        const leftBtn = host?.querySelector(`:scope > .${CHEVRON_LEFT}`);
+        const rightBtn = host?.querySelector(`:scope > .${CHEVRON_RIGHT}`);
+        if (leftBtn instanceof HTMLElement || rightBtn instanceof HTMLElement) {
+          refreshChevrons(
+            row,
+            leftBtn instanceof HTMLElement ? leftBtn : null,
+            rightBtn instanceof HTMLElement ? rightBtn : null
+          );
+        }
+      });
+  }
+
+  /**
+   * @param {Iterable<Element>|null} [onlyRows] When set, enhance only these rows.
+   */
+  function enhanceRows(onlyRows) {
     if (!isBoardRoute()) return;
     enhancing = true;
     try {
@@ -864,55 +1131,28 @@
         Promise.resolve(sync()).catch(() => {});
       }
 
-      const rows = document.querySelectorAll(
-        '[class*="board-container"] [class*="meta-items-container"]'
-      );
+      /** @type {Element[]} */
+      let rows;
+      if (onlyRows) {
+        rows = [...onlyRows].filter(Boolean);
+      } else {
+        rows = [
+          ...document.querySelectorAll(
+            '[class*="board-container"] [class*="meta-items-container"]'
+          ),
+        ];
+      }
+
       let touched = false;
+      let missingChevrons = false;
       for (const row of rows) {
-        if (isRowNavReady(row)) continue;
-
-        // 1) Measure stock slot WHILE extras are still display:none
-        // 2) Freeze flex-basis  3) Then enable scrollport unhide (display:revert)
-        if (!row.classList.contains(ROW_SCROLLPORT_CLASS)) {
-          const first = getRowDirectItems(row)[0];
-          const w =
-            first instanceof HTMLElement ? first.getBoundingClientRect().width : 0;
-          if (w > 40) {
-            freezeRowItemWidths(row, w);
-            row.classList.add(ROW_SCROLLPORT_CLASS);
-            touched = true;
-          }
-        } else if (row.hasAttribute(WIDTH_FROZEN_ATTR)) {
-          const px = readFrozenWidthPx(row);
-          if (px) {
-            freezeRowItemWidths(row, px);
-            touched = true;
-          }
-        }
-
-        if (!row.classList.contains(ROW_SCROLLPORT_CLASS)) continue;
-
-        ensureChevrons(row);
-        touched = true;
-        if (!row.dataset.mystremioRowScrollBound) {
-          row.dataset.mystremioRowScrollBound = '1';
-          let scrollRaf = 0;
-          row.addEventListener(
-            'scroll',
-            () => {
-              if (scrollRaf) return;
-              scrollRaf = requestAnimationFrame(() => {
-                scrollRaf = 0;
-                const root = getRowRoot(row);
-                const host = root?.querySelector(`:scope > .${OVERLAY_CLASS}`);
-                const leftBtn = host?.querySelector(`:scope > .${CHEVRON_LEFT}`);
-                const rightBtn = host?.querySelector(`:scope > .${CHEVRON_RIGHT}`);
-                refreshChevrons(row, leftBtn, rightBtn);
-              });
-            },
-            { passive: true }
-          );
-        }
+        if (!onlyRows && isRowNavReady(row)) continue;
+        if (enhanceSingleRow(row)) touched = true;
+        if (!rowHasChevrons(row)) missingChevrons = true;
+      }
+      // Only sweep when this pass left rows without overlays (board-enter calls it explicitly).
+      if (missingChevrons) {
+        ensureChevronsPresent();
       }
       if (touched) {
         sharpenRowContainment();
@@ -925,6 +1165,10 @@
       try {
         observer?.takeRecords();
       } catch (_) {}
+      if (enhanceQueued) {
+        enhanceQueued = false;
+        scheduleEnhance();
+      }
     }
   }
 
@@ -995,48 +1239,57 @@
   let boardScrollBound = false;
 
   function scheduleEnhance() {
-    if (enhancing) return;
+    if (enhancing) {
+      enhanceQueued = true;
+      return;
+    }
     if (tickTimer) return;
     tickTimer = window.setTimeout(() => {
       tickTimer = null;
+      if (pendingEnhanceRows.size > 0) {
+        const scoped = [...pendingEnhanceRows];
+        pendingEnhanceRows.clear();
+        enhanceRows(scoped);
+        return;
+      }
       enhanceRows();
     }, ENHANCE_DEBOUNCE_MS);
   }
 
   /**
-   * Only react to mutations that actually add/remove board catalog nodes.
+   * Collect meta-items-container rows touched by a mutation batch.
    * @param {MutationRecord[]} records
-   * @returns {boolean}
+   * @returns {Set<Element>}
    */
-  function mutationsAffectBoardRows(records) {
+  function collectAffectedMetaItemRows(records) {
+    /** @type {Set<Element>} */
+    const rows = new Set();
+    /**
+     * @param {Node} node
+     */
+    const addFrom = (node) => {
+      if (!(node instanceof Element)) return;
+      const row =
+        (String(node.className || '').includes('meta-items-container')
+          ? node
+          : null) ||
+        node.closest?.('[class*="meta-items-container"]') ||
+        node.querySelector?.('[class*="meta-items-container"]');
+      if (row && row.closest?.('[class*="board-container"]')) {
+        rows.add(row);
+      }
+    };
     for (let i = 0; i < records.length; i++) {
       const rec = records[i];
-      const nodes = [];
-      if (rec.addedNodes?.length) nodes.push(...rec.addedNodes);
-      if (rec.removedNodes?.length) nodes.push(...rec.removedNodes);
-      for (let j = 0; j < nodes.length; j++) {
-        const node = nodes[j];
-        if (!(node instanceof Element)) continue;
-        const cn = String(node.className || '');
-        if (
-          cn.includes('meta-items-container') ||
-          cn.includes('meta-row-container') ||
-          cn.includes('meta-item') ||
-          cn.includes('board-row') ||
-          cn.includes('continue-watching')
-        ) {
-          return true;
-        }
-        if (
-          node.querySelector?.(
-            '[class*="meta-items-container"], [class*="meta-row-container"], [class*="meta-item"]'
-          )
-        ) {
-          return true;
-        }
+      if (rec.addedNodes?.length) {
+        for (let j = 0; j < rec.addedNodes.length; j++) addFrom(rec.addedNodes[j]);
+      }
+      if (rec.removedNodes?.length) {
+        // Removals may leave the parent row needing chevron refresh.
+        addFrom(rec.target);
       }
     }
-    return false;
+    return rows;
   }
 
   function ensureBoardScrollLock() {
@@ -1055,16 +1308,127 @@
     );
   }
 
-  function ensureObserver() {
-    if (observer) return;
-    const root = document.querySelector('#app') || document.body;
-    if (!root) return;
-    observer = new MutationObserver((records) => {
-      if (enhancing || !isBoardRoute()) return;
-      if (!mutationsAffectBoardRows(records)) return;
+  /**
+   * Pause DOM observation while the user scrolls the board vertically.
+   */
+  function pauseObserverForScroll() {
+    if (!observer || observerPaused) return;
+    observerPaused = true;
+    try {
+      observer.disconnect();
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  /**
+   * Resume observation after scroll idle and catch up chevrons.
+   */
+  function resumeObserverAfterScroll() {
+    if (scrollIdleTimer) clearTimeout(scrollIdleTimer);
+    scrollIdleTimer = window.setTimeout(() => {
+      scrollIdleTimer = null;
+      observerPaused = false;
+      if (!isBoardRoute()) return;
+      ensureObserver();
       scheduleEnhance();
-    });
-    observer.observe(root, { childList: true, subtree: true });
+    }, SCROLL_IDLE_MS);
+  }
+
+  /**
+   * Bind vertical scroll → observer pause (MutationObserver storms).
+   */
+  function ensureBoardScrollPause() {
+    if (boardVertScrollBound) return;
+    boardVertScrollBound = true;
+    document.addEventListener(
+      'scroll',
+      (event) => {
+        if (!isBoardRoute()) return;
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (!String(target.className || '').includes('board-content')) return;
+        pauseObserverForScroll();
+        resumeObserverAfterScroll();
+      },
+      { capture: true, passive: true }
+    );
+  }
+
+  /**
+   * Prefer board-container so nav/settings/plugin churn outside the board
+   * does not schedule enhance passes.
+   * @returns {Element|null}
+   */
+  function getObserverRoot() {
+    return (
+      document.querySelector('[class*="board-container"]') ||
+      getBoardScrollEl()
+    );
+  }
+
+  function ensureObserver() {
+    const root = getObserverRoot();
+    if (!root) return;
+    if (!observer) {
+      observer = new MutationObserver((records) => {
+        if (enhancing || observerPaused || !isBoardRoute()) return;
+        const affected = collectAffectedMetaItemRows(records);
+        if (affected.size === 0) return;
+        for (const row of affected) pendingEnhanceRows.add(row);
+        scheduleEnhance();
+      });
+    }
+    if (observerPaused) return;
+    if (observerRoot !== root) {
+      try {
+        observer.disconnect();
+      } catch (_) {
+        /* ignore */
+      }
+      observerRoot = root;
+    }
+    try {
+      observer.observe(root, { childList: true, subtree: true });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function clearEnterRetryTimers() {
+    for (const id of enterRetryTimers) clearTimeout(id);
+    enterRetryTimers = [];
+  }
+
+  /**
+   * Re-ensure scrollports/chevrons after board enter (React remount races).
+   */
+  function ensureBoardNavOnEnter() {
+    clearEnterRetryTimers();
+    injectStyles();
+    patchFocusPreventScroll();
+    ensureBoardScrollLock();
+    ensureBoardScrollPause();
+    ensureObserver();
+    lockBoardScrollLeft();
+
+    const runFull = () => {
+      if (!isBoardRoute()) return;
+      ensureObserver();
+      enhanceRows();
+      ensureChevronsPresent();
+    };
+
+    runFull();
+    requestAnimationFrame(runFull);
+    // One delayed remount insurance — scoped chevron sweep only.
+    enterRetryTimers.push(
+      window.setTimeout(() => {
+        if (!isBoardRoute()) return;
+        ensureObserver();
+        ensureChevronsPresent();
+      }, 400)
+    );
   }
 
   function clearAllRowWidthFreezes() {
@@ -1078,14 +1442,32 @@
    * Disconnect observer, remove chevron overlays / styles, clear freezes.
    */
   function teardownBoardNav() {
+    clearEnterRetryTimers();
     if (tickTimer) {
       clearTimeout(tickTimer);
       tickTimer = null;
     }
+    if (scrollIdleTimer) {
+      clearTimeout(scrollIdleTimer);
+      scrollIdleTimer = null;
+    }
+    if (rowBusyIdleTimer) {
+      clearTimeout(rowBusyIdleTimer);
+      rowBusyIdleTimer = null;
+    }
+    if (renderBumpRaf) {
+      cancelAnimationFrame(renderBumpRaf);
+      renderBumpRaf = 0;
+    }
+    enhanceQueued = false;
+    observerPaused = false;
     if (observer) {
       observer.disconnect();
       observer = null;
     }
+    observerRoot = null;
+    window.__mystremioBoardRowBusy = false;
+    bufferedCountCache.clear();
     for (const ro of chevronLayoutObservers.values()) {
       try {
         ro.disconnect();
@@ -1100,7 +1482,7 @@
     document.querySelectorAll(`.${OVERLAY_CLASS}`).forEach((el) => el.remove());
     document
       .querySelectorAll(
-        `.${CHEVRON_LEFT}, .${CHEVRON_RIGHT}, .mystremio-board-row-chevron`
+        `.${CHEVRON_LEFT}, .${CHEVRON_RIGHT}`
       )
       .forEach((el) => el.remove());
     document.querySelectorAll(`.${ROW_WRAP_CLASS}`).forEach((el) => {
@@ -1111,12 +1493,12 @@
       el.removeAttribute(NAV_READY_ATTR);
       el.removeAttribute(ITEM_COUNT_ATTR);
       delete el.dataset.mystremioRowScrollBound;
+      delete el.dataset.mystremioWidthRetry;
     });
-    try {
-      window.__mystremioBoardReveal = {};
-    } catch (_) {
-      /* ignore */
-    }
+    // Keep __mystremioBoardReveal across detail hops so return-to-board
+    // does not rebuild every row from CATALOG_PREVIEW_SIZE.
+    pendingEnhanceRows.clear();
+    loadInFlight.clear();
     document
       .querySelectorAll(
         '[class*="board-container"] [class*="meta-row-container"], ' +
@@ -1135,12 +1517,7 @@
       teardownBoardNav();
       return;
     }
-    injectStyles();
-    patchFocusPreventScroll();
-    ensureBoardScrollLock();
-    ensureObserver();
-    scheduleEnhance();
-    lockBoardScrollLeft();
+    ensureBoardNavOnEnter();
   }
 
   document.addEventListener('focusin', onFocusIn, true);
@@ -1159,6 +1536,7 @@
         row.removeAttribute(NAV_READY_ATTR);
       });
     scheduleEnhance();
+    refreshAllChevrons();
   });
 
   if (document.readyState === 'loading') {

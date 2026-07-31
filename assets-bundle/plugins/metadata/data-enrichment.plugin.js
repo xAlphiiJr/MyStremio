@@ -2260,7 +2260,7 @@
             section.innerHTML = `
                 <div class="enhanced-section-header">Genres</div>
                 <div class="enhanced-carousel-wrapper">
-                    <button class="enhanced-scroll-btn enhanced-scroll-left" aria-label="Scroll left">ÔÇ╣</button>
+                    <button type="button" class="enhanced-scroll-btn enhanced-scroll-left" aria-label="Scroll left"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 6 9 12 15 18"></polyline></svg></button>
                     <div class="enhanced-cast-container enhanced-scroll-container enhanced-genres-container">
                         ${list
                             .map(
@@ -2277,7 +2277,7 @@
                             )
                             .join('')}
                     </div>
-                    <button class="enhanced-scroll-btn enhanced-scroll-right" aria-label="Scroll right">ÔÇ║</button>
+                    <button type="button" class="enhanced-scroll-btn enhanced-scroll-right" aria-label="Scroll right"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg></button>
                 </div>
             `;
             container.appendChild(section);
@@ -2289,13 +2289,32 @@
                     e.stopPropagation();
                     const name = pill.dataset.genreName;
                     if (!name) return;
-                    window.location.hash = `#/search?search=${encodeURIComponent(name)}`;
+                    // Official Stremio: genre → Discover with genre filter (not Search).
+                    window.location.hash = this.buildDiscoverGenreHash(name);
                 };
                 pill.addEventListener('click', go);
                 pill.addEventListener('keydown', (e) => {
                     if (e.key === 'Enter' || e.key === ' ') go(e);
                 });
             });
+        }
+
+        /**
+         * Discover deep-link for a genre (Cinemeta top catalog), matching stock Stremio.
+         * @param {string} genreName
+         * @returns {string} location.hash value including leading #
+         */
+        buildDiscoverGenreHash(genreName) {
+            const CINEMETA_MANIFEST = 'https://v3-cinemeta.strem.io/manifest.json';
+            const route = this.parseDetailRoute();
+            const type =
+                route.type === 'series' || route.type === 'movie' ? route.type : 'movie';
+            const catalogPath = [
+                encodeURIComponent(CINEMETA_MANIFEST),
+                encodeURIComponent(type),
+                'top',
+            ].join('/');
+            return `#/discover/${catalogPath}?genre=${encodeURIComponent(genreName)}`;
         }
 
         /**
@@ -2312,7 +2331,7 @@
             section.innerHTML = `
                 <div class="enhanced-section-header">Directors</div>
                 <div class="enhanced-carousel-wrapper">
-                    <button class="enhanced-scroll-btn enhanced-scroll-left" aria-label="Scroll left">ÔÇ╣</button>
+                    <button type="button" class="enhanced-scroll-btn enhanced-scroll-left" aria-label="Scroll left"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 6 9 12 15 18"></polyline></svg></button>
                     <div class="enhanced-cast-container enhanced-scroll-container">
                         ${list
                             .map(
@@ -2334,7 +2353,7 @@
                             )
                             .join('')}
                     </div>
-                    <button class="enhanced-scroll-btn enhanced-scroll-right" aria-label="Scroll right">ÔÇ║</button>
+                    <button type="button" class="enhanced-scroll-btn enhanced-scroll-right" aria-label="Scroll right"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg></button>
                 </div>
             `;
 
@@ -2352,7 +2371,7 @@
             section.innerHTML = `
                 <div class="enhanced-section-header">Cast</div>
                 <div class="enhanced-carousel-wrapper">
-                    <button class="enhanced-scroll-btn enhanced-scroll-left" aria-label="Scroll left">ÔÇ╣</button>
+                    <button type="button" class="enhanced-scroll-btn enhanced-scroll-left" aria-label="Scroll left"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 6 9 12 15 18"></polyline></svg></button>
                     <div class="enhanced-cast-container enhanced-scroll-container">
                         ${cast.map(actor => `
                             <div class="enhanced-cast-item" data-actor-name="${escapeHtml(actor.name)}">
@@ -2369,7 +2388,7 @@
                             </div>
                         `).join('')}
                     </div>
-                    <button class="enhanced-scroll-btn enhanced-scroll-right" aria-label="Scroll right">ÔÇ║</button>
+                    <button type="button" class="enhanced-scroll-btn enhanced-scroll-right" aria-label="Scroll right"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg></button>
                 </div>
             `;
             
@@ -2389,7 +2408,7 @@
             section.innerHTML = `
                 <div class="enhanced-section-header">More like this</div>
                 <div class="enhanced-carousel-wrapper">
-                    <button class="enhanced-scroll-btn enhanced-scroll-left" aria-label="Scroll left">ÔÇ╣</button>
+                    <button type="button" class="enhanced-scroll-btn enhanced-scroll-left" aria-label="Scroll left"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 6 9 12 15 18"></polyline></svg></button>
                     <div class="enhanced-similar-container enhanced-scroll-container">
                         ${titles.map(item => `
                             <div class="enhanced-similar-item enhanced-poster-item" data-id="${item.id}" data-media-type="${item.media_type || mediaType}">
@@ -2401,7 +2420,7 @@
                             </div>
                         `).join('')}
                     </div>
-                    <button class="enhanced-scroll-btn enhanced-scroll-right" aria-label="Scroll right">ÔÇ║</button>
+                    <button type="button" class="enhanced-scroll-btn enhanced-scroll-right" aria-label="Scroll right"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg></button>
                 </div>
             `;
             
@@ -2425,7 +2444,7 @@
             section.innerHTML = `
                 <div class="enhanced-section-header">${collectionData.name}</div>
                 <div class="enhanced-carousel-wrapper">
-                    <button class="enhanced-scroll-btn enhanced-scroll-left" aria-label="Scroll left">ÔÇ╣</button>
+                    <button type="button" class="enhanced-scroll-btn enhanced-scroll-left" aria-label="Scroll left"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 6 9 12 15 18"></polyline></svg></button>
                     <div class="enhanced-collection-container enhanced-scroll-container">
                         ${parts.map(item => `
                             <div class="enhanced-collection-item enhanced-poster-item" data-id="${item.id}" data-media-type="movie">
@@ -2437,7 +2456,7 @@
                             </div>
                         `).join('')}
                     </div>
-                    <button class="enhanced-scroll-btn enhanced-scroll-right" aria-label="Scroll right">ÔÇ║</button>
+                    <button type="button" class="enhanced-scroll-btn enhanced-scroll-right" aria-label="Scroll right"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg></button>
                 </div>
             `;
             

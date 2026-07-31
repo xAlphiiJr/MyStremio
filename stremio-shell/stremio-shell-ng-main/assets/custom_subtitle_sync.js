@@ -1,6 +1,12 @@
 (function () {
   'use strict';
 
+  /**
+   * Quick-Select subtitle preference: apply once when tracks become available
+   * on a new player session. Do not keep forcing `sid` after the user changes
+   * the track in the native subtitles menu (that broke size/color customization).
+   */
+
   if (window.__stremioCustomSubtitleSync) return;
   window.__stremioCustomSubtitleSync = true;
 
@@ -41,9 +47,10 @@
   let shellMsgId = 9000;
   let trackListDebounce = null;
   let lastTrackList = null;
-  let lastAppliedTrackId = null;
-  let disableAttempts = 0;
-  let lastDisableSignature = '';
+  /** True after we applied Quick Select once for the current player visit. */
+  let appliedForSession = false;
+  /** User changed tracks via UI / storage after our one-shot apply — stop overriding. */
+  let userOverrideActive = false;
 
   function isPlayerRoute() {
     return /#\/player/.test(location.hash || '');
@@ -122,6 +129,78 @@
     }
   }
 
+  /**
+   * Read core profile subtitle size/offset (ShellVideo maps these to sub-scale/sub-pos).
+   * @returns {{ size: number, offset: number, assStyling: boolean }}
+   */
+  function readCoreSubtitleStyles() {
+    try {
+      const profile = JSON.parse(localStorage.getItem('profile') || '{}');
+      const settings = profile?.settings || {};
+      const size = Number(settings.subtitlesSize);
+      const offset = Number(settings.subtitlesOffset);
+      return {
+        size: Number.isFinite(size) ? size : 100,
+        offset: Number.isFinite(offset) ? offset : 0,
+        assStyling: settings.assSubtitlesStyling === true,
+      };
+    } catch {
+      return { size: 100, offset: 0, assStyling: false };
+    }
+  }
+
+  /**
+   * Ensure ASS scale mode allows SIZE without rewriting current scale/pos.
+   * `scale` keeps embedded ASS fonts/colors; `force`/`strip` destroy that look.
+   */
+  function ensureAssOverride() {
+    if (!isPlayerRoute()) return;
+    if (readCoreSubtitleStyles().assStyling) return;
+    sendShellMpvSetProp('sub-ass-override', 'scale');
+  }
+
+  /**
+   * ShellVideo default `sub-ass-override=no` ignores `sub-scale` on ASS/SSA.
+   * Use mpv `scale` so embedded title styles stay while SIZE/OFFSET still apply.
+   */
+  async function applyAssOverrideAndStyles() {
+    if (!isPlayerRoute()) return;
+    let size = 100;
+    let offset = 0;
+    let assStyling = false;
+
+    try {
+      if (window.core?.getState) {
+        const ctx = await window.core.getState('ctx');
+        const settings = ctx?.profile?.settings;
+        if (settings) {
+          const liveSize = Number(settings.subtitlesSize);
+          const liveOffset = Number(settings.subtitlesOffset);
+          if (Number.isFinite(liveSize)) size = liveSize;
+          if (Number.isFinite(liveOffset)) offset = liveOffset;
+          assStyling = settings.assSubtitlesStyling === true;
+        }
+      } else {
+        const styles = readCoreSubtitleStyles();
+        size = styles.size;
+        offset = styles.offset;
+        assStyling = styles.assStyling;
+      }
+    } catch {
+      const styles = readCoreSubtitleStyles();
+      size = styles.size;
+      offset = styles.offset;
+      assStyling = styles.assStyling;
+    }
+
+    // Settings "ASS subtitle styling" → ShellVideo uses strip; leave that path alone.
+    if (assStyling) return;
+
+    sendShellMpvSetProp('sub-ass-override', 'scale');
+    sendShellMpvSetProp('sub-scale', size * 0.0066);
+    sendShellMpvSetProp('sub-pos', 100 - offset);
+  }
+
   async function readCoreSubtitleLanguage() {
     if (!window.core?.getState) return undefined;
     try {
@@ -197,39 +276,22 @@
     await updateCoreSubtitleLanguage(nextValue);
   }
 
-  function buildTrackSignature(tracks) {
-    return tracks
-      .map((track) => `${track?.type || ''}:${track?.id ?? ''}:${track?.selected ? 1 : 0}:${track?.lang || ''}`)
-      .join('|');
-  }
-
-  async function disableSubtitlesIfNeeded(tracks) {
-    const selectedSub = tracks.find((track) => track?.type === 'sub' && track.selected);
-    if (!selectedSub) return;
-    if (disableAttempts >= 8) return;
-
-    const signature = buildTrackSignature(tracks);
-    if (signature === lastDisableSignature && disableAttempts > 0) return;
-
-    lastDisableSignature = signature;
-    disableAttempts += 1;
-    lastAppliedTrackId = null;
-    sendShellMpvSetProp('sid', 'no');
-    console.info('[StremioCustom] Subtitles disabled (None selected).');
-  }
-
-  async function applySubtitlePreferenceAfterTracks(tracks) {
+  /**
+   * Apply Quick Select once per player session when tracks arrive.
+   * @param {Array} tracks
+   */
+  async function applySubtitlePreferenceOnce(tracks) {
     if (!isPlayerRoute() || !Array.isArray(tracks) || !tracks.length) return;
+    if (appliedForSession || userOverrideActive) return;
 
     const preference = await resolveSubtitlePreference();
+    appliedForSession = true;
 
     if (preference.explicitOff) {
-      await disableSubtitlesIfNeeded(tracks);
+      sendShellMpvSetProp('sid', 'no');
+      console.info('[StremioCustom] Subtitles disabled once (None selected).');
       return;
     }
-
-    disableAttempts = 0;
-    lastDisableSignature = '';
 
     if (!preference.language) return;
 
@@ -248,36 +310,17 @@
       selectedSub &&
       (selectedSub.id === expected.id || languageMatches(selectedSub.lang, preference.language))
     ) {
-      lastAppliedTrackId = expected.id;
       return;
     }
 
-    if (lastAppliedTrackId === expected.id) return;
-
-    lastAppliedTrackId = expected.id;
     sendShellMpvSetProp('sid', expected.id);
+    void applyAssOverrideAndStyles();
     console.info(
-      '[StremioCustom] Favorite subtitle applied/corrected:',
+      '[StremioCustom] Favorite subtitle applied once:',
       preference.language,
       'track',
       expected.id
     );
-  }
-
-  async function applyFavoriteSubtitlesAfterTracks(tracks) {
-    await applySubtitlePreferenceAfterTracks(tracks);
-  }
-
-  async function syncSubtitleTracks() {
-    if (!isPlayerRoute()) return;
-
-    if (readActiveSubsPreference() === NONE_VALUE) {
-      sendShellMpvSetProp('sid', 'no');
-    }
-
-    if (lastTrackList?.length) {
-      await applySubtitlePreferenceAfterTracks(lastTrackList);
-    }
   }
 
   function onTrackListUpdate(change) {
@@ -286,15 +329,17 @@
     if (!tracks) return;
 
     lastTrackList = tracks;
-    lastAppliedTrackId = null;
+
+    // After our one-shot apply, ignore further track-list churn so native menu wins.
+    if (appliedForSession || userOverrideActive) return;
 
     if (trackListDebounce) clearTimeout(trackListDebounce);
     trackListDebounce = setTimeout(async () => {
       trackListDebounce = null;
       if (!isPlayerRoute() || !lastTrackList) return;
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      await applySubtitlePreferenceAfterTracks(lastTrackList);
-    }, 350);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await applySubtitlePreferenceOnce(lastTrackList);
+    }, 300);
   }
 
   function parseShellPayload(raw) {
@@ -342,78 +387,103 @@
     };
   }
 
-  let syncTimer = null;
-  let syncAttempts = 0;
-
-  function scheduleSubtitleSync() {
+  /**
+   * Reset session flags when entering/leaving the player.
+   */
+  function onRouteOrSessionChange() {
     hookShellIncoming();
 
     if (!isPlayerRoute()) {
-      syncAttempts = 0;
+      appliedForSession = false;
+      userOverrideActive = false;
       lastTrackList = null;
-      lastAppliedTrackId = null;
-      disableAttempts = 0;
-      lastDisableSignature = '';
-      if (syncTimer) {
-        clearInterval(syncTimer);
-        syncTimer = null;
+      if (trackListDebounce) {
+        clearTimeout(trackListDebounce);
+        trackListDebounce = null;
       }
       syncQuickSelectToCore();
       return;
     }
 
-    syncSubtitleTracks();
-
-    if (syncTimer) return;
-    syncAttempts = 0;
-    syncTimer = setInterval(() => {
-      if (!isPlayerRoute()) {
-        clearInterval(syncTimer);
-        syncTimer = null;
-        syncAttempts = 0;
-        return;
-      }
-      syncAttempts += 1;
-      syncSubtitleTracks();
-      if (syncAttempts >= 25) {
-        clearInterval(syncTimer);
-        syncTimer = null;
-      }
-    }, 1200);
+    // New player visit — allow one Quick Select apply when tracks arrive.
+    appliedForSession = false;
+    userOverrideActive = false;
+    lastTrackList = null;
   }
 
-  window.__stremioCustomSubtitleSyncEnsure = scheduleSubtitleSync;
+  window.__stremioCustomSubtitleSyncEnsure = onRouteOrSessionChange;
   window.__stremioCustomSubtitleSyncNow = syncQuickSelectToCore;
 
   window.addEventListener('storage', (event) => {
     if (event.key === ACTIVE_SUBS_KEY || event.key === FAV_SUBS_KEY) {
-      lastAppliedTrackId = null;
-      disableAttempts = 0;
-      lastDisableSignature = '';
+      // Settings changed outside the player — re-sync core; next player visit applies once.
+      userOverrideActive = false;
+      appliedForSession = false;
       if (!isPlayerRoute()) {
         syncQuickSelectToCore();
       } else if (lastTrackList) {
-        applySubtitlePreferenceAfterTracks(lastTrackList);
+        // Explicit settings change while in player: allow one re-apply.
+        appliedForSession = false;
+        applySubtitlePreferenceOnce(lastTrackList);
       }
     }
   });
 
-  document.addEventListener('stremio-custom-route-change', () => {
+  // Native subtitle menu interactions — stop overriding after the user picks a track.
+  document.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (!isPlayerRoute() || !appliedForSession) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (
+        target.closest(
+          '[class*="subtitles-menu"], [class*="subtitle-"], [class*="audio-track"], [class*="menu-container"]'
+        )
+      ) {
+        userOverrideActive = true;
+      }
+    },
+    true
+  );
+
+  document.addEventListener('stremio-custom-route-change', onRouteOrSessionChange);
+  document.addEventListener('stremio-custom-stream-started', () => {
+    // New stream in-player (e.g. binge): allow one Quick Select apply again.
+    appliedForSession = false;
+    userOverrideActive = false;
     lastTrackList = null;
-    lastAppliedTrackId = null;
-    disableAttempts = 0;
-    lastDisableSignature = '';
-    setTimeout(scheduleSubtitleSync, 50);
-    setTimeout(scheduleSubtitleSync, 1500);
-    setTimeout(scheduleSubtitleSync, 4000);
+    // After loadfile, ShellVideo may have set sub-ass-override=no — fix SIZE/OFFSET.
+    window.setTimeout(() => {
+      void applyAssOverrideAndStyles();
+    }, 120);
+    window.setTimeout(() => {
+      void applyAssOverrideAndStyles();
+    }, 600);
   });
-  document.addEventListener('stremio-custom-playback-stopped', scheduleSubtitleSync);
+  document.addEventListener('stremio-custom-playback-stopped', onRouteOrSessionChange);
+  document.addEventListener('stremio-custom-bootstrap-ready', onRouteOrSessionChange);
 
-  document.addEventListener('stremio-custom-bootstrap-ready', scheduleSubtitleSync);
+  // Native SIZE/OFFSET steppers — keep override on; do not rewrite scale from stale LS.
+  document.addEventListener(
+    'pointerup',
+    (event) => {
+      if (!isPlayerRoute()) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (
+        target.closest(
+          '[class*="subtitles-menu"], [class*="subtitle-"], [class*="subtitles-settings"]'
+        )
+      ) {
+        window.setTimeout(ensureAssOverride, 50);
+      }
+    },
+    true
+  );
+
   hookShellIncoming();
+  onRouteOrSessionChange();
 
-  if (isPlayerRoute()) scheduleSubtitleSync();
-  else syncQuickSelectToCore();
-
-  console.info('[StremioCustom] Subtitle preference sync ready.');
+  console.info('[StremioCustom] Subtitle preference sync ready (one-shot + ASS override).');
 })();

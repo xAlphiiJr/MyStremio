@@ -1,8 +1,8 @@
 /**
  * @name Enhanced Title Bar
  * @description Enhances the title bar with additional information.
- * @version 26.0.9
- * @author Fxy
+ * @version 26.0.12
+ * @author Fxy · adapted for MyStremio
  */
 
 (function () {
@@ -23,12 +23,22 @@ const RETRY_CONFIG = {
 };
 let enhanceTimeout = null;
 let mutationObserver = null;
-let titlebarPollInterval = null;
+let intersectionObserver = null;
+/** @type {Set<Element>} */
+let pendingVisibleItems = new Set();
 let isEnhancing = false;
 let enhanceQueued = false;
 let applyingEnhancement = false;
 let lastEnhanceRun = 0;
 const MIN_RUN_INTERVAL = 800;
+const ENHANCE_CONCURRENCY = 4;
+/** Pause DOM enhance while the board is vertically scrolling. */
+let boardScrollBusy = false;
+let boardScrollIdleTimer = null;
+let boardScrollBound = false;
+/** Pause while board row reveal / LoadNextPage is busy. */
+let boardRowBusy = false;
+let boardRowBusyBound = false;
 
 function onTitlebarLibraryClick(event) {
   const chip = event.target?.closest?.(
@@ -43,6 +53,7 @@ function onTitlebarRouteChange() {
     restoreLibraryNativeTitlebars();
     return;
   }
+  observeTitlebarTargets();
   scheduleEnhancement();
 }
 
@@ -143,8 +154,6 @@ async function getMetadata(id, type) {
           : [],
       runtime: meta.runtime || null,
       type: meta.type || type,
-      poster: meta.poster,
-      background: meta.background,
     };
 
     metadataCache.set(cacheKey, metadata);
@@ -168,16 +177,36 @@ function computeTitlebarSlotKey(posterImg, detailLink, itemRoot) {
   return extractImdbId(posterImg, detailLink, itemRoot) || "";
 }
 
+/**
+ * Restore a title-bar container to stock markup (or a minimal title-label).
+ * @param {Element} titlebar
+ */
 function clearEnhancedState(titlebar) {
-  if (titlebar.classList.contains("enhanced-title-bar")) {
-    if (titlebar.dataset.originalContent) {
-      titlebar.innerHTML = titlebar.dataset.originalContent;
-    } else {
-      titlebar
-        .querySelectorAll(".enhanced-title, .enhanced-metadata, .enhanced-loading")
-        .forEach((node) => node.remove());
+  if (!(titlebar instanceof Element)) return;
+
+  const savedTitle =
+    titlebar.querySelector?.(".enhanced-title")?.textContent?.trim() ||
+    titlebar.querySelector?.('[class*="title-label"]')?.textContent?.trim() ||
+    "";
+
+  if (titlebar.dataset.originalContent) {
+    titlebar.innerHTML = titlebar.dataset.originalContent;
+  } else if (
+    titlebar.classList.contains("enhanced-title-bar") ||
+    titlebar.querySelector?.(".enhanced-title, .enhanced-metadata, .enhanced-loading")
+  ) {
+    titlebar
+      .querySelectorAll(".enhanced-title, .enhanced-metadata, .enhanced-loading")
+      .forEach((node) => node.remove());
+    // Ensure a native-looking title label remains for Liquid Glass / stock CSS.
+    if (!titlebar.querySelector?.('[class*="title-label"]') && savedTitle) {
+      const label = document.createElement("div");
+      label.className = "title-label";
+      label.textContent = savedTitle;
+      titlebar.appendChild(label);
     }
   }
+
   titlebar.classList.remove("enhanced-title-bar");
   delete titlebar.dataset.enhancedId;
   delete titlebar.dataset.enhancedSlotKey;
@@ -188,6 +217,26 @@ function clearEnhancedState(titlebar) {
   delete titlebar.dataset.enhancedUpdatedAt;
   delete titlebar.dataset.enhancedFetchToken;
   delete titlebar.dataset.originalContent;
+}
+
+/**
+ * Find title-bar hosts that still contain enhanced markup (including orphans).
+ * @returns {Set<Element>}
+ */
+function collectEnhancedTitlebarHosts() {
+  /** @type {Set<Element>} */
+  const hosts = new Set();
+  document.querySelectorAll(".enhanced-title-bar").forEach((el) => hosts.add(el));
+  document
+    .querySelectorAll(".enhanced-title, .enhanced-metadata, .enhanced-loading")
+    .forEach((node) => {
+      const host =
+        node.closest?.('[class*="title-bar-container"]') ||
+        node.closest?.('[class*="title-bar"]') ||
+        node.parentElement;
+      if (host) hosts.add(host);
+    });
+  return hosts;
 }
 
 function readNativeTitle(card, posterImg, detailLink, titlebar) {
@@ -270,12 +319,20 @@ function extractImdbIdFromDetailLink(detailLink) {
   return null;
 }
 
+function isContinueWatchingItem(el) {
+  return Boolean(el?.closest?.('[class*="continue-watching-row"]'));
+}
+
 function extractImdbId(posterImg, detailLink, cardOrContainer) {
-  // Prefer detail href — Enhanced Covers owns CW poster URLs/data-imdb-id and can be stale
-  // after React reuses a Continue Watching card for another title.
+  // Prefer detail href — Enhanced Covers owns CW poster URLs/data-imdb-id.
   const linkId = extractImdbIdFromDetailLink(detailLink);
   if (linkId) {
     return linkId;
+  }
+
+  // Never key CW identity from poster/cover URLs (covers owns those).
+  if (isContinueWatchingItem(posterImg) || isContinueWatchingItem(cardOrContainer)) {
+    return null;
   }
 
   const posterId = extractImdbIdFromPoster(posterImg);
@@ -323,7 +380,7 @@ function createMetadataElements(metadata) {
 
   if (metadata.genres && metadata.genres.length > 0) {
     const genres = document.createElement("span");
-    genres.className = "enhanced-metadata-item";
+    genres.className = "enhanced-metadata-item enhanced-genres";
     genres.textContent = metadata.genres.slice(0, 3).join(", ");
     elements.push(genres);
   }
@@ -351,6 +408,10 @@ function restoreLibraryNativeTitlebars() {
 
 async function enhanceMediaContainers() {
   if (!shouldEnhancePage()) return;
+  if (isBoardEnhancePaused()) {
+    enhanceQueued = true;
+    return;
+  }
   if (isEnhancing) {
     enhanceQueued = true;
     return;
@@ -369,15 +430,81 @@ async function enhanceMediaContainers() {
   }
 }
 
-async function enhanceMediaContainersImpl() {
-  const items = document.querySelectorAll('[class*="meta-item-container"]');
-  for (let i = 0; i < items.length; i++) {
-    try {
-      await enhanceMetaItemContainer(items[i]);
-    } catch (error) {
-      console.log("Meta item enhancement failed:", error);
-    }
+/**
+ * @returns {Element[]}
+ */
+function getEnhanceRoots() {
+  const roots = [];
+  document
+    .querySelectorAll(
+      '[class*="board-container"], [class*="discover-container"], [class*="meta-row-container"]',
+    )
+    .forEach((el) => roots.push(el));
+  return roots;
+}
+
+/**
+ * Observe catalog tiles; enhance when they enter the viewport.
+ */
+function observeTitlebarTargets() {
+  if (!intersectionObserver || !shouldEnhancePage()) return;
+  const roots = getEnhanceRoots();
+  const scope =
+    roots.length > 0
+      ? roots
+      : document.querySelector("#app")
+        ? [document.querySelector("#app")]
+        : [document.body].filter(Boolean);
+  scope.forEach((root) => {
+    root
+      .querySelectorAll('[class*="meta-item-container"]')
+      .forEach((item) => {
+        try {
+          intersectionObserver.observe(item);
+        } catch (_) {
+          /* ignore */
+        }
+      });
+  });
+}
+
+/**
+ * Enhance only tiles queued by IntersectionObserver (or a one-shot scan).
+ * @param {Element[]} [forceItems]
+ */
+async function enhanceMediaContainersImpl(forceItems) {
+  let items;
+  if (Array.isArray(forceItems) && forceItems.length) {
+    items = forceItems;
+  } else if (pendingVisibleItems.size > 0) {
+    items = [...pendingVisibleItems];
+    pendingVisibleItems.clear();
+  } else {
+    // Fallback: visible-ish items in board/discover (first paint before IO fires).
+    items = [];
+    getEnhanceRoots().forEach((root) => {
+      root.querySelectorAll('[class*="meta-item-container"]').forEach((el) => {
+        items.push(el);
+      });
+    });
+    // Cap first-pass work; IO will pick up the rest as user scrolls.
+    items = items.slice(0, 24);
   }
+
+  for (let i = 0; i < items.length; i += ENHANCE_CONCURRENCY) {
+    const batch = items.slice(i, i + ENHANCE_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (item) => {
+        try {
+          await enhanceMetaItemContainer(item);
+        } catch (error) {
+          console.log("Meta item enhancement failed:", error);
+        }
+      }),
+    );
+  }
+
+  observeTitlebarTargets();
 }
 
 /**
@@ -490,8 +617,6 @@ async function applyTitlebarEnhancement(
   titlebar.dataset.enhancedId = imdbId;
   titlebar.dataset.enhancedFetchToken = `${slotKey}|${now}`;
   delete titlebar.dataset.enhancedRetryAt;
-
-  console.log(`Enhancing: "${originalTitle}" with IMDb ID: ${imdbId}`);
 
   applyingEnhancement = true;
   try {
@@ -615,6 +740,67 @@ function isOwnEnhancementMutation(target) {
   return applyingEnhancement;
 }
 
+/**
+ * True when board scroll or row reveal/load should defer titlebar work.
+ * @returns {boolean}
+ */
+function isBoardEnhancePaused() {
+  return (
+    boardScrollBusy ||
+    boardRowBusy ||
+    !!window.__mystremioBoardRowBusy
+  );
+}
+
+/**
+ * Bind board vertical-scroll pause so enhance runs on idle only.
+ */
+function ensureBoardScrollPause() {
+  if (boardScrollBound) return;
+  boardScrollBound = true;
+  document.addEventListener(
+    "scroll",
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!String(target.className || "").includes("board-content")) return;
+      boardScrollBusy = true;
+      if (boardScrollIdleTimer) clearTimeout(boardScrollIdleTimer);
+      boardScrollIdleTimer = setTimeout(() => {
+        boardScrollBusy = false;
+        scheduleEnhancement();
+      }, 180);
+    },
+    { capture: true, passive: true },
+  );
+}
+
+/**
+ * Pause titlebar enhance during horizontal reveal / LoadNextPage.
+ */
+function ensureBoardRowBusyPause() {
+  if (boardRowBusyBound) return;
+  boardRowBusyBound = true;
+  document.addEventListener("mystremio-board-row-busy", (event) => {
+    const detail = event && event.detail;
+    boardRowBusy = !!(detail && detail.busy) || !!window.__mystremioBoardRowBusy;
+    if (!boardRowBusy && !boardScrollBusy) {
+      scheduleEnhancement();
+    }
+  });
+}
+
+/**
+ * @param {*} fn
+ */
+function runWhenIdle(fn) {
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(() => fn(), { timeout: 800 });
+    return;
+  }
+  setTimeout(fn, 0);
+}
+
 function scheduleEnhancement(mutationTarget) {
   if (mutationTarget && isOwnEnhancementMutation(mutationTarget)) {
     return;
@@ -624,12 +810,33 @@ function scheduleEnhancement(mutationTarget) {
   }
   enhanceTimeout = setTimeout(() => {
     enhanceTimeout = null;
-    const now = Date.now();
-    if (isEnhancing || now - lastEnhanceRun < MIN_RUN_INTERVAL) {
+    if (isBoardEnhancePaused()) {
       enhanceQueued = true;
       return;
     }
-    enhanceMediaContainers();
+    const now = Date.now();
+    if (isEnhancing) {
+      enhanceQueued = true;
+      return;
+    }
+    const wait = MIN_RUN_INTERVAL - (now - lastEnhanceRun);
+    if (wait > 0) {
+      enhanceQueued = true;
+      // Drain queue after rate-limit window (late enable / IO bursts).
+      enhanceTimeout = setTimeout(() => {
+        enhanceTimeout = null;
+        if (isBoardEnhancePaused()) {
+          enhanceQueued = true;
+          return;
+        }
+        if (enhanceQueued || pendingVisibleItems.size > 0) {
+          enhanceQueued = false;
+          runWhenIdle(() => enhanceMediaContainers());
+        }
+      }, wait);
+      return;
+    }
+    runWhenIdle(() => enhanceMediaContainers());
   }, 300);
 }
 
@@ -639,10 +846,41 @@ function scheduleLibraryEnhancementRefresh() {
 
 function init() {
   injectStyles();
+  ensureBoardScrollPause();
+  ensureBoardRowBusyPause();
+
+  if (intersectionObserver) {
+    intersectionObserver.disconnect();
+  }
+  if (typeof IntersectionObserver !== "undefined") {
+    intersectionObserver = new IntersectionObserver(
+      (entries) => {
+        let queued = false;
+        for (let i = 0; i < entries.length; i++) {
+          const entry = entries[i];
+          if (!entry.isIntersecting) continue;
+          pendingVisibleItems.add(entry.target);
+          queued = true;
+        }
+        if (queued) scheduleEnhancement();
+      },
+      { root: null, rootMargin: "120px 0px", threshold: 0.01 },
+    );
+  }
+
   if (isLibraryPage()) {
     restoreLibraryNativeTitlebars();
   } else {
+    observeTitlebarTargets();
     enhanceMediaContainers();
+    // Late-enable settle: IO + board mount often land after first pass.
+    [100, 600].forEach((ms) => {
+      setTimeout(() => {
+        if (!shouldEnhancePage()) return;
+        observeTitlebarTargets();
+        scheduleEnhancement();
+      }, ms);
+    });
   }
 
   if (mutationObserver) {
@@ -650,78 +888,155 @@ function init() {
   }
   if (typeof MutationObserver !== "undefined") {
     mutationObserver = new MutationObserver((mutations) => {
+      let shouldObserve = false;
+      let queued = false;
       for (let i = 0; i < mutations.length; i++) {
         const mutation = mutations[i];
         if (mutation.type === "attributes") {
-          const name = mutation.attributeName || "";
-          if (
-            name === "href" ||
-            name === "src" ||
-            name === "data-imdb-id"
-          ) {
-            scheduleEnhancement(mutation.target);
-            return;
-          }
+          // Never react to cover-owned src / data-imdb-id (Enhanced Covers).
+          if (mutation.attributeName !== "href") continue;
+          const item = mutation.target?.closest?.(
+            '[class*="meta-item-container"]',
+          );
+          if (item) pendingVisibleItems.add(item);
+          queued = true;
           continue;
         }
-        const target = mutation.target;
-        if (!isOwnEnhancementMutation(target)) {
-          scheduleEnhancement(target);
-          return;
+        if (mutation.type !== "childList" || !mutation.addedNodes?.length) {
+          continue;
+        }
+        for (let j = 0; j < mutation.addedNodes.length; j++) {
+          const node = mutation.addedNodes[j];
+          if (!(node instanceof Element)) continue;
+          if (isOwnEnhancementMutation(node)) continue;
+          if (
+            node.closest?.(".enhanced-title-bar") ||
+            (typeof node.className === "string" &&
+              node.className.includes("enhanced-title"))
+          ) {
+            continue;
+          }
+          // Ignore poster-image churn from Enhanced Covers.
+          if (
+            node.matches?.('img[class*="poster-image"]') ||
+            node.closest?.('[class*="poster-image-layer"]')
+          ) {
+            continue;
+          }
+          const item =
+            (typeof node.className === "string" &&
+            node.className.includes("meta-item-container")
+              ? node
+              : null) ||
+            node.querySelector?.('[class*="meta-item-container"]');
+          if (!item) continue;
+          pendingVisibleItems.add(item);
+          shouldObserve = true;
+          queued = true;
         }
       }
+      if (shouldObserve) observeTitlebarTargets();
+      if (queued) scheduleEnhancement();
     });
-    if (document.body) {
-      mutationObserver.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ["href", "src", "data-imdb-id"],
-      });
+
+    const moRoot = document.querySelector("#app") || document.body;
+    if (moRoot) {
+      try {
+        mutationObserver.observe(moRoot, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["href"],
+        });
+      } catch (_) {
+        /* ignore */
+      }
     }
   }
-
-  if (titlebarPollInterval) clearInterval(titlebarPollInterval);
-  titlebarPollInterval = setInterval(() => {
-    if (window.stremioCustomSuspendBackground?.()) return;
-    if (shouldEnhancePage()) {
-      enhanceMediaContainers();
-    }
-  }, 5000);
 
   document.addEventListener("click", onTitlebarLibraryClick, true);
   document.addEventListener("stremio-custom-route-change", onTitlebarRouteChange);
 }
 
 /**
- * Hard unload for live disable.
+ * Soft re-apply after live enable when hard reload did not run.
+ */
+window.__stremioEnhancedTitlebarForceRefresh = function () {
+  try {
+    injectStyles();
+    ensureBoardScrollPause();
+    ensureBoardRowBusyPause();
+    observeTitlebarTargets();
+    scheduleEnhancement();
+    [100, 600].forEach((ms) => {
+      setTimeout(() => {
+        if (!shouldEnhancePage()) return;
+        observeTitlebarTargets();
+        scheduleEnhancement();
+      }, ms);
+    });
+  } catch (error) {
+    console.warn("[EnhancedTitlebar] ForceRefresh failed:", error);
+  }
+};
+
+/**
+ * Hard unload for live disable — restores stock titlebars and removes reserved height.
+ * DOM restore runs before style removal so orphan enhanced nodes never render unstyled.
  */
 window.__stremioEnhancedTitlebarUnload = function () {
   if (mutationObserver) {
     mutationObserver.disconnect();
     mutationObserver = null;
   }
-  if (titlebarPollInterval) {
-    clearInterval(titlebarPollInterval);
-    titlebarPollInterval = null;
+  if (intersectionObserver) {
+    intersectionObserver.disconnect();
+    intersectionObserver = null;
   }
+  pendingVisibleItems.clear();
   if (enhanceTimeout) {
     clearTimeout(enhanceTimeout);
     enhanceTimeout = null;
   }
+  if (boardScrollIdleTimer) {
+    clearTimeout(boardScrollIdleTimer);
+    boardScrollIdleTimer = null;
+  }
+  boardScrollBusy = false;
+  boardRowBusy = false;
   document.removeEventListener("click", onTitlebarLibraryClick, true);
   document.removeEventListener("stremio-custom-route-change", onTitlebarRouteChange);
   try {
     restoreLibraryNativeTitlebars();
   } catch (_) {}
-  document.querySelectorAll(".enhanced-title-bar").forEach((node) => {
-    const parent = node.parentElement;
-    if (parent) {
-      // Leave native title if present; strip enhancement wrapper content
-      node.remove();
+  collectEnhancedTitlebarHosts().forEach((node) => {
+    try {
+      clearEnhancedState(node);
+    } catch (_) {
+      /* ignore */
     }
   });
+  // Strip any leftover enhanced nodes that escaped host restore.
+  document
+    .querySelectorAll(".enhanced-title, .enhanced-metadata, .enhanced-loading")
+    .forEach((node) => {
+      try {
+        node.remove();
+      } catch (_) {
+        /* ignore */
+      }
+    });
   document.getElementById("enhanced-title-bar-styles")?.remove();
+  try {
+    document.dispatchEvent(new CustomEvent("stremio-custom-hero-layout-changed"));
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    delete window.__stremioEnhancedTitlebarForceRefresh;
+  } catch (_) {
+    window.__stremioEnhancedTitlebarForceRefresh = undefined;
+  }
   try {
     delete window.__EnhancedTitlebarLoaded;
   } catch (_) {

@@ -67,6 +67,11 @@ fn main() {
     // Do not call the deprecated System-DPI helper here; it would override PMv2.
     nwg::enable_visual_styles();
 
+    // Must be set before WebView2 Environment/Controller creation. Microsoft docs:
+    // API-only DefaultBackgroundColor can still white-flash; the env var applies first.
+    // FF141414 = opaque rgb(20,20,20) matching liquid-glass / splash background.
+    std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "FF141414");
+
     let opt = Opt::parse();
 
     std::env::set_var(

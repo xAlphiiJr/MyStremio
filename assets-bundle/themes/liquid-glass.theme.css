@@ -29,8 +29,10 @@
 
     --border-radius: 12px;
 
-    --backdrop-filter: blur(20px) saturate(180%);
-    --backdrop-filter2: blur(10px) saturate(150%);
+    /* Always-on chrome: lighter blur for weak GPUs; menus use --backdrop-filter-menu */
+    --backdrop-filter: blur(10px) saturate(130%);
+    --backdrop-filter2: blur(8px) saturate(120%);
+    --backdrop-filter-menu: blur(20px) saturate(180%);
 
     --box-shadow:
         inset 0 0 0 1px rgba(255, 255, 255, 0.2), 0 8px 40px rgba(0, 0, 0, 0.55);
@@ -277,6 +279,11 @@ html {
 
 /* ========================= NAV BAR / HEADER ========================= */
 
+/* Nav transition clone must never show a ghost search FAB over live UI. */
+#stremio-custom-nav-transition-host [class*="search-bar"] {
+    display: none !important;
+}
+
 .search-bar-container-asfq1 {
     position: fixed;
     bottom: 20px;
@@ -517,10 +524,51 @@ html {
     transition: padding 0.2s ease-out !important;
 }
 
-.meta-row-container-xtlB1
+/* Board catalog posters — MyStremio size since ≤2.3.6 (not search). */
+[class*="board-container"]
+    .meta-row-container-xtlB1
     .meta-items-container-qcuUA
     .meta-item-QFHCh.poster-shape-poster-LKBza {
     flex: calc(1 / var(--poster-shape-ratio)) 0 250px !important;
+}
+
+/* Search: Board size (250px) but fixed — no grow so sparse rows match dense ones */
+[class*="search-container"]
+    [class*="meta-items-container"]
+    > [class*="meta-item"] {
+    flex: 0 0 250px !important;
+    width: 250px !important;
+    min-width: 250px !important;
+    max-width: 250px !important;
+    box-sizing: border-box !important;
+}
+
+/* Portrait for all shapes; kill placeholder padding-bottom double-height */
+[class*="search-container"]
+    [class*="meta-items-container"]
+    > [class*="meta-item"]
+    [class*="poster-container"] {
+    padding-top: calc(100% * var(--poster-shape-ratio)) !important;
+    padding-bottom: 0 !important;
+    width: 100% !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+}
+
+[class*="search-container"]
+    [class*="meta-items-container"]
+    > [class*="meta-item"]
+    [class*="poster-image-layer"],
+[class*="search-container"]
+    [class*="meta-items-container"]
+    > [class*="meta-item"]
+    img[class*="poster-image"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
 }
 
 /* account dropdown */
@@ -592,7 +640,8 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
 
 .modal-container-OuxEF .modal-dialog-container-DZMKq {
     background-color: #00000093;
-    backdrop-filter: var(--backdrop-filter);
+    backdrop-filter: var(--backdrop-filter-menu);
+    -webkit-backdrop-filter: var(--backdrop-filter-menu);
     border-radius: var(--border-radius);
     box-shadow: var(--box-shadow);
 }
@@ -2118,6 +2167,55 @@ body.ghost-clicking #heroLoadingScreen {
     pointer-events: none !important;
 }
 
+/*
+ * Continue Watching title bar:
+ * - Collapse stock 4rem slot (CW → next catalog gap).
+ * - Native titles (Titlebar off): same font size + cover gap as Enhanced Titlebar
+ *   (.enhanced-title 16px / .enhanced-title-bar padding 5px) — nothing else.
+ * - Enhanced Titlebar still sizes itself via height: auto.
+ */
+[class*="continue-watching-row"] [class*="meta-item-container"] [class*="title-bar-container"] {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    box-sizing: border-box !important;
+    align-items: flex-start !important;
+}
+
+[class*="continue-watching-row"]
+    [class*="title-bar-container"]
+    [class*="menu-label-container"] {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+}
+
+[class*="continue-watching-row"]
+    [class*="meta-item-container"]
+    [class*="title-bar-container"]:not(.enhanced-title-bar) {
+    padding-top: 5px !important;
+    padding-right: 10px !important;
+    padding-bottom: 0.1rem !important;
+    padding-left: 4px !important;
+}
+
+[class*="continue-watching-row"]
+    [class*="title-bar-container"]:not(.enhanced-title-bar)
+    [class*="title-label"],
+[class*="continue-watching-row"]
+    [class*="title-bar-container"]:not(.enhanced-title-bar)
+    [class*="title"]:not(.enhanced-title) {
+    font-size: 16px !important;
+    font-weight: 600 !important;
+    line-height: 1.3 !important;
+    padding: 0 4px !important;
+    -webkit-line-clamp: 1 !important;
+}
+
 /* Library / catalog posters: keep progress inside the card stacking context.
    Native progress uses z-index:-1 which bleeds through neighbors and steals clicks
    after Last Watched reorders (wrong title opens). */
@@ -2975,6 +3073,9 @@ body.ghost-clicking #heroLoadingScreen {
     border: 1px solid rgba(255, 255, 255, 0.15);
     color: white;
     font-size: 28px;
+    line-height: 0;
+    padding: 0;
+    overflow: hidden;
     cursor: pointer;
     z-index: 10;
     display: flex;
@@ -2983,6 +3084,17 @@ body.ghost-clicking #heroLoadingScreen {
     transition: all 0.2s ease;
     opacity: 0;
     pointer-events: none;
+}
+
+.enhanced-scroll-btn svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.25;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    display: block;
 }
 
 .enhanced-scroll-btn:hover {

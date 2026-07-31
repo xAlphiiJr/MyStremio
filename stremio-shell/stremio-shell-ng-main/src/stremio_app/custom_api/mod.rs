@@ -62,10 +62,17 @@ fn schemas() -> &'static Mutex<storage::RegisteredSchemas> {
     REGISTERED_SCHEMAS.get_or_init(|| Mutex::new(storage::load_registered_schemas()))
 }
 
+/**
+ * Lightweight startup init. WebView user-data must be ready before navigation;
+ * plugin/theme sync and litter migration run in the background so they do not
+ * freeze the UI thread after the splash is shown.
+ */
 pub fn init() {
-    ensure_asset_dirs();
-    storage::migrate_root_plugin_litter();
     ensure_webview_user_data_dir();
+    std::thread::spawn(|| {
+        ensure_asset_dirs();
+        storage::migrate_root_plugin_litter();
+    });
 }
 
 pub fn webview_user_data_dir() -> std::path::PathBuf {
@@ -74,6 +81,10 @@ pub fn webview_user_data_dir() -> std::path::PathBuf {
 
 pub fn build_early_storage_restore_script() -> String {
     storage::build_early_storage_restore_script()
+}
+
+pub fn build_enabled_plugins_refresh_script() -> String {
+    storage::build_enabled_plugins_refresh_script()
 }
 
 pub fn handle_request(message: &Value) -> Option<String> {

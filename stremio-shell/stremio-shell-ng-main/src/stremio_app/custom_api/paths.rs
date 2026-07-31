@@ -5,6 +5,7 @@ use std::{
     fs,
     io,
     path::{Path, PathBuf},
+    thread,
 };
 
 const PLUGIN_EXT: &str = ".plugin.js";
@@ -36,10 +37,15 @@ const RUNTIME_STATE_FILE: &str = "mystremio-runtime.json";
 const CACHE_REPAIR_GENERATION: u32 = 4;
 
 pub fn ensure_webview_user_data_dir() {
-    clear_webview_cache_if_stale();
     let target = webview_user_data_dir();
     migrate_legacy_webview_user_data(&target);
     let _ = fs::create_dir_all(&target);
+    // Cache clear can walk large trees — never block the UI/init thread.
+    // In-use files may fail to delete; runtime state is only written after the
+    // attempt so a partial clear retries on the next launch.
+    thread::spawn(|| {
+        clear_webview_cache_if_stale();
+    });
 }
 
 fn runtime_state_path() -> PathBuf {

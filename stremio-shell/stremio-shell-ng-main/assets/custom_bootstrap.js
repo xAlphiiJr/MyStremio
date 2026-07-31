@@ -250,26 +250,32 @@
     persistUserPreferences();
   });
 
+  /**
+   * Persist user preferences to disk. Returns a promise so toggles can await flush.
+   * @returns {Promise<void>}
+   */
   function persistUserPreferences() {
     const authProfile = readAuthProfileSnapshot();
     if (authProfile) lastPersistedAuthProfile = authProfile;
-    api.saveUserPreferences({
-      enabledPlugins: getEnabledPlugins(),
-      currentTheme: LIQUID_GLASS_THEME,
-      autoskip: getAutoskipPreferences(),
-      metadataAddon: getMetadataAddon(),
-      language: getLanguagePreferences(),
-      preload: getPreloadPreference(),
-      volume: getVolumePreferences(),
-      discordPresence: getDiscordPresencePreferences(),
-      library: getLibraryPreferences(),
-      authProfile,
-      uiScale: getUiScalePreference(),
-      onboarding: {
-        tmdbNoticeShown: localStorage.getItem(TMDB_NOTICE_KEY) === 'true',
-        defaultsApplied: localStorage.getItem(DEFAULTS_APPLIED_KEY) === 'true',
-      },
-    }).catch(() => {});
+    return api
+      .saveUserPreferences({
+        enabledPlugins: getEnabledPlugins(),
+        currentTheme: LIQUID_GLASS_THEME,
+        autoskip: getAutoskipPreferences(),
+        metadataAddon: getMetadataAddon(),
+        language: getLanguagePreferences(),
+        preload: getPreloadPreference(),
+        volume: getVolumePreferences(),
+        discordPresence: getDiscordPresencePreferences(),
+        library: getLibraryPreferences(),
+        authProfile,
+        uiScale: getUiScalePreference(),
+        onboarding: {
+          tmdbNoticeShown: localStorage.getItem(TMDB_NOTICE_KEY) === 'true',
+          defaultsApplied: localStorage.getItem(DEFAULTS_APPLIED_KEY) === 'true',
+        },
+      })
+      .catch(() => {});
   }
 
   const AUTOSKIP_KEYS = {
@@ -667,6 +673,11 @@
     }
   }
 
+  /**
+   * Update enabled plugin list in localStorage and persist to disk.
+   * @param {string[]} plugins
+   * @returns {Promise<void>}
+   */
   function setEnabledPlugins(plugins) {
     localStorage.setItem('enabledPlugins', JSON.stringify(plugins));
     const heroInList = isPluginEnabled(DYNAMIC_HERO_PLUGIN, plugins);
@@ -682,7 +693,7 @@
         detail: { enabledPlugins: plugins },
       })
     );
-    persistUserPreferences();
+    return persistUserPreferences();
   }
 
   function getCurrentTheme() {
@@ -786,42 +797,30 @@
     });
   }
 
+  /**
+   * Persist plugin off and soft-unload (no hard reload).
+   * @param {string} fileRef
+   */
   async function disablePlugin(fileRef) {
-    if (isHeroPluginRef(fileRef)) {
-      const next = getEnabledPlugins().filter((ref) => !isHeroPluginRef(ref));
-      setEnabledPlugins(next);
-      return;
-    }
-    const next = getEnabledPlugins().filter((ref) => !isPluginEnabled(fileRef, [ref]));
-    setEnabledPlugins(next);
+    const next = isHeroPluginRef(fileRef)
+      ? getEnabledPlugins().filter((ref) => !isHeroPluginRef(ref))
+      : getEnabledPlugins().filter((ref) => !isPluginEnabled(fileRef, [ref]));
+    await setEnabledPlugins(next);
     await unloadPluginResolved(fileRef);
-    await ensurePluginsLoadedForRoute();
   }
 
+  /**
+   * Persist plugin on and soft-load (no hard reload).
+   * @param {string} fileRef
+   * @returns {Promise<boolean>}
+   */
   async function enablePlugin(fileRef) {
     const enabled = getEnabledPlugins();
     const resolved = await resolvePluginRef(fileRef);
     if (!resolved) return false;
-    if (isHeroPluginRef(resolved)) {
-      if (!isPluginEnabled(resolved, enabled)) {
-        setEnabledPlugins([...enabled, resolved]);
-      } else {
-        localStorage.setItem(DYNAMIC_HERO_ENABLED_KEY, '1');
-        syncDynamicHeroEnabledFlag([...enabled, resolved]);
-        persistUserPreferences();
-        document.dispatchEvent(
-          new CustomEvent('stremio-custom-enabled-plugins-changed', {
-            detail: { enabledPlugins: [...enabled, resolved] },
-          })
-        );
-      }
-      return true;
-    }
-    if (!isPluginEnabled(resolved, enabled)) {
-      setEnabledPlugins([...enabled, resolved]);
-    }
-    await loadPlugin(fileRef);
-    await ensurePluginsLoadedForRoute();
+    const next = isPluginEnabled(resolved, enabled) ? enabled : [...enabled, resolved];
+    await setEnabledPlugins(next);
+    await loadPlugin(resolved);
     return true;
   }
 
@@ -860,21 +859,31 @@
         localStorage.getItem(DISCORD_KEYS.enabled) != null ||
         localStorage.getItem(DISCORD_KEYS.showPaused) != null ||
         localStorage.getItem(DISCORD_KEYS.showMenu) != null;
+      const localPluginsRaw = localStorage.getItem('enabledPlugins');
+      let localPluginsValid = false;
+      if (localPluginsRaw != null) {
+        try {
+          localPluginsValid = Array.isArray(JSON.parse(localPluginsRaw));
+        } catch {
+          localPluginsValid = false;
+        }
+      }
       const localPlugins = getEnabledPlugins();
       const localTheme = getCurrentTheme();
       const hasDiskState = diskPlugins.length > 0 || diskTheme.length > 0;
       const hasLocalState = localPlugins.length > 0 || localTheme.length > 0;
 
-      if (hasDiskState) {
+      // Prefer existing localStorage (early-restore / user toggles). Disk only fills gaps.
+      if (!localPluginsValid && hasDiskState) {
         localStorage.setItem('enabledPlugins', JSON.stringify(diskPlugins));
-        localStorage.setItem('currentTheme', LIQUID_GLASS_THEME);
-        localStorage.setItem(METADATA_ADDON_KEY, diskMetadataAddon);
-      } else if (hasLocalState) {
+      } else if (!localPluginsValid && hasLocalState) {
         localStorage.setItem('enabledPlugins', JSON.stringify(localPlugins));
-        localStorage.setItem('currentTheme', LIQUID_GLASS_THEME);
-      } else {
+      } else if (!localPluginsValid) {
         localStorage.setItem('enabledPlugins', '[]');
-        localStorage.setItem('currentTheme', LIQUID_GLASS_THEME);
+      }
+      localStorage.setItem('currentTheme', LIQUID_GLASS_THEME);
+      if (hasDiskState && diskMetadataAddon) {
+        localStorage.setItem(METADATA_ADDON_KEY, diskMetadataAddon);
       }
       if (diskLanguage && typeof diskLanguage === 'object') {
         applyLanguagePreferences(diskLanguage);
@@ -1314,6 +1323,7 @@
   const PLAYBACK_KEEP_PLUGINS = new Set([
     'interface/context-menu-fix.plugin.js',
     'interface/enhanced-titlebar.plugin.js',
+    'interface/stream-ui.plugin.js',
     'player/tidb.plugin.js',
     'player/seek-buttons.plugin.js',
     'player/hover-timestamps.plugin.js',
@@ -1322,13 +1332,12 @@
     'player/anime4k.plugin.js',
   ]);
 
-  /** Board chrome visible on first paint — load before splash/UI ready. */
+  /** Board chrome visible on first paint — load before splash/UI ready.
+   *  Titlebar + meta-hover deferred to idle after reveal (less layout thrash). */
   const BOARD_FIRST_PAINT_PLUGINS = new Set([
     'interface/hero-div.plugin.js',
     'interface/enhanced-covers.plugin.js',
-    'interface/enhanced-titlebar.plugin.js',
     'interface/context-menu-fix.plugin.js',
-    'metadata/meta-hover-panel.plugin.js',
   ]);
 
   const IDLE_DURING_PLAYBACK_PREFIXES = [
@@ -1513,29 +1522,111 @@
   }
 
   /**
-   * Fast first-paint: heal enabled list from LS only, load canonical plugin paths.
-   * No list-plugins / migrate IPC on the critical path.
+   * Fast first-paint: load board chrome without rewriting enabledPlugins.
+   * On true first-run (defaults not applied) load the paint set for chrome only.
+   * After defaults exist, only load plugins the user still has enabled.
    */
   async function loadFirstPaintPluginsFast() {
     const enabled = getEnabledPlugins();
-    const next = [...enabled];
-    let changed = false;
-    for (const ref of BOARD_FIRST_PAINT_PLUGINS) {
-      if (!isPluginEnabled(ref, next)) {
-        next.push(ref);
-        changed = true;
-      }
-    }
-    if (changed) setEnabledPlugins(next);
+    const defaultsApplied = localStorage.getItem(DEFAULTS_APPLIED_KEY) === 'true';
+    const refs = [...BOARD_FIRST_PAINT_PLUGINS].filter((ref) => {
+      if (!defaultsApplied) return true;
+      return isPluginEnabled(ref, enabled);
+    });
     // Warm inventory cache in background for later resolve/migrate.
     listPluginsCached().catch(() => {});
-    await Promise.all([...BOARD_FIRST_PAINT_PLUGINS].map((ref) => loadPluginDirect(ref)));
+    // Do not block UI reveal on every plugin — load in parallel, caller may race.
+    await Promise.all(refs.map((ref) => loadPluginDirect(ref)));
   }
 
   /**
    * Idempotent UI reveal — used by happy path and soft deadline recovery.
    * @param {string} reason
    */
+  /**
+   * Real board scrollport (overflow-y), not board-content-container.
+   * Same pattern as custom_scroll_restore.js getBoardScrollEl.
+   * @returns {HTMLElement|null}
+   */
+  function getBoardCatalogScrollEl() {
+    const board = document.querySelector('[class*="board-container"]');
+    if (!board) return null;
+    const candidates = board.querySelectorAll('[class*="board-content"]');
+    for (const el of candidates) {
+      let overflowY = '';
+      try {
+        overflowY = window.getComputedStyle(el).overflowY;
+      } catch (_) {
+        /* ignore */
+      }
+      if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') {
+        return el;
+      }
+    }
+    return (
+      board.querySelector('[class*="board-content-container"] [class*="board-content"]') ||
+      null
+    );
+  }
+
+  /**
+   * Stock-like board load: fire scroll on the real scrollport so Board's
+   * getVisibleChildrenRange → LoadRange runs for the viewport only.
+   * Avoid fixed LoadRange {0,12} which prefetches ~13 full catalog pages.
+   * @returns {boolean}
+   */
+  function runBoardCatalogScrollNudge() {
+    try {
+      const el = getBoardCatalogScrollEl();
+      if (!el || el.clientHeight <= 0) return false;
+      el.dispatchEvent(new Event('scroll', { bubbles: false }));
+      return true;
+    } catch (error) {
+      console.warn('[StremioCustom] Board scroll nudge failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * After splash/UI ready: nudge Stock LoadRange via scroll (progressive rows).
+   * One optional tiny LoadRange only if scroll had no layout yet.
+   * @param {string} [reason]
+   */
+  function nudgeBoardCatalogLoadRange(reason) {
+    const gen = (window.__stremioCustomBoardCatalogNudgeGen || 0) + 1;
+    window.__stremioCustomBoardCatalogNudgeGen = gen;
+    let attempts = 0;
+    const maxAttempts = 12;
+
+    const tick = () => {
+      if (window.__stremioCustomBoardCatalogNudgeGen !== gen) return;
+      attempts += 1;
+      const ok = runBoardCatalogScrollNudge();
+      if (ok) {
+        return;
+      }
+      if (attempts >= maxAttempts) {
+        // Last resort: only first ~viewport rows (not 0–12).
+        try {
+          window.__mystremioBoardLoadVisibleRange?.({ start: 0, end: 4 });
+        } catch (error) {
+          console.warn('[StremioCustom] Board LoadVisibleRange fallback failed:', error);
+        }
+        runBoardCatalogScrollNudge();
+        return;
+      }
+      setTimeout(tick, attempts < 4 ? 100 : 250);
+    };
+
+    try {
+      requestAnimationFrame(tick);
+    } catch (_) {
+      tick();
+    }
+  }
+
+  window.__stremioCustomNudgeBoardCatalogLoadRange = nudgeBoardCatalogLoadRange;
+
   function markUiReady(reason) {
     if (window.__stremioCustomUiReadyNotified) return;
     window.__stremioCustomUiReadyNotified = true;
@@ -1553,6 +1644,7 @@
     }
     notifyShellUiReady();
     window.__stremioCustomScheduleShellAppReadyFallback?.();
+    nudgeBoardCatalogLoadRange(reason || 'ui-ready');
     console.info('[StremioCustom] UI ready:', reason || 'ok');
   }
 
@@ -1699,43 +1791,31 @@
 
     const enabled = await migrateEnabledPlugins();
     const defaultsApplied = localStorage.getItem(DEFAULTS_APPLIED_KEY) === 'true';
+    // After first-run defaults, never force-enable plugins the user disabled.
+    if (defaultsApplied) return;
+
     const next = [...enabled];
     let changed = false;
 
-    // Self-heal: always re-add missing board-first-paint plugins (even after defaultsApplied).
-    for (const ref of BOARD_FIRST_PAINT_PLUGINS) {
-      const resolved =
-        (await resolvePluginRef(ref)) ||
-        all.find((p) => pluginBaseName(p) === pluginBaseName(ref)) ||
-        ref;
-      if (!isPluginEnabled(resolved, next)) {
-        next.push(normalizePluginRef(resolved));
+    for (const ref of all) {
+      const normalized = String(ref || '').replace(/\\/g, '/');
+      const baseName = normalized.split('/').pop() || '';
+      const skip = DEFAULT_DISABLED_PLUGIN_PATTERNS.some(
+        (pattern) => pattern.test(normalized) || pattern.test(baseName)
+      );
+      if (skip) continue;
+      if (!isPluginEnabled(ref, next)) {
+        next.push(normalized);
         changed = true;
       }
     }
 
-    // Full default enable only on first apply or wiped list.
-    if (!defaultsApplied || enabled.length === 0) {
-      for (const ref of all) {
-        const normalized = String(ref || '').replace(/\\/g, '/');
-        const baseName = normalized.split('/').pop() || '';
-        const skip = DEFAULT_DISABLED_PLUGIN_PATTERNS.some(
-          (pattern) => pattern.test(normalized) || pattern.test(baseName)
-        );
-        if (skip) continue;
-        if (!isPluginEnabled(ref, next)) {
-          next.push(normalized);
-          changed = true;
-        }
-      }
-    }
-
     if (changed) {
-      setEnabledPlugins(next);
+      await setEnabledPlugins(next);
       // Do not load plugins here — cold boot loads firstPaint, then deferred fullBoard.
     }
     localStorage.setItem(DEFAULTS_APPLIED_KEY, 'true');
-    if (changed || !defaultsApplied) persistUserPreferences();
+    if (changed || !defaultsApplied) await persistUserPreferences();
   }
 
   /**
@@ -1968,8 +2048,9 @@
   }
 
   /**
-   * Ensure we are on #/board before any plugin load/unload work.
+   * Ensure we are on `#/` (Board) before any plugin load/unload work.
    * Prevents the BAD cold-start path (stale #/player → unload race).
+   * Never `#/board` — HashRouter has no such path (NotFound).
    */
   function settleBoardRouteBeforePlugins() {
     // Route only — never re-create the boot seal (splash safety may already
@@ -1977,12 +2058,12 @@
     const hash = location.hash || '';
     if (!/#\/player(?:\/|$|\?|#)/.test(hash)) return;
     const target =
-      (location.pathname || '/index.html') + (location.search || '') + '#/board';
+      (location.pathname || '/index.html') + (location.search || '') + '#/';
     try {
       history.replaceState(null, '', target);
       window.dispatchEvent(new HashChangeEvent('hashchange'));
       document.dispatchEvent(new CustomEvent('stremio-custom-route-change'));
-      console.info('[StremioCustom] Forced #/board (stale player route)');
+      console.info('[StremioCustom] Forced #/ (stale player route)');
     } catch (_) {
       /* ignore */
     }
@@ -2019,20 +2100,20 @@
       }
       invoke('apply-ui-scale', {}, 3000).catch(() => {});
 
-      // Critical path only: theme + board-first-paint (no hydrate/listPlugins gate).
-      await Promise.all([
-        ensureThemeApplied().catch((error) => {
-          console.warn('[StremioCustom] Theme apply failed on critical path:', error);
-        }),
-        loadFirstPaintPluginsFast().catch((error) => {
-          console.warn('[StremioCustom] First-paint plugins failed:', error);
-        }),
-      ]);
+      // Critical path: theme only. First-paint plugins run in parallel without blocking reveal.
+      const firstPaint = loadFirstPaintPluginsFast().catch((error) => {
+        console.warn('[StremioCustom] First-paint plugins failed:', error);
+      });
+      await ensureThemeApplied().catch((error) => {
+        console.warn('[StremioCustom] Theme apply failed on critical path:', error);
+      });
       settleBoardRouteBeforePlugins();
       lastPlaybackActive = effectivePlaybackActive();
 
       clearTimeout(revealDeadline);
-      markUiReady('theme+firstPaint');
+      markUiReady('theme');
+      // Let first-paint continue; deferred load covers anything still pending.
+      void firstPaint.then(() => scheduleDeferredPluginLoad());
       scheduleDeferredPluginLoad();
 
       // Non-critical: hydrate, migrations, deferred full board — after UI is up.
@@ -2202,6 +2283,154 @@
     }
     if (!isPlayerRoute()) scheduleMaintenance();
   }, 30000);
+
+  /**
+   * Board hash (home / #/ / #/board) — same rules as custom_board_row_nav.
+   * @returns {boolean}
+   */
+  function isBoardRouteHash() {
+    const h = location.hash || '';
+    if (!h || h === '#/' || h === '#') return true;
+    if (h.includes('/board')) return true;
+    if (/^#\/?\?/.test(h)) return true;
+    return false;
+  }
+
+  let lastBoardEnterNudgeAt = 0;
+
+  /**
+   * Re-nudge stock LoadRange when entering Board (detail→board, cold race recovery).
+   * Keeps range small ({0,4} fallback inside nudge) — never {0,12}.
+   */
+  function onBoardEnterCatalogInsurance() {
+    if (!isBoardRouteHash()) return;
+    const now = Date.now();
+    if (now - lastBoardEnterNudgeAt < 900) return;
+    lastBoardEnterNudgeAt = now;
+    nudgeBoardCatalogLoadRange('board-enter');
+  }
+
+  document.addEventListener('stremio-custom-route-change', onBoardEnterCatalogInsurance);
+
+  /**
+   * Optional board perf probe. Enable in DevTools:
+   *   localStorage.mystremioPerf = '1'; location.reload()
+   * Then scroll a catalog row / use chevrons and call __mystremioPerfDump().
+   */
+  function installMystremioPerfProbe() {
+    let enabled = false;
+    try {
+      enabled = localStorage.getItem('mystremioPerf') === '1';
+    } catch (_) {
+      enabled = false;
+    }
+    if (!enabled || window.__mystremioPerfInstalled) return;
+    window.__mystremioPerfInstalled = true;
+
+    /** @type {{name:string,t:number,detail?:*}[]} */
+    const marks = [];
+    const log = (name, detail) => {
+      const t = performance.now();
+      marks.push({ name, t, detail });
+      console.log('[mystremioPerf]', name, t.toFixed(1), detail != null ? detail : '');
+    };
+
+    /**
+     * @param {string} key
+     * @param {string} label
+     */
+    const wrap = (key, label) => {
+      const orig = window[key];
+      if (typeof orig !== 'function' || orig.__mystremioPerfWrapped) return;
+      /**
+       * @param {...*} args
+       * @returns {*}
+       */
+      const wrapped = function (...args) {
+        const t0 = performance.now();
+        performance.mark(`${label}:start`);
+        log(`${label}:dispatch`, args);
+        let ret;
+        try {
+          ret = orig.apply(this, args);
+        } catch (error) {
+          log(`${label}:error`, String(error));
+          throw error;
+        }
+        Promise.resolve(ret).finally(() => {
+          performance.mark(`${label}:end`);
+          try {
+            performance.measure(label, `${label}:start`, `${label}:end`);
+          } catch (_) {
+            /* ignore */
+          }
+          log(`${label}:done`, `${(performance.now() - t0).toFixed(1)}ms`);
+        });
+        return ret;
+      };
+      wrapped.__mystremioPerfWrapped = true;
+      window[key] = wrapped;
+    };
+
+    const tryWrapHooks = () => {
+      wrap('__mystremioBoardLoadNextPage', 'LoadNextPage');
+      wrap('__mystremioBoardLoadVisibleRange', 'LoadRange');
+      wrap('__mystremioBoardRequestRender', 'BumpReveal');
+      wrap('__mystremioBoardSyncCatalogIndices', 'SyncIndices');
+      wrap('__mystremioBoardGetCatalogItemCount', 'CatalogItemCount');
+    };
+    tryWrapHooks();
+    let wrapAttempts = 0;
+    const wrapTimer = setInterval(() => {
+      wrapAttempts += 1;
+      tryWrapHooks();
+      if (wrapAttempts >= 40) clearInterval(wrapTimer);
+    }, 500);
+
+    if (typeof PerformanceObserver !== 'undefined') {
+      try {
+        const po = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            if (entry.duration > 50) {
+              console.warn('[mystremioPerf] longtask', `${entry.duration.toFixed(0)}ms`);
+              marks.push({ name: 'longtask', t: performance.now(), detail: entry.duration });
+            }
+          }
+        });
+        po.observe({ entryTypes: ['longtask'] });
+      } catch (_) {
+        /* longtask unsupported */
+      }
+    }
+
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      const url = String((input && input.url) || input || '');
+      if (url.includes('v3-cinemeta.strem.io/meta')) {
+        log('titlebar:metaFetch', url.slice(-48));
+      } else if (url.includes('images.metahub.space')) {
+        log('covers:metahub', url.slice(-48));
+      }
+      return nativeFetch(input, init);
+    };
+
+    window.__mystremioPerfDump = () => {
+      console.table(marks.slice(-60));
+      return marks.slice(-60);
+    };
+    console.info(
+      '[mystremioPerf] armed — chevron-scroll a catalog row, then __mystremioPerfDump()'
+    );
+  }
+
+  installMystremioPerfProbe();
+  document.addEventListener('stremio-custom-route-change', () => {
+    try {
+      if (localStorage.getItem('mystremioPerf') === '1') installMystremioPerfProbe();
+    } catch (_) {
+      /* ignore */
+    }
+  });
 
   console.info('[StremioCustom] Bootstrap loaded');
 })();

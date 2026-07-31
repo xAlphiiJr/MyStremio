@@ -809,21 +809,42 @@ pub fn build_early_storage_restore_script() -> String {
 if(window.__stremioEarlyStorageRestore)return;
 window.__stremioEarlyStorageRestore=true;
 function hasAuthProfile(){{try{{var raw=localStorage.getItem('profile');if(!raw)return false;var p=JSON.parse(raw);return Boolean(p&&p.auth&&p.auth.key);}}catch(_){{return false;}}}}
-function pluginListLen(raw){{try{{var a=JSON.parse(raw);return Array.isArray(a)?a.length:0;}}catch(_){{return 0;}}}}
 var authProfile={auth_json};
 if(authProfile&&!hasAuthProfile()){{try{{localStorage.setItem('profile',authProfile);}}catch(_){{}}}}
 var restore={restore_json};
+/* Do NOT force-restore enabledPlugins: DocumentCreated snapshot is frozen at
+   WebView create time and would undo a just-saved plugin toggle on Ctrl+R. */
 var forceRestoreKeys={{"stremio-custom-ui-scale-percent":true}};
 Object.keys(restore).forEach(function(key){{try{{
   var disk=restore[key];
   var cur=localStorage.getItem(key);
-  if(forceRestoreKeys[key]||cur===null){{localStorage.setItem(key,disk);return;}}
-  // Repair shrunk enabledPlugins: prefer disk when it has more entries.
-  if(key==='enabledPlugins'&&pluginListLen(disk)>pluginListLen(cur)){{
-    localStorage.setItem(key,disk);
-  }}
+  if(forceRestoreKeys[key]||cur===null){{localStorage.setItem(key,disk);}}
 }}catch(_){{}}}});
 }}catch(e){{console.warn('[StremioCustom] early storage restore failed',e);}}}})();"#
+    )
+}
+
+/// Sync disk → localStorage on content load (fresh read; DocumentCreated is stale).
+/// Only overwrites when disk has a list — never clobber a newer in-page toggle with [].
+pub fn build_enabled_plugins_refresh_script() -> String {
+    let prefs = read_user_preferences();
+    let enabled = prefs
+        .get("enabledPlugins")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]));
+    let enabled_json = serde_json::to_string(&enabled).unwrap_or_else(|_| "[]".to_string());
+
+    format!(
+        r#"(function(){{try{{
+var disk={enabled_json};
+if(!Array.isArray(disk))return;
+var cur=null;
+try{{cur=JSON.parse(localStorage.getItem('enabledPlugins')||'null');}}catch(_){{}}
+/* Prefer disk when it has entries, or when localStorage has no valid array yet. */
+if(disk.length>0||!Array.isArray(cur)){{
+  localStorage.setItem('enabledPlugins',JSON.stringify(disk));
+}}
+}}catch(e){{console.warn('[StremioCustom] enabledPlugins refresh failed',e);}}}})();"#
     )
 }
 

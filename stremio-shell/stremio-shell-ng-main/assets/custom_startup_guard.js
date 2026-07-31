@@ -4,7 +4,7 @@
   /**
    * Startup / route guard for stale #/player without a live MPV stream.
    *
-   * - Cold boot: redirect restored #/player → #/board until bootstrap-ready.
+   * - Cold boot: redirect restored #/player → #/ until bootstrap-ready.
    * - After ready: do NOT redirect (user may be opening the player); keep opaque
    *   until a live stream allows transparency.
    * - Warm resume: callers force-redirect dead player sessions.
@@ -17,7 +17,7 @@
 
   const OPAQUE_STYLE_ID = 'stremio-custom-startup-opaque';
   const PLAYER_ROUTE = /#\/player(?:\/|$|\?|#)/;
-  const BOARD_HASH = '#/board';
+  const BOARD_HASH = '#/';
   const ROUTE_WATCH_MS = 250;
 
   let streamSessionAllowed = false;

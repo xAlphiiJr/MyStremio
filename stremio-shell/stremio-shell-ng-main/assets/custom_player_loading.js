@@ -319,12 +319,33 @@
     viewportTimers = [];
   }
 
+  let shellBgMsgId = 9200;
+
+  /**
+   * Toggle WebView2 DefaultBackgroundColor alpha for MPV punch-through.
+   * Cold-start stays opaque (a:255); VIDEO needs a:0.
+   * @param {boolean} transparent
+   */
+  function setWebViewBackgroundTransparent(transparent) {
+    if (!window.chrome?.webview?.postMessage) return;
+    try {
+      shellBgMsgId += 1;
+      window.chrome.webview.postMessage(
+        JSON.stringify({
+          id: shellBgMsgId,
+          args: ['webview-set-background', { transparent: Boolean(transparent) }],
+        })
+      );
+    } catch (_) {}
+  }
+
   function punchMpvViewport() {
     if (phase !== Phase.VIDEO || !hasLiveStream()) {
       ensureOpaqueReconcile();
       return;
     }
 
+    setWebViewBackgroundTransparent(true);
     window.__stremioCustomPlayerTransparencyEnsure?.();
     window.StremioCustomPlayback?.refreshMpvViewport?.();
 
@@ -376,10 +397,12 @@
     } else if (next === Phase.LOADING) {
       // Stay opaque while loading — punching here exposes white HWND/WebView edges
       // especially when the user enters fullscreen during the poster phase.
+      setWebViewBackgroundTransparent(false);
       html.classList.remove(MPV_VISIBLE_CLASS);
       applySeriesBranding();
       startBrandObserver();
     } else {
+      setWebViewBackgroundTransparent(false);
       html.classList.remove(MPV_VISIBLE_CLASS);
       stopBrandObserver();
       clearViewportTimers();

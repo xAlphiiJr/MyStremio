@@ -29,14 +29,26 @@ pub struct StremioServer {
     parent: nwg::ControlHandle,
     crash_notice: nwg::Notice,
     logs: Arc<Mutex<String>>,
+    /// Receives EngineFS endpoint when the background server thread is ready.
+    ready_rx: Mutex<Option<flume::Receiver<String>>>,
 }
 
 impl StremioServer {
+    /**
+     * Spawn the streaming server on a background thread without blocking the UI.
+     *
+     * Call [`Self::wait_ready`] after the main window is visible (e.g. from OnInit)
+     * so splash can paint while EngineFS starts.
+     */
     pub fn start(&self) {
         if self.development {
             return;
         }
         let (tx, rx) = flume::unbounded();
+        {
+            let mut slot = self.ready_rx.lock().unwrap();
+            *slot = Some(rx);
+        }
         let logs = self.logs.clone();
         let sender = self.crash_notice.sender();
 
@@ -208,9 +220,38 @@ impl StremioServer {
             println!("Server terminated.");
             sender.notice();
         });
+    }
 
-        // Wait for the server to start
-        rx.recv().unwrap();
+    /**
+     * Block until EngineFS reports ready, or until `timeout` elapses.
+     *
+     * Intended to run after the main window is shown so startup does not feel frozen.
+     */
+    pub fn wait_ready(&self, timeout: Duration) {
+        if self.development {
+            return;
+        }
+        let rx = {
+            let mut slot = self.ready_rx.lock().unwrap();
+            slot.take()
+        };
+        let Some(rx) = rx else {
+            return;
+        };
+        match rx.recv_timeout(timeout) {
+            Ok(endpoint) => {
+                println!("Stremio server ready at {endpoint}");
+            }
+            Err(flume::RecvTimeoutError::Timeout) => {
+                eprintln!(
+                    "Timed out waiting for Stremio server after {}ms; continuing startup",
+                    timeout.as_millis()
+                );
+            }
+            Err(flume::RecvTimeoutError::Disconnected) => {
+                eprintln!("Stremio server thread ended before ready signal");
+            }
+        }
     }
 }
 
@@ -229,8 +270,9 @@ impl PartialUi for StremioServer {
             .parent(data.parent)
             .build(&mut data.crash_notice)
             .ok();
+        // Non-blocking: wait_ready() runs from MainWindow::on_init after the window is visible.
         data.start();
-        println!("Stremio server started");
+        println!("Stremio server spawning");
         Ok(())
     }
     fn process_event<'a>(
@@ -247,6 +289,7 @@ impl PartialUi for StremioServer {
                 self.logs.lock().unwrap().deref(),
             );
             self.start();
+            self.wait_ready(Duration::from_secs(15));
         }
     }
 }

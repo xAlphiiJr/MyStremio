@@ -52,6 +52,7 @@
       #${ROOT_ID}{
         position:fixed;left:0;width:min(420px,92vw);z-index:10050;
         max-height:min(50vh,380px);overflow:auto;
+        overscroll-behavior:contain;
         border-radius:12px;padding:6px;
         background:rgba(18,18,22,.97);
         border:1px solid rgba(255,255,255,.12);
@@ -272,7 +273,8 @@
     const n = b.length;
     if (!m) return n;
     if (!n) return m;
-    if (Math.abs(m - n) > 2) return 99;
+    // Near-match band needs up to ~3 edits (full-title typo + soft band).
+    if (Math.abs(m - n) > 3) return 99;
     /** @type {number[][]} */
     const d = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
     for (let i = 0; i <= m; i++) d[i][0] = i;
@@ -291,6 +293,7 @@
 
   /**
    * Edit budget by token length (Algolia/Meilisearch-style).
+   * Equal-length short tokens (len 2–3) allow 1 edit so "od"↔"of".
    * @param {string} qTok
    * @param {string} nameTok
    * @param {boolean} allowFuzzyTier
@@ -299,8 +302,12 @@
   function tokensFuzzyEqual(qTok, nameTok, allowFuzzyTier) {
     if (qTok === nameTok) return true;
     if (!allowFuzzyTier) return false;
-    const len = Math.min(qTok.length, nameTok.length);
-    if (len < 4) return false;
+    const qLen = qTok.length;
+    const nLen = nameTok.length;
+    const len = Math.min(qLen, nLen);
+    if (len <= 3) {
+      return qLen === nLen && len >= 2 && damerauDistance(qTok, nameTok) <= 1;
+    }
     const maxEdit = len >= 8 ? 2 : 1;
     return damerauDistance(qTok, nameTok) <= maxEdit;
   }
@@ -359,7 +366,7 @@
   }
 
   /**
-   * Higher is better. Exact/prefix > exact tokens > fuzzy phrase > majority > weak.
+   * Higher is better. Exact/prefix/near-title > sequence > bag-of-words; popularity secondary.
    * @param {string} query
    * @param {object} meta
    * @param {boolean} allowFuzzyTier
@@ -383,19 +390,60 @@
     const matchedWords = wordHits.filter((h) => h.hit);
     const fuzzyPenalty = wordHits.filter((h) => h.hit && !h.exact).length;
     const matchedDigits = qCanon.filter((t) => /^\d+$/.test(t) && nameSet.has(t));
-    const allExact =
+    // Same-length token sequence (exact or fuzzy), not "tokens appear somewhere".
+    const allExactSequence =
+      qCanon.length > 0 &&
+      nameCanon.length === qCanon.length &&
+      qCanon.every(
+        (t, i) => t === nameCanon[i] || tokensFuzzyEqual(t, nameCanon[i], allowFuzzyTier)
+      );
+    const allTokensPresent =
       qWordTokens.length > 0 &&
-      wordHits.every((h) => h.hit && h.exact) &&
+      wordHits.every((h) => h.hit) &&
       qCanon.filter((t) => /^\d+$/.test(t)).every((t) => nameSet.has(t));
 
     let score = 0;
     if (name === q) score += 1200;
-    else if (name.startsWith(q + ' ') || name.startsWith(q)) score += 900;
-    else if (nameCanon[0] === qCanon[0] && qCanon.length === 1) score += 750;
+    else if (name.startsWith(q + ' ') || name.startsWith(q)) {
+      score += 900;
+      // Prefer titles closer to the typed prefix (shorter remaining suffix).
+      score += Math.max(0, 200 - (name.length - q.length) * 8);
+    } else if (nameCanon[0] === qCanon[0] && qCanon.length === 1) score += 750;
     else if (hay.startsWith(q)) score += 650;
     else if (name.includes(q) || hay.includes(q)) score += 280;
 
-    if (allExact) score += 500;
+    // Full-title near-match: "game od thrones" → "game of thrones" (d=1).
+    // Independent of token fuzzy tier so typos win before Making-of supersets.
+    if (name !== q && qCanon.length && nameCanon.length) {
+      const qJoined = qCanon.join(' ');
+      const nJoined = nameCanon.join(' ');
+      const d = damerauDistance(qJoined, nJoined);
+      const maxD = qJoined.length >= 12 ? 2 : 1;
+      if (d <= maxD) score += 1000 - 80 * d;
+      else if (d <= maxD + 1 && nameCanon.length <= qCanon.length + 1) score += 700;
+    }
+
+    if (allExactSequence) score += 500;
+    else if (allTokensPresent) score += 120;
+
+    // Partial last-token completion: "me" → "men" (not "questions").
+    // Query token i is a real prefix of title token i (strict, not full drop).
+    if (qCanon.length >= 1 && nameCanon.length >= qCanon.length) {
+      let prefixAligned = true;
+      for (let i = 0; i < qCanon.length - 1; i++) {
+        if (qCanon[i] !== nameCanon[i]) {
+          prefixAligned = false;
+          break;
+        }
+      }
+      if (prefixAligned) {
+        const lastQ = qCanon[qCanon.length - 1];
+        const lastN = nameCanon[qCanon.length - 1];
+        if (lastN && lastQ && lastN !== lastQ && lastN.startsWith(lastQ)) {
+          score += 450;
+        }
+      }
+    }
 
     if (qCanon.length >= 2) {
       const needle = qCanon.join(' ');
@@ -412,6 +460,11 @@
       }
       score += Math.round(wordRatio * 300);
       score -= 40 * fuzzyPenalty;
+      // Prefer short titles that cover the query (Algolia attribute-length style).
+      if (nameCanon.length > 0) {
+        score += Math.round((matchedWords.length / nameCanon.length) * 250);
+      }
+      score -= Math.max(0, nameCanon.length - qCanon.length) * 60;
     } else if (matchedDigits.length && qCanon.length === matchedDigits.length) {
       score += 80;
     }
@@ -423,8 +476,10 @@
       qCanon.filter((t) => /^\d+$/.test(t) && nameSet.has(t)).length;
     if (qCanon.length) score += Math.round((overlap / qCanon.length) * 100);
 
-    // Secondary rank: popularity + freshness (small weights).
-    score += Math.min(40, metaRating(meta) * 3);
+    // Secondary rank only: popularity must not override text relevance.
+    const popularity = metaRating(meta);
+    if (score >= 800) score += Math.min(150, popularity * 15);
+    else score += Math.min(25, popularity * 2);
     score += Math.min(20, Math.max(0, metaYear(meta) - 1990) / 4);
 
     return score;
@@ -510,6 +565,9 @@
    */
   async function searchCinemeta(query) {
     const queries = expandSearchQueries(query);
+    // Fetch with expansions (broader catalog), but score only the full user query
+    // so a partial last token like "me" still prefers "Men" over "Questions".
+    const scoreQueries = [String(query || '').trim()].filter(Boolean);
     const pools = await Promise.all(queries.map((q) => fetchCatalogMetas(q)));
     const seen = new Set();
     const merged = [];
@@ -523,7 +581,7 @@
     }
 
     const strictRanked = merged
-      .map((meta) => ({ meta, score: bestScore(queries, meta, false) }))
+      .map((meta) => ({ meta, score: bestScore(scoreQueries, meta, false) }))
       .sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score;
         if (metaRating(b.meta) !== metaRating(a.meta)) {
@@ -537,7 +595,7 @@
 
     const ranked = useFuzzy
       ? merged
-          .map((meta) => ({ meta, score: bestScore(queries, meta, true) }))
+          .map((meta) => ({ meta, score: bestScore(scoreQueries, meta, true) }))
           .sort((a, b) => {
             if (b.score !== a.score) return b.score - a.score;
             if (metaRating(b.meta) !== metaRating(a.meta)) {
@@ -573,8 +631,10 @@
 
   /**
    * @param {number} index
+   * @param {{ scroll?: boolean }} [opts] — scrollIntoView only for keyboard nav (hover must not scroll).
    */
-  function setActiveIndex(index) {
+  function setActiveIndex(index, opts) {
+    const scroll = Boolean(opts && opts.scroll);
     const root = document.getElementById(ROOT_ID);
     if (!root) return;
     const items = [...root.querySelectorAll('.mss-item')];
@@ -584,7 +644,7 @@
     }
     activeIndex = ((index % items.length) + items.length) % items.length;
     items.forEach((el, i) => el.classList.toggle('active', i === activeIndex));
-    items[activeIndex]?.scrollIntoView?.({ block: 'nearest' });
+    if (scroll) items[activeIndex]?.scrollIntoView?.({ block: 'nearest' });
   }
 
   /**
@@ -625,7 +685,7 @@
         .join('');
     root.classList.add('open');
     root.querySelectorAll('.mss-item').forEach((btn, i) => {
-      btn.addEventListener('mouseenter', () => setActiveIndex(i));
+      btn.addEventListener('mouseenter', () => setActiveIndex(i, { scroll: false }));
       btn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -679,12 +739,14 @@
 
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setActiveIndex(activeIndex < 0 ? 0 : activeIndex + 1);
+      setActiveIndex(activeIndex < 0 ? 0 : activeIndex + 1, { scroll: true });
       return;
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      setActiveIndex(activeIndex < 0 ? items.length - 1 : activeIndex - 1);
+      setActiveIndex(activeIndex < 0 ? items.length - 1 : activeIndex - 1, {
+        scroll: true,
+      });
       return;
     }
     if (event.key === 'Enter' && activeIndex >= 0 && currentMetas[activeIndex]) {
@@ -730,8 +792,19 @@
       });
   }
 
-  function onReposition() {
-    if (!activeInput || !document.getElementById(ROOT_ID)?.classList.contains('open')) return;
+  /**
+   * @param {Event} [event]
+   */
+  function onReposition(event) {
+    const root = document.getElementById(ROOT_ID);
+    if (!activeInput || !root?.classList.contains('open')) return;
+    // Ignore scrolls inside the suggestions panel (hover must not reposition).
+    if (
+      event?.target &&
+      (event.target === root || (event.target instanceof Node && root.contains(event.target)))
+    ) {
+      return;
+    }
     if (positionRaf) cancelAnimationFrame(positionRaf);
     positionRaf = requestAnimationFrame(() => {
       positionRaf = null;

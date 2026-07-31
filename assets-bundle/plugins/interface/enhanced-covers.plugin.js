@@ -3,7 +3,7 @@
  * @description Widens the cover images in the Continue Watching section using background images with logo overlay.
  * @updateUrl none
  * @version 26.0.6
- * @author Fxy rewritten and improved by MrBlu03
+ * @author Fxy / MrBlu03 · adapted for MyStremio
  */
 
 (function () {
@@ -13,11 +13,47 @@
   // Store references for cleanup
   let coverInterval = null;
   let coverObserver = null;
+  let coverObserveRetry = null;
+  let coverUpdateTimer = null;
+
+  /**
+   * @returns {boolean}
+   */
+  function isBoardRoute() {
+    const h = location.hash || "";
+    if (!h || h === "#/" || h === "#") return true;
+    if (h.includes("/board")) return true;
+    if (/^#\/?\?/.test(h)) return true;
+    return false;
+  }
 
   function onCoversRouteChange() {
     injectStyles();
-    setTimeout(replaceCover, 500);
-    setTimeout(replaceCover, 1500);
+    observeContinueWatchingRoot();
+    if (!isBoardRoute()) {
+      if (coverObserver) {
+        try {
+          coverObserver.disconnect();
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      return;
+    }
+    scheduleReplaceCover(120);
+    scheduleReplaceCover(600);
+  }
+
+  /**
+   * Coalesce replaceCover calls (avoid 50/100/500 storms).
+   * @param {number} delayMs
+   */
+  function scheduleReplaceCover(delayMs) {
+    if (coverUpdateTimer) clearTimeout(coverUpdateTimer);
+    coverUpdateTimer = setTimeout(() => {
+      coverUpdateTimer = null;
+      replaceCover();
+    }, delayMs);
   }
 
   // Inject CSS to widen the poster containers - only in continue-watching-row
@@ -132,7 +168,6 @@
       }
     `;
     document.head.appendChild(style);
-    console.log("[EnhancedCovers] Styles injected");
   }
 
   // Extract IMDB ID from various URL formats
@@ -200,9 +235,6 @@
 
       // Identity drifted, missing, or unknown → hard reset (React reused the node)
       if (!storedImdbId || !cardImdbId || storedImdbId !== cardImdbId) {
-        console.log(
-          `[EnhancedCovers] Detected stale cover: was ${storedImdbId || '?'}, card ${cardImdbId || '?'}`,
-        );
         resetEnhancedCover(img);
       }
     });
@@ -217,7 +249,6 @@
         const img = posterContainer.querySelector('img[class*="poster-image"]');
         if (!img || img.dataset.enhancedCover !== "true") {
           logo.remove();
-          console.log("[EnhancedCovers] Removed orphaned logo");
         }
       }
     });
@@ -289,114 +320,119 @@
             } else {
               posterContainer.appendChild(logoImg);
             }
-            console.log(`[EnhancedCovers] Added logo for ${imdbId}`);
-          };
-          testLogo.onerror = function () {
-            console.log(`[EnhancedCovers] No logo found for ${imdbId}`);
           };
           testLogo.src = logoSrc;
         }
-
-        console.log(`[EnhancedCovers] Replaced cover for ${imdbId}`);
       };
       testImg.onerror = function () {
         if (img.dataset.enhanceGen !== gen) return;
         img.dataset.enhancedCover = "failed";
-        console.log(`[EnhancedCovers] No background found for ${imdbId}`);
       };
       testImg.src = backgroundSrc;
     });
   }
 
-  function startPlugin() {
-    // Inject styles immediately
-    injectStyles();
+  /**
+   * Observe only the Continue Watching row — never board catalog rows.
+   */
+  function observeContinueWatchingRoot() {
+    if (!coverObserver) {
+      coverObserver = new MutationObserver((mutations) => {
+        let shouldUpdate = false;
+        let hasRemovedNodes = false;
 
-    // Initial run with delay to let Stremio load
-    setTimeout(replaceCover, 1000);
-    setTimeout(replaceCover, 2000);
+        for (const mutation of mutations) {
+          if (mutation.removedNodes.length > 0) {
+            for (const node of mutation.removedNodes) {
+              if (node.nodeType === 1) {
+                if (
+                  node.matches?.('[class*="meta-item"]') ||
+                  node.querySelector?.('[class*="meta-item"]')
+                ) {
+                  hasRemovedNodes = true;
+                  shouldUpdate = true;
+                  break;
+                }
+              }
+            }
+          }
 
-    // Use MutationObserver for efficient DOM change detection
-    coverObserver = new MutationObserver((mutations) => {
-      let shouldUpdate = false;
-      let hasRemovedNodes = false;
-
-      for (const mutation of mutations) {
-        // Check for removed nodes (item dismissed)
-        if (mutation.removedNodes.length > 0) {
-          for (const node of mutation.removedNodes) {
-            if (node.nodeType === 1) {
+          if (mutation.addedNodes.length > 0) {
+            for (const node of mutation.addedNodes) {
+              if (node.nodeType !== 1) continue;
               if (
                 node.matches?.('[class*="meta-item"]') ||
-                node.querySelector?.('[class*="meta-item"]')
+                node.querySelector?.('[class*="meta-item"]') ||
+                node.matches?.('[class*="continue-watching"]')
               ) {
-                hasRemovedNodes = true;
                 shouldUpdate = true;
                 break;
               }
             }
           }
-        }
 
-        // Check for added nodes
-        if (mutation.addedNodes.length > 0) {
-          for (const node of mutation.addedNodes) {
-            if (node.nodeType === 1) {
-              if (
-                node.matches?.('[class*="continue-watching"]') ||
-                node.querySelector?.('[class*="continue-watching"]') ||
-                node.matches?.('[class*="meta-item"]') ||
-                node.querySelector?.('[class*="meta-item"]') ||
-                node.matches?.('[class*="board-row"]') ||
-                node.querySelector?.('[class*="board-row"]')
-              ) {
-                shouldUpdate = true;
-              }
+          if (mutation.type === "attributes") {
+            const target = mutation.target;
+            if (
+              mutation.attributeName === "src" &&
+              target.matches?.('img[class*="poster-image"]')
+            ) {
+              const hrefId = getCardImdbId(target);
+              const owned =
+                target.dataset?.enhancedCover === "true" &&
+                hrefId &&
+                target.dataset?.imdbId === hrefId;
+              if (!owned) shouldUpdate = true;
             }
-            
-            if (shouldUpdate) break;
+            if (
+              mutation.attributeName === "href" &&
+              target.closest?.('[class*="continue-watching"]')
+            ) {
+              shouldUpdate = true;
+              hasRemovedNodes = true;
+            }
           }
+
+          if (shouldUpdate) break;
         }
 
-        // Check for attribute changes on posters / detail links (CW card reuse).
-        if (mutation.type === "attributes") {
-          const target = mutation.target;
-          if (
-            mutation.attributeName === "src" &&
-            target.matches?.('img[class*="poster-image"]')
-          ) {
-            shouldUpdate = true;
-          }
-          if (
-            mutation.attributeName === "href" &&
-            target.closest?.('[class*="continue-watching"]')
-          ) {
-            shouldUpdate = true;
-            hasRemovedNodes = true; // force cleanup before rebind
-          }
+        if (shouldUpdate) {
+          injectStyles();
+          if (hasRemovedNodes) cleanupStaleCovers();
+          scheduleReplaceCover(120);
         }
+      });
+    }
 
-        if (shouldUpdate) break;
-      }
+    try {
+      coverObserver.disconnect();
+    } catch (_) {
+      /* ignore */
+    }
 
-      if (shouldUpdate) {
-        injectStyles();
-        if (hasRemovedNodes) {
-          // Item was removed - need immediate cleanup
-          cleanupStaleCovers();
-          setTimeout(replaceCover, 50);
-        }
-        setTimeout(replaceCover, 100);
-        setTimeout(replaceCover, 500);
-      }
-    });
+    const cw = document.querySelector('[class*="continue-watching-row"]');
+    if (!cw) {
+      if (coverObserveRetry) clearTimeout(coverObserveRetry);
+      coverObserveRetry = setTimeout(() => {
+        coverObserveRetry = null;
+        if (isBoardRoute()) observeContinueWatchingRoot();
+      }, 400);
+      return;
+    }
 
-    coverObserver.observe(document.body, {
+    coverObserver.observe(cw, {
       childList: true,
       subtree: true,
       attributes: true,
       attributeFilter: ["src", "href"],
     });
+  }
+
+  function startPlugin() {
+    injectStyles();
+    scheduleReplaceCover(800);
+    scheduleReplaceCover(1800);
+    observeContinueWatchingRoot();
   }
 
   if (document.body && document.head) {
@@ -427,6 +463,14 @@
       clearInterval(coverInterval);
       coverInterval = null;
     }
+    if (coverUpdateTimer) {
+      clearTimeout(coverUpdateTimer);
+      coverUpdateTimer = null;
+    }
+    if (coverObserveRetry) {
+      clearTimeout(coverObserveRetry);
+      coverObserveRetry = null;
+    }
     document.removeEventListener("stremio-custom-route-change", onCoversRouteChange);
     document.querySelectorAll('img[data-enhanced-cover="true"]').forEach((img) => {
       try {
@@ -441,5 +485,4 @@
     }
   };
 
-  console.log("[EnhancedCovers] Plugin loaded successfully v1.7.0");
 })();

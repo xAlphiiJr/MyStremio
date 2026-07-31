@@ -70,6 +70,19 @@ HOOK_V2 = (
     'window.__mystremioBoardLoadNextPage=function(n){'
     'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadNextPage",args:n}},"board")'
     '};'
+    'window.__mystremioBoardLoadVisibleRange=function(range){'
+    'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadRange",'
+    'args:range||{start:0,end:4}}},"board")'
+    '};'
+    'window.__mystremioBoardGetCatalogItemCount=function(n){'
+    'return e.transport.getState("board").then(function(state){'
+    'var cat=state&&state.catalogs&&state.catalogs[n];'
+    'if(!cat||!cat.content)return 0;'
+    'if(cat.content.type==="Ready"&&Array.isArray(cat.content.content))'
+    'return cat.content.content.length;'
+    'return 0;'
+    '})'
+    '};'
     'window.__mystremioBoardResolveCatalogIndex=function(title){'
     'return e.transport.getState("board").then(function(state){'
     'var catalogs=state&&state.catalogs||[];'
@@ -107,11 +120,59 @@ HOOK_V2 = (
     '};'
     'return function(){'
     'try{delete window.__mystremioBoardLoadNextPage}catch(_){}'
+    'try{delete window.__mystremioBoardLoadVisibleRange}catch(_){}'
+    'try{delete window.__mystremioBoardGetCatalogItemCount}catch(_){}'
     'try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}'
     'try{delete window.__mystremioBoardSyncCatalogIndices}catch(_){}'
     'try{delete window.__mystremioBoardRequestRender}catch(_){}'
     '}'
     '},[e,mystremioBumpReveal]);'
+)
+
+# Insert LoadVisibleRange into an already-patched HOOK_V2 without rebuilding from stock.
+LOAD_VISIBLE_RANGE_INSERT_NEEDLE = (
+    'window.__mystremioBoardLoadNextPage=function(n){'
+    'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadNextPage",args:n}},"board")'
+    '};'
+)
+LOAD_VISIBLE_RANGE_INSERT = (
+    LOAD_VISIBLE_RANGE_INSERT_NEEDLE
+    + 'window.__mystremioBoardLoadVisibleRange=function(range){'
+    'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadRange",'
+    'args:range||{start:0,end:4}}},"board")'
+    '};'
+)
+
+# Remove aggressive mount autoload LoadRange {0,12}; keep hook only (scroll-progressive).
+LOAD_VISIBLE_STRIP_AUTOLOAD_NEEDLE = (
+    'window.__mystremioBoardLoadVisibleRange=function(range){'
+    'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadRange",'
+    'args:range||{start:0,end:8}}},"board")'
+    '};'
+    'try{e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadRange",'
+    'args:{start:0,end:12}}},"board")}catch(_){}'
+    'window.__mystremioBoardResolveCatalogIndex=function(title){'
+)
+LOAD_VISIBLE_STRIP_AUTOLOAD = (
+    'window.__mystremioBoardLoadVisibleRange=function(range){'
+    'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadRange",'
+    'args:range||{start:0,end:4}}},"board")'
+    '};'
+    'window.__mystremioBoardResolveCatalogIndex=function(title){'
+)
+# Also strip if default end was already 8 with autoload using start:0,end:12 only.
+LOAD_VISIBLE_STRIP_AUTOLOAD_NEEDLE_ALT = (
+    'try{e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadRange",'
+    'args:{start:0,end:12}}},"board")}catch(_){}'
+)
+LOAD_VISIBLE_RANGE_CLEANUP_NEEDLE = (
+    'try{delete window.__mystremioBoardLoadNextPage}catch(_){}'
+    'try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}'
+)
+LOAD_VISIBLE_RANGE_CLEANUP = (
+    'try{delete window.__mystremioBoardLoadNextPage}catch(_){}'
+    'try{delete window.__mystremioBoardLoadVisibleRange}catch(_){}'
+    'try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}'
 )
 
 LOAD_RANGE_REPLACEMENT = (
@@ -209,6 +270,70 @@ def patch_file(path: Path) -> int:
     text = path.read_text(encoding="utf-8", errors="strict")
     original = text
     changed = 0
+
+    if LOAD_VISIBLE_STRIP_AUTOLOAD_NEEDLE in text:
+        text = text.replace(LOAD_VISIBLE_STRIP_AUTOLOAD_NEEDLE, LOAD_VISIBLE_STRIP_AUTOLOAD, 1)
+        changed += 1
+        print(f"Removed Board LoadRange mount autoload (scroll-progressive) in {path}")
+    elif LOAD_VISIBLE_STRIP_AUTOLOAD_NEEDLE_ALT in text:
+        text = text.replace(LOAD_VISIBLE_STRIP_AUTOLOAD_NEEDLE_ALT, "", 1)
+        changed += 1
+        print(f"Stripped Board LoadRange {{0,12}} autoload dispatch in {path}")
+        if "args:range||{start:0,end:8}" in text:
+            text = text.replace(
+                "args:range||{start:0,end:8}",
+                "args:range||{start:0,end:4}",
+                1,
+            )
+            changed += 1
+    elif "window.__mystremioBoardLoadVisibleRange" in text:
+        print(f"Board LoadVisibleRange hook already present in {path}")
+    elif LOAD_VISIBLE_RANGE_INSERT_NEEDLE in text:
+        text = text.replace(LOAD_VISIBLE_RANGE_INSERT_NEEDLE, LOAD_VISIBLE_RANGE_INSERT, 1)
+        changed += 1
+        print(f"Inserted Board LoadVisibleRange hook in {path}")
+        if LOAD_VISIBLE_RANGE_CLEANUP_NEEDLE in text:
+            text = text.replace(LOAD_VISIBLE_RANGE_CLEANUP_NEEDLE, LOAD_VISIBLE_RANGE_CLEANUP, 1)
+            changed += 1
+            print(f"Updated Board hook cleanup for LoadVisibleRange in {path}")
+
+    GET_COUNT_NEEDLE = (
+        'window.__mystremioBoardResolveCatalogIndex=function(title){'
+    )
+    GET_COUNT_INSERT = (
+        'window.__mystremioBoardGetCatalogItemCount=function(n){'
+        'return e.transport.getState("board").then(function(state){'
+        'var cat=state&&state.catalogs&&state.catalogs[n];'
+        'if(!cat||!cat.content)return 0;'
+        'if(cat.content.type==="Ready"&&Array.isArray(cat.content.content))'
+        'return cat.content.content.length;'
+        'return 0;'
+        '})'
+        '};'
+        'window.__mystremioBoardResolveCatalogIndex=function(title){'
+    )
+    if "window.__mystremioBoardGetCatalogItemCount" in text:
+        print(f"Board GetCatalogItemCount hook already present in {path}")
+    elif GET_COUNT_NEEDLE in text:
+        text = text.replace(GET_COUNT_NEEDLE, GET_COUNT_INSERT, 1)
+        changed += 1
+        print(f"Inserted Board GetCatalogItemCount hook in {path}")
+        cleanup_count_needle = (
+            'try{delete window.__mystremioBoardLoadVisibleRange}catch(_){}'
+            'try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}'
+        )
+        cleanup_count = (
+            'try{delete window.__mystremioBoardLoadVisibleRange}catch(_){}'
+            'try{delete window.__mystremioBoardGetCatalogItemCount}catch(_){}'
+            'try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}'
+        )
+        if (
+            "delete window.__mystremioBoardGetCatalogItemCount" not in text
+            and cleanup_count_needle in text
+        ):
+            text = text.replace(cleanup_count_needle, cleanup_count, 1)
+            changed += 1
+            print(f"Updated Board hook cleanup for GetCatalogItemCount in {path}")
 
     if "window.__mystremioBoardSyncCatalogIndices" in text:
         print(f"Board catalog index sync hook already present in {path}")

@@ -165,6 +165,8 @@
 
     const host = ensureTransitionHost();
     const clone = nav.cloneNode(true);
+    // Never clone the search FAB — a stuck clone covers the live input / detail / player.
+    clone.querySelectorAll('[class*="search-bar"]').forEach((el) => el.remove());
     wireCloneLinks(clone);
     host.replaceChildren(clone);
     transitionActive = true;
@@ -180,8 +182,11 @@
   function tryEndNavTransition() {
     if (!transitionActive) return;
     const liveNav = document.querySelector('#app nav[class*="horizontal-nav-bar"]');
-    if (!isHorizontalNavReady(liveNav)) return;
-    endNavTransition();
+    // End when board nav is ready again OR destination has no board tab strip
+    // (detail/player) — otherwise the clone sticks forever with a ghost magnifier.
+    if (isHorizontalNavReady(liveNav) || !liveNav?.querySelector('[class*="vertical-nav-bar"]')) {
+      endNavTransition();
+    }
   }
 
   function onNavLinkClick(event) {
@@ -254,11 +259,26 @@
     }, 80);
   }
 
+  /**
+   * Prefer the nav container over document.body so board/content churn does not
+   * thrash fixAllNavbars during route transitions.
+   * @returns {Element}
+   */
+  function findNavObserveRoot() {
+    return (
+      document.querySelector('[class*="main-nav-bars-container"]') ||
+      document.querySelector('#app nav[class*="horizontal-nav-bar"]')?.parentElement ||
+      document.querySelector('#app') ||
+      document.body
+    );
+  }
+
   function fixNavOnRouteChange() {
-    beginNavTransition();
-    fixAllNavbars();
-    requestAnimationFrame(fixAllNavbars);
-    requestAnimationFrame(() => requestAnimationFrame(fixAllNavbars));
+    // Do not begin a clone on every route change — that stuck the search FAB on
+    // detail/player. Tab clicks still call beginNavTransition via onNavLinkClick.
+    tryEndNavTransition();
+    scheduleFix();
+    requestAnimationFrame(scheduleFix);
   }
 
   function bindNavClickCapture() {
@@ -279,22 +299,23 @@
     bindNavClickCapture();
     fixAllNavbars();
     if (observer) return;
-    observer = new MutationObserver((mutations) => {
-      if (transitionActive && mutations.some((mutation) => mutation.type === 'childList')) {
-        fixAllNavbars();
-        return;
-      }
+    // Always debounce — never call fixAllNavbars synchronously on every mutation.
+    observer = new MutationObserver(() => {
       scheduleFix();
     });
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['class', 'style'],
-    });
+    const root = findNavObserveRoot();
+    if (root) {
+      observer.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'style'],
+      });
+    }
     window.addEventListener('resize', scheduleFix, { passive: true });
     window.addEventListener('hashchange', fixNavOnRouteChange);
     window.addEventListener('hashchange', ensureNavClickable);
+    document.addEventListener('stremio-custom-route-change', fixNavOnRouteChange);
   }
 
   function stop() {
@@ -307,6 +328,9 @@
     observer = null;
     unbindNavClickCapture();
     window.removeEventListener('resize', scheduleFix);
+    window.removeEventListener('hashchange', fixNavOnRouteChange);
+    window.removeEventListener('hashchange', ensureNavClickable);
+    document.removeEventListener('stremio-custom-route-change', fixNavOnRouteChange);
     restoreVerticalNavLayout();
   }
 

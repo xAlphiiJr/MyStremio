@@ -24,4 +24,9 @@ impl SplashImage {
     pub fn hide(&self) {
         self.splash.set_visible(false);
     }
+
+    /// HWND of the native splash ImageFrame (for z-order / UpdateWindow).
+    pub fn hwnd(&self) -> Option<winapi::shared::windef::HWND> {
+        self.splash.handle.hwnd()
+    }
 }

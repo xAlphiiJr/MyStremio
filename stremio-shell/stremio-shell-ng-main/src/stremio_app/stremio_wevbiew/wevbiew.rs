@@ -1,5 +1,7 @@
 use crate::stremio_app::constants::SERVER_IPC_KEY;
-use crate::stremio_app::custom_api::{build_early_storage_restore_script, webview_user_data_dir};
+use crate::stremio_app::custom_api::{
+    build_early_storage_restore_script, build_enabled_plugins_refresh_script, webview_user_data_dir,
+};
 use crate::stremio_app::ipc;
 use native_windows_gui::{self as nwg, PartialUi};
 use once_cell::unsync::OnceCell;
@@ -53,13 +55,33 @@ impl WebView {
         }
     }
 
-    /// Toggle WebView visibility. Under splash we keep it visible so the board
-    /// can paint while covered; splash + boot seal hide the unfinished UI.
+    /// Toggle WebView visibility. Cold start keeps the controller visible under the
+    /// native splash (dark bg + splash HWND_TOP); splash hide also calls this idempotently.
     pub fn set_visible(&self, visible: bool) {
         self.deferred_visible.set(visible);
         if let Some(controller) = self.controller.get() {
             controller.put_is_visible(visible).ok();
         }
+    }
+
+    /// Opaque dark background for board/boot; transparent for MPV punch-through.
+    ///
+    /// WebView2 only accepts alpha 0 or 255.
+    pub fn set_background_transparent(&self, transparent: bool) {
+        let Some(controller) = self.controller.get() else {
+            return;
+        };
+        let Ok(controller2) = controller.get_controller2() else {
+            return;
+        };
+        controller2
+            .put_default_background_color(webview2_sys::Color {
+                r: 20,
+                g: 20,
+                b: 20,
+                a: if transparent { 0 } else { 255 },
+            })
+            .ok();
     }
 
     /// Run JS in the top WebView document (splash dismiss, warm resume wake).
@@ -149,20 +171,25 @@ impl PartialUi for WebView {
                 let env = env.expect("Cannot obtain webview environment");
                 env.create_controller(hwnd, move |controller| {
                         let controller = controller.expect("Cannot obtain webview controller");
+                        // Community-style: keep WebView visible under the native splash so
+                        // Board gets real layout (clientHeight) and CatalogsWithExtra.LoadRange
+                        // can run during splash. Flash is blocked by dark DefaultBackgroundColor
+                        // + splash HWND_TOP, not by hiding the controller.
                         if let Ok(controller2) = controller.get_controller2() {
-                            // Transparent, but RGB must be dark: WebView2 can fringe
-                            // sub-pixel edges with the RGB channels even when alpha is 0.
+                            // Cold-start opaque dark (matches splash). Switch to a:0 only
+                            // when MPV punch-through needs it (see set_background_transparent).
                             controller2
                                 .put_default_background_color(webview2_sys::Color {
                                     r: 20,
                                     g: 20,
                                     b: 20,
-                                    a: 0,
+                                    a: 255,
                                 })
                                 .ok();
                         } else {
                             eprintln!("failed to get interface to controller2");
                         }
+                        controller.put_is_visible(true).ok();
 
                     let webview = controller
                             .get_webview()
@@ -257,6 +284,13 @@ impl PartialUi for WebView {
                             ).as_str(), |_| Ok(())
                             ).expect("Cannot add SERVER_IPC_KEY to webview");
 
+                            // Fresh disk snapshot each navigation — DocumentCreated script is stale.
+                            wv.execute_script(
+                                build_enabled_plugins_refresh_script().as_str(),
+                                |_| Ok(()),
+                            )
+                            .ok();
+
                             wv.execute_script(r##"
                             try{
                                 /* Disable context menus */
@@ -275,6 +309,8 @@ impl PartialUi for WebView {
                                     if (!webview.__stremioShellPostWrapped) {
                                         webview.__stremioShellPostWrapped = true;
                                         var nativePost = webview.postMessage.bind(webview);
+                                        // Bypass postMessage rewriters for critical shell IPC (plugin reload).
+                                        window.__mystremioNativePostMessage = nativePost;
                                         webview.postMessage = function(message) {
                                             try {
                                                 document.dispatchEvent(new CustomEvent('stremio-shell-outgoing', { detail: message }));
@@ -286,6 +322,8 @@ impl PartialUi for WebView {
                                             }
                                             return nativePost(message);
                                         };
+                                    } else if (typeof window.__mystremioNativePostMessage !== 'function') {
+                                        window.__mystremioNativePostMessage = webview.postMessage.bind(webview);
                                     }
                                     if (!webview.__stremioShellIncomingCapture) {
                                         webview.__stremioShellIncomingCapture = true;
@@ -323,10 +361,12 @@ impl PartialUi for WebView {
                                 include_str!("../../../assets/custom_scroll_restore.js"),
                                 include_str!("../../../assets/custom_board_row_nav.js"),
                                 include_str!("../../../assets/custom_player_glass.js"),
+                                include_str!("../../../assets/custom_dead_player_nav.js"),
                                 include_str!("../../../assets/custom_player_loading.js"),
                                 include_str!("../../../assets/custom_liquid_glass_nav.js"),
                                 include_str!("../../../assets/custom_hero_loading.js"),
                                 include_str!("../../../assets/custom_deep_link.js"),
+                                include_str!("../../../assets/custom_continue_watching_posters.js"),
                                 include_str!("../../../assets/custom_continue_watching_play.js"),
                                 include_str!("../../../assets/custom_audio_sync.js"),
                                 include_str!("../../../assets/custom_subtitle_sync.js"),
@@ -360,12 +400,10 @@ impl PartialUi for WebView {
                         }).expect("Cannot add content loading");
 
                         WebView::resize_to_window_bounds(Some(&controller), Some(hwnd));
-                        // Paint under splash immediately (splash + boot seal cover unfinished UI).
-                        // deferred_visible still honors explicit hide (e.g. tray).
-                        controller
-                            .put_is_visible(true)
-                            .ok();
+                        // Community-style: stay visible under splash so Board LoadRange gets
+                        // real layout. Do NOT re-hide via deferred_visible (defaults false).
                         deferred_visible.set(true);
+                        controller.put_is_visible(true).ok();
                         controller
                             .move_focus(webview2::MoveFocusReason::Programmatic)
                             .ok();
