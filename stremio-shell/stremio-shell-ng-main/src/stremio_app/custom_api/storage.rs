@@ -439,6 +439,7 @@ fn default_preferences() -> Value {
         "currentTheme": "liquid-glass.theme.css",
         "autoskip": default_autoskip_preferences(),
         "metadataAddon": "",
+        "disabledAddonUrls": [],
         "preload": "120",
         "volume": {
             "level": null,
@@ -506,6 +507,38 @@ fn normalize_preferences(value: Value) -> Value {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let disabled_addon_urls = value
+        .get("disabledAddonUrls")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            let mut urls = arr
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| {
+                    // Soft-disable stores transport bases (no /manifest.json).
+                    let trimmed = s
+                        .split('?')
+                        .next()
+                        .unwrap_or(s)
+                        .trim_end_matches('/');
+                    if let Some(base) = trimmed
+                        .strip_suffix("/manifest.json")
+                        .or_else(|| trimmed.strip_suffix("/manifest.JSON"))
+                    {
+                        base.trim_end_matches('/').to_string()
+                    } else {
+                        trimmed.to_string()
+                    }
+                })
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>();
+            urls.sort();
+            urls.dedup();
+            urls
+        })
+        .unwrap_or_default();
     let preload = value
         .get("preload")
         .and_then(|v| v.as_str())
@@ -613,6 +646,7 @@ fn normalize_preferences(value: Value) -> Value {
         "currentTheme": current_theme,
         "autoskip": autoskip,
         "metadataAddon": metadata_addon,
+        "disabledAddonUrls": disabled_addon_urls,
         "preload": preload,
         "volume": volume,
         "discordPresence": discord_presence,
@@ -674,6 +708,11 @@ fn collect_early_storage_pairs(prefs: &Value) -> Map<String, Value> {
         .filter(|s| !s.is_empty())
     {
         put("stremio-custom-metadata-addon", addon.to_string());
+    }
+    if let Some(disabled) = prefs.get("disabledAddonUrls").and_then(|v| v.as_array()) {
+        if let Ok(json) = serde_json::to_string(disabled) {
+            put("stremio-custom-disabled-addon-urls", json);
+        }
     }
     if let Some(preload) = prefs
         .get("preload")

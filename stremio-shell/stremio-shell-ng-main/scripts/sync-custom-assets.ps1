@@ -227,7 +227,6 @@ function Remove-DeprecatedAssets {
         "player\stream-ui.plugin.json",
         "player\stream-ui.plugin.schema.json",
         "interface\enhancements-tweaks.plugin.js",
-        "interface\horizontal-navigation.plugin.js",
         "interface\hero-div.plugin.js",
         "metadata\card-hover-info.plugin.js",
         "metadata\playback-preview.plugin.js",

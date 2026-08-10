@@ -263,6 +263,7 @@
         currentTheme: LIQUID_GLASS_THEME,
         autoskip: getAutoskipPreferences(),
         metadataAddon: getMetadataAddon(),
+        disabledAddonUrls: getDisabledAddonUrls(),
         language: getLanguagePreferences(),
         preload: getPreloadPreference(),
         volume: getVolumePreferences(),
@@ -288,6 +289,7 @@
   const LIQUID_GLASS_THEME = 'liquid-glass.theme.css';
   const HORIZONTAL_NAV_PLUGIN = 'interface/horizontal-navigation.plugin.js';
   const METADATA_ADDON_KEY = 'stremio-custom-metadata-addon';
+  const DISABLED_ADDON_URLS_KEY = 'stremio-custom-disabled-addon-urls';
   const PRELOAD_SECS_KEY = 'stremio-custom-preload-secs';
   const UI_SCALE_PERCENT_KEY = 'stremio-custom-ui-scale-percent';
   const VOLUME_KEYS = {
@@ -314,6 +316,7 @@
   const NATIVE_PLAYER_FEATURES_MIGRATED_KEY = 'stremio-custom-migrate-brightness-hover-v1';
   const BRIGHTNESS_TO_PICTURE_MIGRATED_KEY = 'stremio-custom-migrate-brightness-to-picture-v1';
   const ANIME4K_PLUGIN_MIGRATED_KEY = 'stremio-custom-migrate-anime4k-v1';
+  const HORIZONTAL_NAV_MIGRATED_KEY = 'stremio-custom-migrate-horizontal-nav-v1';
   const DEFAULT_DISABLED_PLUGIN_PATTERNS = [
     /slash[-_ ]?to[-_ ]?search/i,
     /anime4k/i,
@@ -473,6 +476,64 @@
     } catch (_) {}
     persistUserPreferences();
     document.dispatchEvent(new CustomEvent('stremio-custom-metadata-addon-changed', { detail: { value: next } }));
+  }
+
+  function normalizeDisabledAddonBase(url) {
+    const raw = String(url || '').trim();
+    if (!raw) return '';
+    try {
+      const u = new URL(raw, location.href);
+      u.hash = '';
+      u.search = '';
+      let path = u.pathname.replace(/\/manifest\.json$/i, '');
+      if (!path) path = '/';
+      u.pathname = path.replace(/\/+$/, '') || '/';
+      let href = u.href;
+      if (href.endsWith('/') && u.pathname !== '/') href = href.replace(/\/+$/, '');
+      return href;
+    } catch {
+      return raw.replace(/\/manifest\.json(?:\?.*)?$/i, '').replace(/\/+$/, '');
+    }
+  }
+
+  function getDisabledAddonUrls() {
+    try {
+      const raw = localStorage.getItem(DISABLED_ADDON_URLS_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(parsed)) return [];
+      const next = [
+        ...new Set(
+          parsed
+            .map((u) => normalizeDisabledAddonBase(u))
+            .filter(Boolean)
+        ),
+      ];
+      if (JSON.stringify(parsed) !== JSON.stringify(next)) {
+        try {
+          localStorage.setItem(DISABLED_ADDON_URLS_KEY, JSON.stringify(next));
+        } catch (_) {}
+      }
+      return next;
+    } catch {
+      return [];
+    }
+  }
+
+  function applyDisabledAddonUrls(urls) {
+    const next = [
+      ...new Set(
+        (Array.isArray(urls) ? urls : [])
+          .map((u) => normalizeDisabledAddonBase(u))
+          .filter(Boolean)
+      ),
+    ];
+    try {
+      localStorage.setItem(DISABLED_ADDON_URLS_KEY, JSON.stringify(next));
+    } catch (_) {}
+    try {
+      window.StremioCustomAddonSoftDisable?.broadcastDisabled?.();
+    } catch (_) {}
+    return next;
   }
 
   function readJsonList(key) {
@@ -754,40 +815,6 @@
     });
   }
 
-  function waitForSettingsContainer(timeout = 20000) {
-    return waitForElement(
-      '[class*="sections-container"]',
-      timeout,
-      (element) => element.closest('[class*="settings-content"]') !== null
-    );
-  }
-
-  const CUSTOM_SETTINGS_SECTION_IDS = new Set([
-    'stremio-custom',
-    'stremio-custom-lang-quick-section',
-  ]);
-
-  function isNativeSettingsSection(section) {
-    return Boolean(section?.id && !CUSTOM_SETTINGS_SECTION_IDS.has(section.id));
-  }
-
-  function getSettingsSectionsContainer() {
-    return document.querySelector('[class*="settings-content"] [class*="sections-container"]');
-  }
-
-  function getNativeSettingsSections() {
-    const container = getSettingsSectionsContainer();
-    if (!container) return [];
-    return Array.from(container.querySelectorAll(':scope > [class*="section-"]')).filter(
-      isNativeSettingsSection
-    );
-  }
-
-  function removeLegacyQuickSettingsSection() {
-    document.getElementById('stremio-custom-general-category')?.remove();
-    document.getElementById('stremio-custom-quick-category')?.remove();
-  }
-
   function isPluginEnabled(fileRef, enabledPlugins = getEnabledPlugins()) {
     const normalized = String(fileRef || '').replace(/\\/g, '/');
     const baseName = normalized.split('/').pop();
@@ -844,6 +871,9 @@
       const diskTheme = typeof preferences?.currentTheme === 'string' ? preferences.currentTheme : '';
       const diskMetadataAddon =
         typeof preferences?.metadataAddon === 'string' ? preferences.metadataAddon : '';
+      const diskDisabledAddonUrls = Array.isArray(preferences?.disabledAddonUrls)
+        ? preferences.disabledAddonUrls
+        : null;
       const diskLanguage = preferences?.language;
       const diskPreload = preferences?.preload;
       const diskUiScale = preferences?.uiScale;
@@ -885,6 +915,10 @@
       if (hasDiskState && diskMetadataAddon) {
         localStorage.setItem(METADATA_ADDON_KEY, diskMetadataAddon);
       }
+      if (diskDisabledAddonUrls) {
+        const hasLocalDisabled = localStorage.getItem(DISABLED_ADDON_URLS_KEY) != null;
+        if (!hasLocalDisabled) applyDisabledAddonUrls(diskDisabledAddonUrls);
+      }
       if (diskLanguage && typeof diskLanguage === 'object') {
         applyLanguagePreferences(diskLanguage);
       }
@@ -920,6 +954,7 @@
         currentTheme: LIQUID_GLASS_THEME,
         autoskip: getAutoskipPreferences(),
         metadataAddon: getMetadataAddon(),
+        disabledAddonUrls: getDisabledAddonUrls(),
         language: getLanguagePreferences(),
         preload: getPreloadPreference(),
         volume: getVolumePreferences(),
@@ -940,26 +975,8 @@
     }
   }
 
-  function refreshAutoskipToggles() {
-    const containers = document.querySelectorAll('.stremio-custom-autoskip-toggles, .stremio-custom-autoskip-dropdown');
-    if (!containers.length) return;
-
-    for (const container of containers) {
-      const dropdown = container.closest('.stremio-custom-autoskip-dropdown') || container;
-      window.StremioCustomAutoskip?.updateAutoskipSummary?.(dropdown);
-
-      for (const [id] of Object.entries(AUTOSKIP_KEYS)) {
-        const toggle =
-          container.querySelector(`[data-autoskip-id="${id}"]`) ||
-          container.querySelector(`[data-autoskip-id='${id}']`);
-        if (!toggle) continue;
-        const on = Boolean(autoskipCache[id]);
-        toggle.classList.remove('checked');
-        if (on) toggle.classList.add('checked');
-        toggle.setAttribute('aria-checked', on ? 'true' : 'false');
-      }
-    }
-  }
+  // Legacy DOM autoskip inject removed; React Quick Settings owns the UI.
+  function refreshAutoskipToggles() {}
 
   const PLAYER_FIX_STYLE_ID = 'stremio-custom-player-fix';
 
@@ -1277,6 +1294,12 @@
     if (/context[-_ ]?menu/i.test(normalized) || /context[-_ ]?menu/i.test(baseName || '')) {
       window.__stremioContextMenuUnload?.();
     }
+    if (
+      /horizontal[-_ ]?navigation/i.test(normalized) ||
+      /horizontal[-_ ]?navigation/i.test(baseName || '')
+    ) {
+      window.__stremioHorizontalNavUnload?.();
+    }
     if (/data[-_ ]?enrichment/i.test(normalized) || /data[-_ ]?enrichment/i.test(baseName || '')) {
       window.__stremioDataEnrichmentUnload?.();
     }
@@ -1338,6 +1361,7 @@
     'interface/hero-div.plugin.js',
     'interface/enhanced-covers.plugin.js',
     'interface/context-menu-fix.plugin.js',
+    HORIZONTAL_NAV_PLUGIN,
   ]);
 
   const IDLE_DURING_PLAYBACK_PREFIXES = [
@@ -1889,6 +1913,25 @@
     persistUserPreferences();
   }
 
+  /**
+   * One-shot: enable Horizontal Navigation for existing installs (was always-on shell).
+   * Default ON; users can disable afterward. Updates never re-enable after this migration.
+   * @returns {Promise<void>}
+   */
+  async function migrateHorizontalNavPluginEnabled() {
+    if (localStorage.getItem(HORIZONTAL_NAV_MIGRATED_KEY) === 'true') return;
+    const resolved =
+      (await resolvePluginRef(HORIZONTAL_NAV_PLUGIN)) || HORIZONTAL_NAV_PLUGIN;
+    const enabled = await migrateEnabledPlugins();
+    const next = [...enabled];
+    if (!isPluginEnabled(resolved, next)) {
+      next.push(resolved);
+      setEnabledPlugins(next);
+    }
+    localStorage.setItem(HORIZONTAL_NAV_MIGRATED_KEY, 'true');
+    persistUserPreferences();
+  }
+
   async function maybeShowTmdbFirstRunNotice() {
     try {
       const config = await api.getPluginConfig('data-enrichment');
@@ -1998,7 +2041,6 @@
     api,
     helpers: {
       waitForElement,
-      waitForSettingsContainer,
       isOnSettingsPage,
       getEnabledPlugins,
       setEnabledPlugins,
@@ -2016,14 +2058,12 @@
       ensureAutoskipReady,
       getMetadataAddon,
       setMetadataAddon,
+      getDisabledAddonUrls,
+      applyDisabledAddonUrls,
       getLibraryPreferences,
       applyLibraryPreferences,
       getUiScalePreference,
       applyUiScalePreference,
-      isNativeSettingsSection,
-      getSettingsSectionsContainer,
-      getNativeSettingsSections,
-      removeLegacyQuickSettingsSection,
       persistUserPreferences,
     },
     plugins: {
@@ -2127,6 +2167,7 @@
         migrateNativePlayerFeaturesToPlugins(),
         migrateBrightnessToPicturePlugin(),
         migrateAnime4kPluginEnabled(),
+        migrateHorizontalNavPluginEnabled(),
       ]);
       syncDynamicHeroEnabledFlag();
       scheduleAuthProfilePersistence();

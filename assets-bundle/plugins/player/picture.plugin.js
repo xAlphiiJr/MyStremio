@@ -214,26 +214,62 @@
   }
 
   /**
-   * Pushes resolved tone props to mpv.
+   * Keep softsubs out of the picture pipeline (video-only tone via lavfi eq).
+   */
+  function ensureSubtitlesUnblended() {
+    sendMpvSetProp('blend-subtitles', 'no');
+  }
+
+  /**
+   * Maps absolute mpv-style EQ (−100…100) to lavfi `eq` filter params.
+   * Applied as a named video filter so ASS/OSD softsubs are not dimmed.
+   *
+   * @param {{ brightness: number, contrast: number, gamma: number, saturation: number }} props
+   * @returns {string}
+   */
+  function buildVideoEqFilter(props) {
+    const b = props.brightness / 100;
+    const c = Math.max(0.01, 1 + props.contrast / 100);
+    const g = Math.max(0.1, 1 + props.gamma / 100);
+    const sat = Math.max(0, 1 + props.saturation / 100);
+    return `@mystremio-pic:eq=brightness=${b}:contrast=${c}:gamma=${g}:saturation=${sat}`;
+  }
+
+  /**
+   * Pushes resolved tone via video-only `vf` (not global equalizer props).
    *
    * @param {EqState} [s]
    */
   function applyTone(s) {
-    const props = resolveMpvProps(s || state);
-    sendMpvSetProp('brightness', props.brightness);
-    sendMpvSetProp('contrast', props.contrast);
-    sendMpvSetProp('gamma', props.gamma);
-    sendMpvSetProp('saturation', props.saturation);
-  }
-
-  /**
-   * Resets all mpv tone props to neutral (gamma 0, not 1).
-   */
-  function resetMpvTone() {
+    ensureSubtitlesUnblended();
+    // Neutralize legacy global EQ so softsubs never inherit picture tone.
     sendMpvSetProp('brightness', 0);
     sendMpvSetProp('contrast', 0);
     sendMpvSetProp('gamma', 0);
     sendMpvSetProp('saturation', 0);
+    const props = resolveMpvProps(s || state);
+    const neutral =
+      props.brightness === 0 &&
+      props.contrast === 0 &&
+      props.gamma === 0 &&
+      props.saturation === 0;
+    if (neutral) {
+      sendMpvSetProp('vf', '');
+      return;
+    }
+    sendMpvSetProp('vf', buildVideoEqFilter(props));
+  }
+
+  /**
+   * Resets video tone to neutral.
+   */
+  function resetMpvTone() {
+    ensureSubtitlesUnblended();
+    sendMpvSetProp('brightness', 0);
+    sendMpvSetProp('contrast', 0);
+    sendMpvSetProp('gamma', 0);
+    sendMpvSetProp('saturation', 0);
+    sendMpvSetProp('vf', '');
   }
 
   function isDismissGuardActive() {

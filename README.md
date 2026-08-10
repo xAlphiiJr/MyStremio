@@ -2,7 +2,13 @@
 
 **MyStremio** is a personalized Windows desktop client built on the Stremio shell stack.
 It combines UI upgrades, player improvements, plugins/themes and library tools in one installer.
-Current release: **2.3.7**
+Current release: **2.3.8**
+
+[![GitHub release](https://img.shields.io/github/v/release/xAlphiiJr/MyStremio)](https://github.com/xAlphiiJr/MyStremio/releases/latest)
+[![Downloads (total)](https://img.shields.io/github/downloads/xAlphiiJr/MyStremio/total)](https://github.com/xAlphiiJr/MyStremio/releases)
+[![Downloads (latest)](https://img.shields.io/github/downloads/xAlphiiJr/MyStremio/latest/total)](https://github.com/xAlphiiJr/MyStremio/releases/latest)
+
+Download counts from GitHub Releases.
 
 > **Disclaimer:** MyStremio is an independent community project and is not affiliated with official Stremio.
 
@@ -154,7 +160,7 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 ### 🎞️ Addon Manager
 
-[Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio and optionally disable specific sources (for example Cinemeta).
+[Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio. MyStremio also adds **On/Off soft toggles** on the Addons page: disabled addons stay installed but stop contributing catalogs/streams in this desktop client (not a Stremio Core flag; other clients/Cinebye are not synced 1:1).
 
 ---
 
@@ -170,6 +176,16 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 
 ## 🛠️ Patch Notes
+
+### 2.3.8
+
+- **Download badges** — README shows GitHub release download counts
+- **Player window flash** — Fixed classic title-bar flash when starting playback in borderless mode
+- **Picture Settings** — Master Dim / tone no longer dims soft subtitles (`blend-subtitles=no`, video-only EQ)
+- **Skip Intro** — Skip button auto-hides after 10s with a countdown; after that it follows the control bar
+- **Horizontal Navigation** — Board catalog chevrons/scroll moved to a toggleable plugin (default on); Continue Watching chevrons always stay
+- **Addon soft toggle** — Disable installed addons without uninstalling; they stay listed but contribute no catalogs/streams in MyStremio
+
 
 ### 2.3.7
 
@@ -262,8 +278,8 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 ## 💾 Installation
 
-1. Download the latest installer from this repository's **Releases** page.
-2. Run `MyStremioSetup-v2.3.6_x64.exe` (or the latest version).
+1. Download the latest installer from this repository's **[Releases](https://github.com/xAlphiiJr/MyStremio/releases/latest)** page.
+2. Run `MyStremioSetup-v2.3.8_x64.exe` (or the latest version).
 3. The installer sets up:
   - App binaries (`mystremio-shell.exe`, streaming server, FFmpeg, libmpv)
   - Bundled plugins and themes

@@ -1782,13 +1782,100 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     return order.filter((k) => by[k]).map((k) => by[k]);
   }
 
+  /**
+   * Best-effort transport URL for a stream row (fiber / href / known hosts).
+   * @param {Element} el
+   * @returns {string}
+   */
+  function getStreamTransportHint(el) {
+    if (!(el instanceof Element)) return '';
+    try {
+      let node = el;
+      for (let depth = 0; node && depth < 12; depth += 1, node = node.parentElement) {
+        for (const key of Object.keys(node)) {
+          if (!key.startsWith('__reactFiber$') && !key.startsWith('__reactInternalInstance$')) continue;
+          let fiber = node[key];
+          let hops = 0;
+          while (fiber && hops < 40) {
+            const props = fiber.memoizedProps || fiber.pendingProps || {};
+            const candidates = [
+              props?.stream?.addon?.transportUrl,
+              props?.stream?.addon?.transport_url,
+              props?.addon?.transportUrl,
+              props?.addon?.transport_url,
+              props?.dataset?.addon?.transportUrl,
+            ];
+            for (const c of candidates) {
+              if (typeof c === 'string' && c.trim()) return c.trim();
+            }
+            fiber = fiber.return;
+            hops += 1;
+          }
+        }
+      }
+    } catch (_) {
+      /* ignore */
+    }
+    const href = el.getAttribute?.('href') || '';
+    if (/rating-aggregator\.elfhosted\.com/i.test(href)) {
+      return 'https://rating-aggregator.elfhosted.com';
+    }
+    if (/imdb[-_]?ratings?/i.test(href) || /\/imdb.*manifest/i.test(href)) {
+      try {
+        return new URL(href, location.href).origin;
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    return '';
+  }
+
+  /**
+   * @param {string} url
+   * @returns {boolean}
+   */
+  function isSoftDisabledTransport(url) {
+    const api = window.StremioCustomAddonSoftDisable;
+    if (!api || !url) return false;
+    try {
+      if (typeof api.isDisabledUrl === 'function') return Boolean(api.isDisabledUrl(url));
+      const bases = api.getDisabledAddonUrls?.() || [];
+      return bases.some(
+        (base) => url === base || url.startsWith(String(base).replace(/\/?$/, '/'))
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function isAggregatorNamed(el) {
+    const name = `${getDirectAddonTitle(el) || ''} ${getAddonName(el) || ''}`.trim();
+    return /ratings?\s*aggregator/i.test(name);
+  }
+
+  function isAggregatorTransport(el) {
+    const hint = getStreamTransportHint(el);
+    return /rating-aggregator/i.test(hint || '');
+  }
+
   function isAggregator(el) {
-    if (/ratings?\s*aggregator|aggregator/i.test(getAddonName(el))) return true;
-    const cleaned = getStreamText(el).split('\n').map(cleanRatingLine);
-    return cleaned.some((l) => /^imdb\s*:/i.test(l)) && (cleaned.some((l) => /^mc\s*:/i.test(l)) || cleaned.some((l) => /^rt\s*:/i.test(l)));
+    const hint = getStreamTransportHint(el);
+    if (hint && isSoftDisabledTransport(hint)) return false;
+    // Require addon identity (name or known Aggregator transport). Content-only is not enough.
+    if (!isAggregatorNamed(el) && !isAggregatorTransport(el)) return false;
+    if (hint && isSoftDisabledTransport(hint)) return false;
+    // Soft-disable by name when transport unknown: check disabled bases for aggregator host.
+    if (!hint) {
+      const api = window.StremioCustomAddonSoftDisable;
+      const bases = api?.getDisabledAddonUrls?.() || [];
+      if (bases.some((b) => /rating-aggregator/i.test(String(b || '')))) return false;
+    }
+    return true;
   }
 
   function isImdbRatings(el) {
+    const hint = getStreamTransportHint(el);
+    if (hint && isSoftDisabledTransport(hint)) return false;
     const name = getAddonName(el);
     if (/after\s*credits?/i.test(name)) return false;
     if (/ratings?\s*aggregator|aggregator/i.test(name)) return false;
@@ -2403,6 +2490,12 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     document.addEventListener('stremio-custom-route-change', ensureRuntime);
     document.addEventListener('stremio-custom-playback-route', ensureRuntime);
     document.addEventListener('stremio-custom-playback-stopped', ensureRuntime);
+    document.addEventListener('stremio-custom-disabled-addons-changed', () => {
+      ratingsBundle.teardown(true);
+      firstBuildDone = false;
+      if (isStreamUiRoute()) markStreamsPending();
+      tick();
+    });
     ensureRuntime();
   }
 

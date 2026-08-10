@@ -54,6 +54,8 @@
   let enterRetryTimers = [];
   /** @type {Map<Element, ResizeObserver|{disconnect(): void}>} */
   const chevronLayoutObservers = new Map();
+  /** Named scroll handlers so catalog teardown can remove listeners. */
+  const rowScrollHandlers = new WeakMap();
   /** Per-catalog LoadNextPage in-flight lock. */
   const loadInFlight = new Set();
   /** @type {Set<Element>} Rows waiting for a scoped enhance pass. */
@@ -107,8 +109,13 @@
     if (board && board.scrollLeft !== 0) board.scrollLeft = 0;
   }
 
+  function isCatalogScrollEnabled() {
+    return Boolean(window.__mystremioCatalogScrollEnabled);
+  }
+
   /**
    * Inject layout CSS: board x-lock, stock item sizes, hidden scrollbars, chevrons.
+   * Catalog scrollport / content-visibility rules only when Horizontal Navigation is on.
    */
   function injectStyles() {
     let style = document.getElementById(STYLE_ID);
@@ -117,37 +124,56 @@
       style.id = STYLE_ID;
       (document.head || document.documentElement).appendChild(style);
     }
+    const catalogOn = isCatalogScrollEnabled();
+    const catalogContain = catalogOn
+      ? `
+      #app [class*="board-container"] [class*="meta-row-container"]:not([class*="continue-watching"]) {
+        position: relative;
+        overflow-x: clip;
+      }
+      @supports not (overflow: clip) {
+        #app [class*="board-container"] [class*="meta-row-container"]:not([class*="continue-watching"]) {
+          overflow-x: hidden;
+        }
+      }
+      #app [class*="board-container"] [class*="meta-row-container"]:not([class*="continue-watching"])
+        [class*="meta-items-container"].${ROW_SCROLLPORT_CLASS} > [class*="meta-item"] {
+        content-visibility: auto;
+        contain-intrinsic-size: auto 280px;
+      }`
+      : '';
     style.textContent = `
       /* Never overflow-x on board-content (clips hero → grey stripe).
          Contain row ancestors only — exclude hero-row so hero can stay full-bleed. */
       #app [class*="board-container"] [class*="board-content"] > :not([class*="hero-row"]),
       #app [class*="board-container"] [class*="board-row"],
-      #app [class*="board-container"] [class*="meta-row-container"],
       #app [class*="board-container"] [class*="continue-watching-row"] {
         max-width: 100%;
         min-width: 0;
         box-sizing: border-box;
       }
-      #app [class*="board-container"] [class*="meta-row-container"],
+      ${
+        catalogOn
+          ? `#app [class*="board-container"] [class*="meta-row-container"] {
+        max-width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+      }`
+          : ''
+      }
       #app [class*="board-container"] [class*="continue-watching-row"] {
         position: relative;
         overflow-x: clip;
       }
       @supports not (overflow: clip) {
-        #app [class*="board-container"] [class*="meta-row-container"],
         #app [class*="board-container"] [class*="continue-watching-row"] {
           overflow-x: hidden;
         }
       }
+      ${catalogContain}
       /* Unhide stock nth-child{display:none} only — NEVER display:flex (breaks poster/title layout). */
       #app [class*="board-container"] [class*="meta-items-container"].${ROW_SCROLLPORT_CLASS} > [class*="meta-item"] {
         display: revert !important;
-      }
-      /* Catalog items only — never on CW (intrinsic size inflated CW→catalog gap). */
-      #app [class*="board-container"] [class*="meta-row-container"]:not([class*="continue-watching"])
-        [class*="meta-items-container"].${ROW_SCROLLPORT_CLASS} > [class*="meta-item"] {
-        content-visibility: auto;
-        contain-intrinsic-size: auto 280px;
       }
       #app [class*="board-container"] [class*="meta-items-container"].${ROW_SCROLLPORT_CLASS} {
         width: 100% !important;
@@ -400,6 +426,8 @@
       target.closest('[class*="meta-item-container"]') ||
       target.closest('[class*="meta-item"]');
     if (!item) return;
+    const row = getMetaItemsContainer(item);
+    if (!row || !shouldEnhanceRow(row)) return;
 
     lockBoardScrollLeft();
     requestAnimationFrame(() => scrollItemIntoRow(item));
@@ -437,6 +465,19 @@
     if (cn.includes('placeholder')) return false;
     if (cn.includes('continue-watching-row')) return false;
     return cn.includes('meta-row-container');
+  }
+
+  /**
+   * CW rows always enhance. Catalog rows only when Horizontal Navigation plugin is on.
+   * @param {Element} row meta-items-container (or parent)
+   * @returns {boolean}
+   */
+  function shouldEnhanceRow(row) {
+    if (!(row instanceof Element)) return false;
+    if (row.closest?.('[class*="continue-watching-row"]')) return true;
+    if (!isCatalogScrollEnabled()) return false;
+    const root = getRowRoot(row) || row.closest?.('[class*="meta-row-container"]') || row;
+    return root ? isCatalogMetaRow(root) : false;
   }
 
   /**
@@ -1009,6 +1050,7 @@
       if (nested) return enhanceSingleRow(nested);
       return false;
     }
+    if (!shouldEnhanceRow(row)) return false;
 
     let touched = false;
     // 1) Measure stock slot WHILE extras are still display:none
@@ -1049,27 +1091,25 @@
     if (!row.dataset.mystremioRowScrollBound) {
       row.dataset.mystremioRowScrollBound = '1';
       let scrollRaf = 0;
-      row.addEventListener(
-        'scroll',
-        () => {
-          if (scrollRaf) return;
-          scrollRaf = requestAnimationFrame(() => {
-            scrollRaf = 0;
-            const root = getRowRoot(row);
-            const host = root?.querySelector(`:scope > .${OVERLAY_CLASS}`);
-            const leftBtn = host?.querySelector(`:scope > .${CHEVRON_LEFT}`);
-            const rightBtn = host?.querySelector(`:scope > .${CHEVRON_RIGHT}`);
-            if (leftBtn instanceof HTMLElement || rightBtn instanceof HTMLElement) {
-              refreshChevrons(
-                row,
-                leftBtn instanceof HTMLElement ? leftBtn : null,
-                rightBtn instanceof HTMLElement ? rightBtn : null
-              );
-            }
-          });
-        },
-        { passive: true }
-      );
+      const onRowScroll = () => {
+        if (scrollRaf) return;
+        scrollRaf = requestAnimationFrame(() => {
+          scrollRaf = 0;
+          const root = getRowRoot(row);
+          const host = root?.querySelector(`:scope > .${OVERLAY_CLASS}`);
+          const leftBtn = host?.querySelector(`:scope > .${CHEVRON_LEFT}`);
+          const rightBtn = host?.querySelector(`:scope > .${CHEVRON_RIGHT}`);
+          if (leftBtn instanceof HTMLElement || rightBtn instanceof HTMLElement) {
+            refreshChevrons(
+              row,
+              leftBtn instanceof HTMLElement ? leftBtn : null,
+              rightBtn instanceof HTMLElement ? rightBtn : null
+            );
+          }
+        });
+      };
+      rowScrollHandlers.set(row, onRowScroll);
+      row.addEventListener('scroll', onRowScroll, { passive: true });
     }
     return touched;
   }
@@ -1083,6 +1123,7 @@
       '[class*="board-container"] [class*="meta-items-container"]'
     );
     for (const row of rows) {
+      if (!shouldEnhanceRow(row)) continue;
       if (!row.classList.contains(ROW_SCROLLPORT_CLASS) || !rowHasChevrons(row)) {
         row.removeAttribute(NAV_READY_ATTR);
         pendingEnhanceRows.add(row);
@@ -1126,7 +1167,11 @@
 
       const now = Date.now();
       const sync = window.__mystremioBoardSyncCatalogIndices;
-      if (typeof sync === 'function' && now - lastSyncAt > 1200) {
+      if (
+        isCatalogScrollEnabled() &&
+        typeof sync === 'function' &&
+        now - lastSyncAt > 1200
+      ) {
         lastSyncAt = now;
         Promise.resolve(sync()).catch(() => {});
       }
@@ -1146,6 +1191,7 @@
       let touched = false;
       let missingChevrons = false;
       for (const row of rows) {
+        if (!shouldEnhanceRow(row)) continue;
         if (!onlyRows && isRowNavReady(row)) continue;
         if (enhanceSingleRow(row)) touched = true;
         if (!rowHasChevrons(row)) missingChevrons = true;
@@ -1188,6 +1234,8 @@
     if (!item) return;
     const row = getMetaItemsContainer(item);
     if (!row || !row.closest('[class*="board-container"]')) return;
+    // Catalog keyboard LoadNextPage/reveal only while Horizontal Navigation is on.
+    if (!shouldEnhanceRow(row)) return;
 
     const items = getRowDirectItems(row);
     // Resolve focused item to the direct row child (not a nested match).
@@ -1375,8 +1423,13 @@
         if (enhancing || observerPaused || !isBoardRoute()) return;
         const affected = collectAffectedMetaItemRows(records);
         if (affected.size === 0) return;
-        for (const row of affected) pendingEnhanceRows.add(row);
-        scheduleEnhance();
+        let queued = false;
+        for (const row of affected) {
+          if (!shouldEnhanceRow(row)) continue;
+          pendingEnhanceRows.add(row);
+          queued = true;
+        }
+        if (queued) scheduleEnhance();
       });
     }
     if (observerPaused) return;
@@ -1538,6 +1591,91 @@
     scheduleEnhance();
     refreshAllChevrons();
   });
+
+  /**
+   * Tear down catalog-only scrollports/chevrons (CW rows stay).
+   * Called when Horizontal Navigation plugin unloads.
+   */
+  function teardownCatalogRowNav() {
+    for (const row of [...pendingEnhanceRows]) {
+      if (!row?.closest?.('[class*="continue-watching-row"]')) {
+        pendingEnhanceRows.delete(row);
+      }
+    }
+
+    const reveal = window.__mystremioBoardReveal;
+    if (reveal && typeof reveal === 'object') {
+      for (const key of Object.keys(reveal)) {
+        delete reveal[key];
+      }
+      try {
+        window.__mystremioBoardRequestRender?.();
+      } catch (_) {
+        /* ignore */
+      }
+    }
+
+    document
+      .querySelectorAll(
+        '[class*="board-container"] [class*="meta-row-container"]:not([class*="continue-watching-row"]) [class*="meta-items-container"]'
+      )
+      .forEach((row) => {
+        if (!(row instanceof Element)) return;
+
+        const ro = chevronLayoutObservers.get(row);
+        if (ro) {
+          try {
+            ro.disconnect();
+          } catch (_) {
+            /* ignore */
+          }
+          chevronLayoutObservers.delete(row);
+        }
+
+        const onScroll = rowScrollHandlers.get(row);
+        if (onScroll) {
+          try {
+            row.removeEventListener('scroll', onScroll);
+          } catch (_) {
+            /* ignore */
+          }
+          rowScrollHandlers.delete(row);
+        }
+
+        clearRowItemWidthFreeze(row);
+        row.classList.remove(ROW_SCROLLPORT_CLASS);
+        row.removeAttribute(NAV_READY_ATTR);
+        row.removeAttribute(WIDTH_FROZEN_ATTR);
+        row.removeAttribute(LOAD_EXHAUSTED_ATTR);
+        row.removeAttribute(ITEM_COUNT_ATTR);
+        delete row.dataset.mystremioRowScrollBound;
+        delete row.dataset.mystremioWidthRetry;
+        const root = getRowRoot(row);
+        root?.classList.remove(ROW_WRAP_CLASS);
+        root?.querySelector(`:scope > .${OVERLAY_CLASS}`)?.remove();
+        root?.querySelectorAll(
+          `:scope > .${CHEVRON_LEFT}, :scope > .${CHEVRON_RIGHT}, :scope > .mystremio-board-row-chevron`
+        ).forEach((el) => el.remove());
+        if (root instanceof HTMLElement) root.style.maxWidth = '';
+      });
+
+    loadInFlight.clear();
+    bufferedCountCache.clear();
+    injectStyles();
+    if (isBoardRoute()) {
+      scheduleEnhance();
+      ensureChevronsPresent();
+    }
+  }
+
+  window.__mystremioEnsureBoardRowNav = function () {
+    if (!isBoardRoute()) return;
+    injectStyles();
+    scheduleEnhance();
+    ensureChevronsPresent();
+  };
+
+  window.__mystremioTeardownCatalogRowNav = teardownCatalogRowNav;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', onRoute, { once: true });

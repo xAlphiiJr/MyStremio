@@ -370,11 +370,12 @@ impl PartialUi for WebView {
                                 include_str!("../../../assets/custom_continue_watching_play.js"),
                                 include_str!("../../../assets/custom_audio_sync.js"),
                                 include_str!("../../../assets/custom_subtitle_sync.js"),
-                                include_str!("../../../assets/custom_autoskip.js"),
                                 include_str!("../../../assets/custom_library_folders.js"),
                                 include_str!("../../../assets/custom_cinebye_addons.js"),
+                                include_str!("../../../assets/custom_addon_soft_disable.js"),
                                 include_str!("../../../assets/custom_discord_presence.js"),
                                 include_str!("../../../assets/custom_settings_ui.js"),
+                                include_str!("../../../assets/custom_settings_quick_nav.js"),
                                 include_str!("../../../assets/custom_ui_scale.js"),
                                 include_str!("../../../assets/custom_api_key_settings.js"),
                                 include_str!("../../../assets/custom_api_keys_hub.js"),
@@ -392,7 +393,7 @@ impl PartialUi for WebView {
                             }
 
                             wv.execute_script(
-                                r#"try{if(window.self!==window.top){/* skip iframe post-inject */}else{if(document.readyState!=='loading'&&window.runBootstrapOnce)window.runBootstrapOnce();if(window.__stremioCustomPlayerGlassEnsure)window.__stremioCustomPlayerGlassEnsure();if(window.__stremioCustomPlayerLoadingEnsure)window.__stremioCustomPlayerLoadingEnsure();if(window.__stremioCustomHeroLoadingEnsure)window.__stremioCustomHeroLoadingEnsure();if(window.__stremioCustomPlayerTransparencyEnsure)window.__stremioCustomPlayerTransparencyEnsure();if(window.__stremioCustomPlaybackEnsure)window.__stremioCustomPlaybackEnsure();if(window.__stremioCustomVolumePersistEnsure)window.__stremioCustomVolumePersistEnsure();if(window.__stremioDisableHoldSpeedEnsure)window.__stremioDisableHoldSpeedEnsure();if(window.__stremioCustomAudioSyncEnsure)window.__stremioCustomAudioSyncEnsure();if(window.__stremioCustomSubtitleSyncEnsure)window.__stremioCustomSubtitleSyncEnsure();if(window.__stremioCustomLibraryFoldersEnsure)window.__stremioCustomLibraryFoldersEnsure();if(window.__stremioCustomCinebyeAddonsEnsure)window.__stremioCustomCinebyeAddonsEnsure();if(window.__stremioCustomApiKeySettingsEnsure)window.__stremioCustomApiKeySettingsEnsure();}}catch(e){console.error('[StremioCustom] post-inject failed',e);}"#,
+                                r#"try{if(window.self!==window.top){/* skip iframe post-inject */}else{if(document.readyState!=='loading'&&window.runBootstrapOnce)window.runBootstrapOnce();if(window.__stremioCustomPlayerGlassEnsure)window.__stremioCustomPlayerGlassEnsure();if(window.__stremioCustomPlayerLoadingEnsure)window.__stremioCustomPlayerLoadingEnsure();if(window.__stremioCustomHeroLoadingEnsure)window.__stremioCustomHeroLoadingEnsure();if(window.__stremioCustomPlayerTransparencyEnsure)window.__stremioCustomPlayerTransparencyEnsure();if(window.__stremioCustomPlaybackEnsure)window.__stremioCustomPlaybackEnsure();if(window.__stremioCustomVolumePersistEnsure)window.__stremioCustomVolumePersistEnsure();if(window.__stremioDisableHoldSpeedEnsure)window.__stremioDisableHoldSpeedEnsure();if(window.__stremioCustomAudioSyncEnsure)window.__stremioCustomAudioSyncEnsure();if(window.__stremioCustomSubtitleSyncEnsure)window.__stremioCustomSubtitleSyncEnsure();if(window.__stremioCustomLibraryFoldersEnsure)window.__stremioCustomLibraryFoldersEnsure();if(window.__stremioCustomCinebyeAddonsEnsure)window.__stremioCustomCinebyeAddonsEnsure();if(window.__stremioCustomAddonSoftDisableEnsure)window.__stremioCustomAddonSoftDisableEnsure();if(window.__stremioCustomSettingsQuickNavEnsure)window.__stremioCustomSettingsQuickNavEnsure();if(window.__stremioCustomApiKeySettingsEnsure)window.__stremioCustomApiKeySettingsEnsure();}}catch(e){console.error('[StremioCustom] post-inject failed',e);}"#,
                                 |_| Ok(()),
                             )
                             .ok();

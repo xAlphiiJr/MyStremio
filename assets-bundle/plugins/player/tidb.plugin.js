@@ -1554,7 +1554,9 @@
 			}
 
 			const existing = document.getElementById(ACTIVE_BTN_ID);
-			if (existing && existing.getAttribute("data-segment-type") === seg.type) {
+			const segKey = this.getSkipSegmentKey(seg);
+			if (existing && existing.getAttribute("data-segment-key") === segKey) {
+				this.syncSkipButtonChromeVisibility();
 				return;
 			}
 
@@ -1566,9 +1568,12 @@
 			if (this.segmentWatcher) clearInterval(this.segmentWatcher);
 			this.syncSkipButton();
 			this.segmentWatcher = setInterval(() => {
-				if (this.isOverlayHidden()) return;
+				// Keep syncing during grace even if chrome is hidden; after grace,
+				// chrome visibility is handled separately but segment exit still needs sync.
 				this.syncSkipButton();
+				this.syncSkipButtonChromeVisibility();
 			}, 300);
+			this.startSkipChromeWatcher();
 		}
 
 		stopSegmentWatcher() {
@@ -1576,6 +1581,7 @@
 				clearInterval(this.segmentWatcher);
 				this.segmentWatcher = null;
 			}
+			this.stopSkipChromeWatcher();
 		}
 
 		hasTheIntroDbApiKey() {
@@ -2615,17 +2621,120 @@
 		}
 
 		removeActiveButton() {
+			this.clearSkipGraceTimer();
+			this._skipBtnHovered = false;
 			document.getElementById(ACTIVE_BTN_ID)?.remove();
+			document.getElementById("tidb-skip-btn-styles")?.remove();
 			document.querySelectorAll(".tidb-skip-btn").forEach((button) => button.remove());
 			this.displayedSegmentType = null;
+			this._skipGraceUntil = 0;
+			this._skipGraceSegmentKey = null;
+		}
+
+		clearSkipGraceTimer() {
+			if (this._skipGraceTimer) {
+				clearTimeout(this._skipGraceTimer);
+				this._skipGraceTimer = null;
+			}
+		}
+
+		getSkipSegmentKey(segment) {
+			if (!segment) return null;
+			return `${segment.type}:${Number(segment.start)}:${Number(segment.end)}`;
+		}
+
+		isSkipGraceActive() {
+			return Date.now() < Number(this._skipGraceUntil || 0);
+		}
+
+		ensureSkipButtonStyles() {
+			let style = document.getElementById("tidb-skip-btn-styles");
+			if (!style) {
+				style = document.createElement("style");
+				style.id = "tidb-skip-btn-styles";
+				(document.head || document.documentElement).appendChild(style);
+			}
+			style.textContent = `
+				.tidb-skip-btn {
+					position: relative;
+					overflow: hidden;
+					isolation: isolate;
+				}
+				/* Elevated opacity sweep L→R over the 10s grace window. */
+				.tidb-skip-btn.tidb-skip-grace::after {
+					content: "";
+					position: absolute;
+					inset: 0;
+					border-radius: inherit;
+					background: rgba(255, 255, 255, 0.22);
+					pointer-events: none;
+					z-index: 0;
+					animation: tidb-skip-opacity-sweep 10s linear forwards;
+				}
+				.tidb-skip-btn.tidb-skip-grace > * {
+					position: relative;
+					z-index: 1;
+				}
+				.tidb-skip-btn.tidb-skip-hidden {
+					opacity: 0 !important;
+					visibility: hidden !important;
+					pointer-events: none !important;
+				}
+				@keyframes tidb-skip-opacity-sweep {
+					from { clip-path: inset(0 0% 0 0); }
+					to { clip-path: inset(0 100% 0 0); }
+				}
+			`;
+		}
+
+		/**
+		 * After the 10s grace, follow control-bar visibility. During grace or hover, stay visible.
+		 */
+		syncSkipButtonChromeVisibility() {
+			const btn = document.getElementById(ACTIVE_BTN_ID);
+			if (!btn) return;
+			if (this.isSkipGraceActive() || this._skipBtnHovered) {
+				btn.classList.remove("tidb-skip-hidden");
+				if (!this.isSkipGraceActive()) btn.classList.remove("tidb-skip-grace");
+				return;
+			}
+			btn.classList.remove("tidb-skip-grace");
+			if (this.isOverlayHidden()) {
+				btn.classList.add("tidb-skip-hidden");
+			} else {
+				btn.classList.remove("tidb-skip-hidden");
+			}
+		}
+
+		startSkipChromeWatcher() {
+			if (this._skipChromeWatcher) return;
+			this._skipChromeWatcher = window.setInterval(() => {
+				if (!this.isOnPlayerRoute()) return;
+				this.syncSkipButtonChromeVisibility();
+			}, 200);
+		}
+
+		stopSkipChromeWatcher() {
+			if (!this._skipChromeWatcher) return;
+			clearInterval(this._skipChromeWatcher);
+			this._skipChromeWatcher = null;
 		}
 
 		showSkipButton(segment) {
 			const segmentType = segment.type;
 			const theme = THEMES[this.theme] || THEMES.default;
+			const segmentKey = this.getSkipSegmentKey(segment);
 
 			if (!this.isSegmentButtonEnabled(segmentType)) return;
+
+			const existing = document.getElementById(ACTIVE_BTN_ID);
+			if (existing && existing.getAttribute("data-segment-key") === segmentKey) {
+				this.syncSkipButtonChromeVisibility();
+				return;
+			}
+
 			this.removeActiveButton();
+			this.ensureSkipButtonStyles();
 			this.track("skip_button_shown", {
 				segment: segmentType
 			});
@@ -2635,9 +2744,10 @@
 
 			skipBtn.id = ACTIVE_BTN_ID;
 			skipBtn.setAttribute("data-segment-type", segmentType);
+			skipBtn.setAttribute("data-segment-key", segmentKey);
 			skipBtn.className = this.theme === "glass" || isLiquidGlassThemeActive()
-				? "tidb-skip-btn tidb-theme-glass"
-				: "tidb-skip-btn tidb-theme-default";
+				? "tidb-skip-btn tidb-theme-glass tidb-skip-grace"
+				: "tidb-skip-btn tidb-theme-default tidb-skip-grace";
 			skipBtn.textContent = SEGMENT_LABELS[segmentType] || "Skip Segment";
 
 			icon.src = "https://www.svgrepo.com/show/471906/skip-forward.svg";
@@ -2673,11 +2783,15 @@
 
 			skipBtn.prepend(icon);
 
-			skipBtn.onmouseover = () => {
+			skipBtn.onmouseenter = () => {
+				this._skipBtnHovered = true;
 				skipBtn.style.background = theme.hover;
+				skipBtn.classList.remove("tidb-skip-hidden");
 			};
-			skipBtn.onmouseout = () => {
+			skipBtn.onmouseleave = () => {
+				this._skipBtnHovered = false;
 				skipBtn.style.background = theme.background;
+				this.syncSkipButtonChromeVisibility();
 			};
 			skipBtn.onclick = (event) => {
 				event.preventDefault();
@@ -2690,11 +2804,23 @@
 					video.currentTime = segment.end;
 					console.log(`${LOG_PREFIX} Skipping ${segmentType}: targetTime=${segment.end}`);
 				}
-				skipBtn.remove();
-				this.displayedSegmentType = null;
+				this.removeActiveButton();
 			};
 
 			document.body.appendChild(skipBtn);
+
+			// 10s grace: stay visible even if control bar hides; then follow chrome.
+			this._skipBtnHovered = false;
+			this._skipGraceSegmentKey = segmentKey;
+			this._skipGraceUntil = Date.now() + 10000;
+			this.clearSkipGraceTimer();
+			this._skipGraceTimer = setTimeout(() => {
+				this._skipGraceTimer = null;
+				skipBtn.classList.remove("tidb-skip-grace");
+				this.syncSkipButtonChromeVisibility();
+			}, 10000);
+			this.startSkipChromeWatcher();
+			this.syncSkipButtonChromeVisibility();
 		}
 
 		getPlaybackTimeSec() {

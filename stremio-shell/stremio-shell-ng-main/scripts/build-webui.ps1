@@ -99,6 +99,19 @@ function Test-WebUiAlreadyPatched {
     if (-not (Select-String -Path $mainJs.FullName -Pattern '__mystremioBoardLoadNextPage' -Quiet)) { return $false }
     if (-not (Select-String -Path $mainJs.FullName -Pattern '__mystremioBoardSyncCatalogIndices' -Quiet)) { return $false }
 
+    # Worker soft-disable fetch filter for disabled addons.
+    $workerJs = Get-ChildItem -Path $WebUiDirectory -Recurse -Filter worker.js |
+        Where-Object { $_.FullName -match '[\\/]scripts[\\/]worker\.js$' } |
+        Select-Object -First 1
+    if (-not $workerJs) { return $false }
+    if (-not (Select-String -Path $workerJs.FullName -Pattern '__mystremioAddonSoftDisableWorker' -Quiet)) { return $false }
+
+    # Checklist / ToggleDropdown ", +n" summary truncation.
+    if (-not (Select-String -Path $mainJs.FullName -Pattern '__mystremioTruncateLabelList' -Quiet)) { return $false }
+
+    # Native Quick Settings section (menu + scroll-spy).
+    if (-not (Select-String -Path $mainJs.FullName -Pattern '__mystremioQuickSection' -Quiet)) { return $false }
+
     return $true
 }
 
@@ -198,6 +211,30 @@ function Repair-WebUiLanguageEmbeds {
         Invoke-WebUiPython $boardCatalogScript $mainJs.FullName
         if ($LASTEXITCODE -ne 0) {
             throw "Board catalog pages patch failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    $addonSoftDisableWorkerScript = Join-Path $ScriptRoot "patch-webui-addon-soft-disable-worker.py"
+    if (Test-Path $addonSoftDisableWorkerScript) {
+        Invoke-WebUiPython $addonSoftDisableWorkerScript $WebUiDirectory
+        if ($LASTEXITCODE -ne 0) {
+            throw "Addon soft-disable worker patch failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    $checklistSummaryScript = Join-Path $ScriptRoot "fix-webui-checklist-summary.py"
+    if (Test-Path $checklistSummaryScript) {
+        Invoke-WebUiPython $checklistSummaryScript $mainJs.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Checklist summary patch failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    $quickSectionScript = Join-Path $ScriptRoot "fix-webui-settings-quick-section.py"
+    if (Test-Path $quickSectionScript) {
+        Invoke-WebUiPython $quickSectionScript $mainJs.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Quick Settings section patch failed with exit code $LASTEXITCODE"
         }
     }
 

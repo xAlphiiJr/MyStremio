@@ -1462,37 +1462,6 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
     z-index: 1000 !important;
 }
 
-.stremio-custom-lang-quick-btn {
-    background: rgba(70, 70, 70, 0.22) !important;
-    box-shadow:
-        0 8px 32px rgba(0, 0, 0, 0.2),
-        0 4px 16px rgba(0, 0, 0, 0.1),
-        inset 0 1px 0 rgba(255, 255, 255, 0.15),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
-    border: 1px solid rgba(255, 255, 255, 0.04) !important;
-}
-
-.stremio-custom-lang-quick-btn:hover {
-    background: rgba(90, 90, 90, 0.32) !important;
-}
-
-.stremio-custom-autoskip-row [class*="toggle-container"] {
-    flex-shrink: 0;
-}
-
-#stremio-custom-autoskip .stremio-custom-autoskip-label {
-    color: var(--primary-foreground-color);
-}
-
-.stremio-custom-lang-quick-btn.active {
-    border-color: rgba(255, 255, 255, 0.45) !important;
-    background: rgba(255, 255, 255, 0.14) !important;
-    box-shadow:
-        0 4px 18px rgba(0, 0, 0, 0.3),
-        inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
-}
-
 /* TheIntroDB skip button – liquid glass */
 #tidb-active-btn,
 #tidb-active-btn.tidb-theme-glass {

@@ -6,14 +6,15 @@ use winapi::um::dwmapi::DwmSetWindowAttribute;
 use winapi::um::wingdi::CreateSolidBrush;
 use winapi::um::winuser::{
     GetForegroundWindow, GetMonitorInfoA, GetSystemMetrics, GetWindowLongA, GetWindowPlacement,
-    GetWindowRect, InvalidateRect, IsIconic, IsZoomed, MonitorFromWindow, SetClassLongPtrW,
-    SetForegroundWindow, SetWindowLongA, SetWindowPlacement, SetWindowPos, ShowWindow,
-    UpdateWindow, GCLP_HBRBACKGROUND, GWL_EXSTYLE, GWL_STYLE, HWND_NOTOPMOST, HWND_TOP,
-    HWND_TOPMOST, MONITORINFO, MONITOR_DEFAULTTONEAREST, SM_CXSCREEN, SM_CYSCREEN,
+    GetWindowRect, InvalidateRect, IsIconic, IsZoomed, MonitorFromWindow, RedrawWindow,
+    SendMessageW, SetClassLongPtrW, SetForegroundWindow, SetWindowLongA, SetWindowPlacement,
+    SetWindowPos, ShowWindow, UpdateWindow, GCLP_HBRBACKGROUND, GWL_EXSTYLE, GWL_STYLE,
+    HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, MONITORINFO, MONITOR_DEFAULTTONEAREST, RDW_ALLCHILDREN,
+    RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW, SM_CXSCREEN, SM_CYSCREEN,
     SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SW_HIDE, SW_RESTORE, SW_SHOWMAXIMIZED, SW_SHOWNORMAL, WINDOWPLACEMENT, WS_CAPTION,
-    WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE, WS_EX_TOPMOST, WS_EX_WINDOWEDGE,
-    WS_MAXIMIZE, WS_OVERLAPPEDWINDOW, WS_THICKFRAME, WS_VISIBLE,
+    SW_HIDE, SW_RESTORE, SW_SHOWMAXIMIZED, SW_SHOWNORMAL, WINDOWPLACEMENT, WM_SETREDRAW,
+    WS_CAPTION, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE, WS_EX_TOPMOST,
+    WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_OVERLAPPEDWINDOW, WS_THICKFRAME, WS_VISIBLE,
 };
 
 /// Same chrome bits stock stremio-shell-ng clears for fullscreen (proven on Windows).
@@ -497,9 +498,9 @@ impl WindowStyle {
     /**
      * Strip caption/thickframe like stock shell-ng while keeping the visible footprint.
      *
-     * If the window is maximized, Win11 keeps caption buttons unless we leave maximize —
-     * so we restore, strip chrome, then size to the monitor work area (not the oversized
-     * maximized outer rect, which would overhang the screen).
+     * If maximized, size to the monitor work area without a framed `SW_RESTORE`
+     * intermediate (that flash looked like a classic Windows title bar). Redraw is
+     * locked around the style change so non-client chrome never paints mid-transition.
      */
     fn apply_borderless_styles(&self, hwnd: HWND) {
         let mut outer = unsafe { mem::zeroed() };
@@ -508,9 +509,6 @@ impl WindowStyle {
         }
         let was_zoomed = unsafe { IsZoomed(hwnd) } != 0;
         if was_zoomed {
-            unsafe {
-                ShowWindow(hwnd, SW_RESTORE);
-            }
             // Maximized outer rect extends past the visible monitor; use work area instead.
             if let Some(work) = Self::monitor_work_area(hwnd) {
                 outer = work;
@@ -530,9 +528,10 @@ impl WindowStyle {
         };
 
         unsafe {
+            SendMessageW(hwnd, WM_SETREDRAW, 0, 0);
+            // Strip chrome before any size change — never ShowWindow(SW_RESTORE) while framed.
             SetWindowLongA(hwnd, GWL_STYLE, next_style);
             SetWindowLongA(hwnd, GWL_EXSTYLE, next_ex);
-            // Always re-apply outer size: after SW_RESTORE the window would otherwise stay small.
             SetWindowPos(
                 hwnd,
                 std::ptr::null_mut(),
@@ -542,7 +541,13 @@ impl WindowStyle {
                 outer.bottom - outer.top,
                 SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
             );
-            InvalidateRect(hwnd, std::ptr::null(), 1);
+            SendMessageW(hwnd, WM_SETREDRAW, 1, 0);
+            RedrawWindow(
+                hwnd,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
+            );
         }
     }
 
