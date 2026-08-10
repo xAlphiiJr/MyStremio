@@ -2,12 +2,10 @@
 
 **MyStremio** is a personalized Windows desktop client built on the Stremio shell stack.
 It combines UI upgrades, player improvements, plugins/themes and library tools in one installer.
-Current release: **2.3.8**
 
 [![GitHub release](https://img.shields.io/github/v/release/xAlphiiJr/MyStremio)](https://github.com/xAlphiiJr/MyStremio/releases/latest)
 [![Downloads (total)](https://img.shields.io/github/downloads/xAlphiiJr/MyStremio/total)](https://github.com/xAlphiiJr/MyStremio/releases)
 
-Download counts from GitHub Releases.
 
 > **Disclaimer:** MyStremio is an independent community project and is not affiliated with official Stremio.
 
