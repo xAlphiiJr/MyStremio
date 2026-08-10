@@ -6,7 +6,6 @@ Current release: **2.3.8**
 
 [![GitHub release](https://img.shields.io/github/v/release/xAlphiiJr/MyStremio)](https://github.com/xAlphiiJr/MyStremio/releases/latest)
 [![Downloads (total)](https://img.shields.io/github/downloads/xAlphiiJr/MyStremio/total)](https://github.com/xAlphiiJr/MyStremio/releases)
-[![Downloads (latest)](https://img.shields.io/github/downloads/xAlphiiJr/MyStremio/latest/total)](https://github.com/xAlphiiJr/MyStremio/releases/latest)
 
 Download counts from GitHub Releases.
 
@@ -183,7 +182,8 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 - **Picture Settings** — Master Dim / tone no longer dims subtitles
 - **Skip Intro** — Skip button auto-hides after 10s with a countdown; after that it follows the control bar
 - **Horizontal Navigation** — Board catalog chevrons/scroll moved to a toggleable plugin (default on); Continue Watching chevrons always stay
-- **Addon soft toggle** — Disable installed addons without uninstalling; they stay listed but contribute no catalogs/streams in MyStremio
+- **Addon toggle** — Disable installed addons without uninstalling; they stay listed but contribute no catalogs/streams in MyStremio
+- **Quick Settings** — Are now part of the settings menu bar
 
 
 ### 2.3.7
