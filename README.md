@@ -46,7 +46,7 @@ It combines UI upgrades, player improvements, plugins/themes and library tools i
 
 -Custom library groups with JSON import/export
 
--Additional power-user options such as plugin toggles and Discord Rich Presence
+-Additional power-user options such as addon/plugin toggles and Discord Rich Presence
 
 -Packaged as a ready-to-use single installer
 
@@ -158,6 +158,8 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 ### 🎞️ Addon Manager
 
 [Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio. MyStremio also adds **On/Off soft toggles** on the Addons page: disabled addons stay installed but stop contributing catalogs/streams in this desktop client (not a Stremio Core flag; other clients/Cinebye are not synced 1:1).
+
+Additionally you can toggle addons to disable them without uninstalling them directly from the "Addons" page in MyStremio. This allows further optimization for your setup!
 
 ---
 
