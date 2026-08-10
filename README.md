@@ -180,8 +180,7 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 ### 2.3.8
 
 - **Download badges** — README shows GitHub release download counts
-- **Player window flash** — Fixed classic title-bar flash when starting playback in borderless mode
-- **Picture Settings** — Master Dim / tone no longer dims soft subtitles (`blend-subtitles=no`, video-only EQ)
+- **Picture Settings** — Master Dim / tone no longer dims subtitles
 - **Skip Intro** — Skip button auto-hides after 10s with a countdown; after that it follows the control bar
 - **Horizontal Navigation** — Board catalog chevrons/scroll moved to a toggleable plugin (default on); Continue Watching chevrons always stay
 - **Addon soft toggle** — Disable installed addons without uninstalling; they stay listed but contribute no catalogs/streams in MyStremio
