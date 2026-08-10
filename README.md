@@ -68,11 +68,11 @@ If you want to support my work you can leave a small tip on [ko-fi](https://ko-f
 
 ### 🪄 UI
 
-MyStremio offers its own UI enhancements and combines it with already existing plugins made by the communtiy.
+MyStremio offers its own UI enhancements and combines it with already existing plugins made by the community.
 
 #### 🏠 Board hero home view
 
-The board includes a hero section with rotating titles. The Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme) and just slightly optimized by me.
+The board includes a hero section with rotating titles. The Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme) and just adapted for MyStremio.
 
 ![Board Hero Home](./images/01-board-hero.png)
 
@@ -89,7 +89,9 @@ The StreamUI plugin offers a clean and modern sidebar with folders to pick strea
 
 ![Metadata and Stream UI](./images/03-detail-metadata-stream-sidebar.png)
 
+#### ▶️ Horizontal Navigation
 
+  A new plugin that allows to scroll through catalogues right from the board without the need to click on "See All" and switch to the discovery page. Enabling this plugin might cause some performance issues depending on hardware and amount of catalogues. 
 
 ---
 
@@ -115,7 +117,7 @@ In the Stremio settings you will find the **MyStremio** section. These include s
 
 - **API Keys** are managed centrally under Settings → MyStremio → API Keys (one key for all installed plugins that need it).
 - **Plugins** can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and communtiy made plugins built into to installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: Enhanced Title Bar by Fxy, EnhancedCovers by Fxy, SlashtoSearch by REVENGE977. A few of other plugins are slightly tuned to fit into MyStremio including: Dynamic Hero by Fxy, Context Menu Fix by MrBlu03 and Data Enrichment by MrBlu03.
-- **Preload** settings determine how much of the video gets bufferd ahead. You can chose from buffering only the next 10 seconds or the entire video. This currently works for torrent/debrid streams and is not designed for usenet or http. That doesn't mean it won't work on those, I just can't test it as I'm not using usenet/http.
+- **Preload** settings determine how much of the video gets buffered ahead. You can chose from buffering only the next 10 seconds or the entire video. This currently works for torrent/debrid streams and is not designed for usenet or http. That doesn't mean it won't work on those, I just can't test it as I'm not using usenet/http.
 - **Library** json can be importet or exportet to keep your custom library entries safe or import them on another device. Updating the app won't remove your library entries, but if you decide to uninstall MyStremio and reinstall it in the future you will need the json to get your custom library back.
 - **Discord** Rich Presence by [REVENGE977](https://github.com/REVENGE977/) enhances the native Discord integration and shows additional info.
 
@@ -125,7 +127,7 @@ In the Stremio settings you will find the **MyStremio** section. These include s
 
 ### 📺 Player
 
-MyStremio offers some qualitiy of life changes available as plugins so you can enable/disable them to further customize your experience.
+MyStremio offers some quality of life changes available as plugins so you can enable/disable them to further customize your experience.
 
 #### ⏱️ Skip Intro Plugin
 
@@ -149,7 +151,7 @@ Built in plugin that adds a cast section directly into the player.
 
 #### 🎇 Anime4K Plugin
 
-Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) designed for anime. If enabled you can access the different shaders dircetly from the player. You can pick the shader quality in the plugin settings.
+Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) designed for anime. If enabled you can access the different shaders directly from the player. You can pick the shader quality in the plugin settings.
 
 ---
 
@@ -157,9 +159,7 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 ### 🎞️ Addon Manager
 
-[Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio. MyStremio also adds **On/Off soft toggles** on the Addons page: disabled addons stay installed but stop contributing catalogs/streams in this desktop client (not a Stremio Core flag; other clients/Cinebye are not synced 1:1).
-
-Additionally you can toggle addons to disable them without uninstalling them directly from the "Addons" page in MyStremio. This allows further optimization for your setup!
+[Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio. MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay installed but stop contributing catalogs/streams in this desktop client. This only works locally!
 
 ---
 
@@ -199,7 +199,7 @@ Additionally you can toggle addons to disable them without uninstalling them dir
 - **WatchHub** — Redesigned “Available on” panel with provider logos, Sub/Buy/Rent/Free badges, and a cleaner tile grid (StreamUI)
 - **Board catalog navigation** — Per-row chevrons, horizontal scroll, and LoadNextPage so board catalogs go beyond the first preview strip
 - **Multi-source ratings** — Shared ratings on Detail (Data Enrichment) and Meta Hover (IMDb, TMDb, Metacritic, RT, Trakt, …) via shell proxy; optional MDBList key under Settings → API Keys unlocks the full set
-- **Search suggestions** — Cinemeta typeahead above the search bar (posters, ranking, recent picks, keyboard navigation)
+- **Search suggestions** — Cinemeta type ahead above the search bar (posters, ranking, recent picks, keyboard navigation)
 - **Stream flags** — Language codes in stream rows render as Twemoji flags (Liquid Glass no longer strips them)
 - **Board hero** — Fixed the left grey gutter / full-bleed hero shading on the board
 - **Continue Watching** — Enhanced Titlebar + Enhanced Covers stay in sync after card reuse; row chevrons re-center after landscape covers load
@@ -268,8 +268,7 @@ Additionally you can toggle addons to disable them without uninstalling them dir
 ### Known Issues
 
 - **Cast Search Addon:** The Cast Search Addon is not compatible with the StreamUI plugin as the cast members load the same way as video streams which messes with correct grouping.
-- **Antivirus (e.g. Avast):** Some security tools may repeatedly scan MyStremio because it runs unsigned binaries from `%LOCALAPPDATA%\Programs\MyStremio`, a local streaming runtime, and writable data under `%APPDATA%\MyStremio` (plus occasional update installers under `%APPDATA%\MyStremio\updates`). Prefer folder exclusions for those paths over disabling antivirus entirely.
-- **Data Enrichment:** Shows Metadata from another title in the "Continue Watching" bar when switching back from episode detail page to series detail page. This only happens for titles in the CW bar!
+- **Data Enrichment:** Shows Metadata from another title in the "Continue Watching" bar when switching back from episode detail page to series detail page.
 
 ---
 
@@ -348,7 +347,7 @@ MyStremio includes parts of the following independent community projects:
 - [TheIntroDB](https://theintrodb.org/)
 - [IntroDB](https://introdb.app/)
 
-These are the projects I used as inspiration and some of their features for my own custom build. Definetly check out TheIntroDB and IntroDB, both of them deliver intro timestamps for us to enjoy for free.
+These are the projects I used as inspiration and some of their features for my own custom build. Definitely check out TheIntroDB and IntroDB, both of them deliver intro timestamps for us to enjoy for free.
 
 ---
 
