@@ -51,6 +51,10 @@
   let appliedForSession = false;
   /** User changed tracks via UI / storage after our one-shot apply — stop overriding. */
   let userOverrideActive = false;
+  /** Last real MPV subtitle style props from ShellVideo setProp (not localStorage). */
+  const lastMpvStyles = {};
+  let replayingMpvStyles = false;
+  let replayStyleTimers = [];
 
   function isPlayerRoute() {
     return /#\/player/.test(location.hash || '');
@@ -129,76 +133,78 @@
     }
   }
 
-  /**
-   * Read core profile subtitle size/offset (ShellVideo maps these to sub-scale/sub-pos).
-   * @returns {{ size: number, offset: number, assStyling: boolean }}
-   */
-  function readCoreSubtitleStyles() {
+  const SUBTITLE_STYLE_PROPS = new Set([
+    'sub-ass-override',
+    'sub-scale',
+    'sub-pos',
+    'sub-delay',
+    'sub-color',
+    'sub-back-color',
+    'sub-border-color',
+  ]);
+
+  function parseShellWire(raw) {
+    if (raw == null) return null;
     try {
-      const profile = JSON.parse(localStorage.getItem('profile') || '{}');
-      const settings = profile?.settings || {};
-      const size = Number(settings.subtitlesSize);
-      const offset = Number(settings.subtitlesOffset);
-      return {
-        size: Number.isFinite(size) ? size : 100,
-        offset: Number.isFinite(offset) ? offset : 0,
-        assStyling: settings.assSubtitlesStyling === true,
-      };
-    } catch {
-      return { size: 100, offset: 0, assStyling: false };
+      const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (!data || !Array.isArray(data.args)) return null;
+      return data.args;
+    } catch (_) {
+      return null;
     }
   }
 
-  /**
-   * Ensure ASS scale mode allows SIZE without rewriting current scale/pos.
-   * `scale` keeps embedded ASS fonts/colors; `force`/`strip` destroy that look.
-   */
-  function ensureAssOverride() {
-    if (!isPlayerRoute()) return;
-    if (readCoreSubtitleStyles().assStyling) return;
-    sendShellMpvSetProp('sub-ass-override', 'scale');
+  function captureSubtitleStyleProp(prop, value) {
+    if (!SUBTITLE_STYLE_PROPS.has(prop)) return;
+    if (prop === 'sub-ass-override' && String(value).toLowerCase() === 'no') return;
+    lastMpvStyles[prop] = value;
   }
 
-  /**
-   * ShellVideo default `sub-ass-override=no` ignores `sub-scale` on ASS/SSA.
-   * Use mpv `scale` so embedded title styles stay while SIZE/OFFSET still apply.
-   */
-  async function applyAssOverrideAndStyles() {
-    if (!isPlayerRoute()) return;
-    let size = 100;
-    let offset = 0;
-    let assStyling = false;
-
+  function replayCapturedSubtitleStyles() {
+    if (!isPlayerRoute() || replayingMpvStyles) return;
+    const entries = Object.entries(lastMpvStyles);
+    if (!entries.length) return;
+    replayingMpvStyles = true;
     try {
-      if (window.core?.getState) {
-        const ctx = await window.core.getState('ctx');
-        const settings = ctx?.profile?.settings;
-        if (settings) {
-          const liveSize = Number(settings.subtitlesSize);
-          const liveOffset = Number(settings.subtitlesOffset);
-          if (Number.isFinite(liveSize)) size = liveSize;
-          if (Number.isFinite(liveOffset)) offset = liveOffset;
-          assStyling = settings.assSubtitlesStyling === true;
-        }
-      } else {
-        const styles = readCoreSubtitleStyles();
-        size = styles.size;
-        offset = styles.offset;
-        assStyling = styles.assStyling;
+      for (const [prop, value] of entries) {
+        sendShellMpvSetProp(prop, value);
       }
-    } catch {
-      const styles = readCoreSubtitleStyles();
-      size = styles.size;
-      offset = styles.offset;
-      assStyling = styles.assStyling;
+    } finally {
+      replayingMpvStyles = false;
     }
+  }
 
-    // Settings "ASS subtitle styling" → ShellVideo uses strip; leave that path alone.
-    if (assStyling) return;
+  function clearReplayStyleTimers() {
+    for (const timer of replayStyleTimers) window.clearTimeout(timer);
+    replayStyleTimers = [];
+  }
 
-    sendShellMpvSetProp('sub-ass-override', 'scale');
-    sendShellMpvSetProp('sub-scale', size * 0.0066);
-    sendShellMpvSetProp('sub-pos', 100 - offset);
+  function scheduleReplayCapturedSubtitleStyles() {
+    clearReplayStyleTimers();
+    for (const delayMs of [0, 40, 200]) {
+      replayStyleTimers.push(
+        window.setTimeout(() => {
+          replayCapturedSubtitleStyles();
+        }, delayMs)
+      );
+    }
+  }
+
+  function onShellOutgoing(raw) {
+    if (replayingMpvStyles) return;
+    const args = parseShellWire(raw);
+    if (!args || !args.length) return;
+    if (args[0] === 'mpv-set-prop' && Array.isArray(args[1]) && args[1].length >= 2) {
+      captureSubtitleStyleProp(String(args[1][0]), args[1][1]);
+      return;
+    }
+    if (args[0] === 'mpv-command' && Array.isArray(args[1]) && args[1][0] === 'loadfile') {
+      scheduleReplayCapturedSubtitleStyles();
+    }
+  }
+
+  async function applyAssOverrideAndStyles() {
+    replayCapturedSubtitleStyles();
   }
 
   async function readCoreSubtitleLanguage() {
@@ -219,11 +225,14 @@
       if (!settings) return false;
       const current = settings.subtitlesLanguage ?? null;
       if (current === subtitlesLanguage) return true;
+      const fresh = await window.core.getState('ctx');
+      const latest = fresh?.profile?.settings;
+      if (!latest) return false;
       await window.core.dispatch({
         action: 'Ctx',
         args: {
           action: 'UpdateSettings',
-          args: Object.assign({}, settings, { subtitlesLanguage }),
+          args: Object.assign({}, latest, { subtitlesLanguage }),
         },
       });
       return true;
@@ -293,7 +302,10 @@
       return;
     }
 
-    if (!preference.language) return;
+    if (!preference.language) {
+      void applyAssOverrideAndStyles();
+      return;
+    }
 
     const expected = findSubtitleTrack(tracks, preference.language);
     if (!expected) {
@@ -302,6 +314,7 @@
         preference.language,
         '- keeping current selection.'
       );
+      void applyAssOverrideAndStyles();
       return;
     }
 
@@ -310,6 +323,7 @@
       selectedSub &&
       (selectedSub.id === expected.id || languageMatches(selectedSub.lang, preference.language))
     ) {
+      void applyAssOverrideAndStyles();
       return;
     }
 
@@ -329,6 +343,9 @@
     if (!tracks) return;
 
     lastTrackList = tracks;
+
+    const selectedSub = tracks.some((track) => track?.type === 'sub' && track.selected);
+    if (selectedSub) scheduleReplayCapturedSubtitleStyles();
 
     // After our one-shot apply, ignore further track-list churn so native menu wins.
     if (appliedForSession || userOverrideActive) return;
@@ -397,6 +414,7 @@
       appliedForSession = false;
       userOverrideActive = false;
       lastTrackList = null;
+      clearReplayStyleTimers();
       if (trackListDebounce) {
         clearTimeout(trackListDebounce);
         trackListDebounce = null;
@@ -429,11 +447,11 @@
     }
   });
 
-  // Native subtitle menu interactions — stop overriding after the user picks a track.
+  // Native subtitle menu — stop forcing sid after the user picks a track.
   document.addEventListener(
     'pointerdown',
     (event) => {
-      if (!isPlayerRoute() || !appliedForSession) return;
+      if (!isPlayerRoute()) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (
@@ -453,37 +471,16 @@
     appliedForSession = false;
     userOverrideActive = false;
     lastTrackList = null;
-    // After loadfile, ShellVideo may have set sub-ass-override=no — fix SIZE/OFFSET.
-    window.setTimeout(() => {
-      void applyAssOverrideAndStyles();
-    }, 120);
-    window.setTimeout(() => {
-      void applyAssOverrideAndStyles();
-    }, 600);
+    scheduleReplayCapturedSubtitleStyles();
   });
   document.addEventListener('stremio-custom-playback-stopped', onRouteOrSessionChange);
   document.addEventListener('stremio-custom-bootstrap-ready', onRouteOrSessionChange);
-
-  // Native SIZE/OFFSET steppers — keep override on; do not rewrite scale from stale LS.
-  document.addEventListener(
-    'pointerup',
-    (event) => {
-      if (!isPlayerRoute()) return;
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      if (
-        target.closest(
-          '[class*="subtitles-menu"], [class*="subtitle-"], [class*="subtitles-settings"]'
-        )
-      ) {
-        window.setTimeout(ensureAssOverride, 50);
-      }
-    },
-    true
-  );
+  document.addEventListener('stremio-shell-outgoing', (event) => {
+    onShellOutgoing(event?.detail);
+  });
 
   hookShellIncoming();
   onRouteOrSessionChange();
 
-  console.info('[StremioCustom] Subtitle preference sync ready (one-shot + ASS override).');
+  console.info('[StremioCustom] Subtitle preference sync ready (one-shot + style replay).');
 })();

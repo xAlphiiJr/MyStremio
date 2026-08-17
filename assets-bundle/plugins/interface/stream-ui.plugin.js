@@ -405,8 +405,17 @@
   }
 
   function isWatchHubStream(el) {
+    const hint = getStreamTransportHint(el);
+    if (hint && isSoftDisabledTransport(hint)) return false;
     const name = `${getDirectAddonTitle(el)} ${getAddonName(el)}`.trim();
-    if (WATCHHUB_ADDON_RE.test(name)) return true;
+    if (WATCHHUB_ADDON_RE.test(name)) {
+      if (!hint) {
+        const api = window.StremioCustomAddonSoftDisable;
+        const bases = api?.getDisabledAddonUrls?.() || [];
+        if (bases.some((b) => /watch.?hub|guidebox/i.test(String(b || '')))) return false;
+      }
+      return true;
+    }
     const text = getStreamText(el) || '';
     if (!WATCHHUB_MODE_RE.test(text)) return false;
     if (/👤|💾|⚙️|🧲|x26[45]|web[- ]?dl|bluray|torrent/i.test(text)) return false;
@@ -416,7 +425,7 @@
 
   function shouldGroupAsTorrent(el, box) {
     if (!state.torrent) return false;
-    if (el.classList.contains('sui-hidden-stream')) return false;
+    if (el.classList.contains('sui-hidden-stream') || isSoftDisabledStream(el)) return false;
     const name = getDirectAddonTitle(el) || resolveTorrentAddonName(el, box);
     if (WATCHHUB_ADDON_RE.test(name || '') || isWatchHubStream(el)) return false;
     if (!name || isExcludedAddon(name)) return false;
@@ -428,7 +437,7 @@
 
   function shouldGroupAsUsenet(el, box) {
     if (!state.usenet) return false;
-    if (el.classList.contains('sui-hidden-stream')) return false;
+    if (el.classList.contains('sui-hidden-stream') || isSoftDisabledStream(el)) return false;
     const name = getDirectAddonTitle(el) || resolveTorrentAddonName(el, box);
     if (WATCHHUB_ADDON_RE.test(name || '') || isWatchHubStream(el)) return false;
     if (!name || isExcludedAddon(name)) return false;
@@ -1566,6 +1575,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
 
     function restore() {
       for (const s of hidden) {
+        if (isSoftDisabledStream(s)) continue;
         s.classList.remove(HIDE);
         s.removeAttribute('aria-hidden');
       }
@@ -1848,6 +1858,49 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     }
   }
 
+  const GENERIC_HOST_TOKENS = new Set([
+    'com', 'net', 'org', 'io', 'app', 'www', 'https', 'http',
+    'github', 'gitlab', 'stremio', 'addon', 'addons', 'cloudflare',
+    'workers', 'herokuapp', 'vercel', 'netlify', 'elfhosted',
+  ]);
+
+  function disabledBaseNameTokens(base) {
+    const raw = String(base || '');
+    const tokens = [];
+    try {
+      const host = new URL(raw, location.href).hostname.replace(/^www\./i, '');
+      for (const part of host.split(/[.-]/)) {
+        const token = String(part || '').toLowerCase();
+        if (token.length >= 4 && !GENERIC_HOST_TOKENS.has(token)) tokens.push(token);
+      }
+    } catch (_) {}
+    const known = raw.match(/watch.?hub|guidebox|rating-aggregator/i);
+    if (known) tokens.push(known[0].toLowerCase().replace(/\s+/g, ''));
+    return tokens;
+  }
+
+  function isSoftDisabledStream(el) {
+    if (!(el instanceof Element)) return false;
+    const hint = getStreamTransportHint(el);
+    if (hint) return isSoftDisabledTransport(hint);
+    const api = window.StremioCustomAddonSoftDisable;
+    const bases = api?.getDisabledAddonUrls?.() || [];
+    if (!bases.length) return false;
+    const blob = `${getDirectAddonTitle(el) || ''} ${getAddonName(el) || ''} ${getStreamText(el) || ''}`.toLowerCase();
+    return bases.some((base) =>
+      disabledBaseNameTokens(base).some((token) => token.length >= 4 && blob.includes(token))
+    );
+  }
+
+  function hideSoftDisabledStreams(box) {
+    if (!box) return;
+    for (const el of getStreamLinks(box)) {
+      if (!isSoftDisabledStream(el)) continue;
+      el.classList.add('sui-hidden-stream');
+      el.setAttribute('aria-hidden', 'true');
+    }
+  }
+
   function isAggregatorNamed(el) {
     const name = `${getDirectAddonTitle(el) || ''} ${getAddonName(el) || ''}`.trim();
     return /ratings?\s*aggregator/i.test(name);
@@ -1922,14 +1975,17 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     }
 
     function restore() {
-      for (const s of hidden) s.classList.remove(HIDE);
+      for (const s of hidden) {
+        if (isSoftDisabledStream(s)) continue;
+        s.classList.remove(HIDE);
+      }
       hidden.clear();
     }
 
     function collect(box) {
       const items = [];
       const seen = new Set();
-      for (const el of getStreamLinks(box).filter((l) => AC_RE.test(getAddonName(l)))) {
+      for (const el of getStreamLinks(box).filter((l) => AC_RE.test(getAddonName(l)) && !isSoftDisabledStream(l))) {
         const parsed = parseAfterCreditsText(el);
         if (!parsed.text || seen.has(parsed.text)) continue;
         seen.add(parsed.text);
@@ -1958,7 +2014,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     }
 
     function build(box) {
-      const acStreams = getStreamLinks(box).filter((l) => AC_RE.test(getAddonName(l)));
+      const acStreams = getStreamLinks(box).filter((l) => AC_RE.test(getAddonName(l)) && !isSoftDisabledStream(l));
       if (!acStreams.length) {
         teardown(true);
         return;
@@ -1990,7 +2046,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       box.insertBefore(root, getStreamsBoxTopAnchor(box));
       if (!obs) {
         obs = new MutationObserver(() => {
-          const current = getStreamLinks(box).filter((l) => AC_RE.test(getAddonName(l)));
+          const current = getStreamLinks(box).filter((l) => AC_RE.test(getAddonName(l)) && !isSoftDisabledStream(l));
           const nextSig = collect(box).map((p) => `${p.text}:${p.hasStinger}`).join('|');
           if (nextSig !== lastSig) {
             if (timer) clearTimeout(timer);
@@ -2161,7 +2217,10 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     }
 
     function restore() {
-      for (const s of hidden) s.classList.remove(HIDE);
+      for (const s of hidden) {
+        if (isSoftDisabledStream(s)) continue;
+        s.classList.remove(HIDE);
+      }
       hidden.clear();
     }
 
@@ -2371,6 +2430,8 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
       return;
     }
 
+    hideSoftDisabledStreams(box);
+
     if (box !== state.lastBox) {
       accordions.teardown();
       state.lastBox = box;
@@ -2388,6 +2449,7 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     if (state.torrent || state.usenet) accordions.build(box);
     else accordions.teardown();
 
+    hideSoftDisabledStreams(box);
     decorateStreamFlags();
 
     if (!firstBuildDone && isStreamUiRoute()) {
@@ -2491,7 +2553,9 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
     document.addEventListener('stremio-custom-playback-route', ensureRuntime);
     document.addEventListener('stremio-custom-playback-stopped', ensureRuntime);
     document.addEventListener('stremio-custom-disabled-addons-changed', () => {
-      ratingsBundle.teardown(true);
+      ratingsBundle.teardown(false);
+      watchhub.teardown(false);
+      afterCredits.teardown(false);
       firstBuildDone = false;
       if (isStreamUiRoute()) markStreamsPending();
       tick();

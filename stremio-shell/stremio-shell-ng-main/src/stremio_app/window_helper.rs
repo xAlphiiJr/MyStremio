@@ -12,7 +12,8 @@ use winapi::um::winuser::{
     HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, MONITORINFO, MONITOR_DEFAULTTONEAREST, RDW_ALLCHILDREN,
     RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW, SM_CXSCREEN, SM_CYSCREEN,
     SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SW_HIDE, SW_RESTORE, SW_SHOWMAXIMIZED, SW_SHOWNORMAL, WINDOWPLACEMENT, WM_SETREDRAW,
+    SW_HIDE, SW_MINIMIZE, SW_RESTORE, SW_SHOWMAXIMIZED, SW_SHOWNORMAL, WINDOWPLACEMENT,
+    WM_SETREDRAW,
     WS_CAPTION, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE, WS_EX_TOPMOST,
     WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_OVERLAPPEDWINDOW, WS_THICKFRAME, WS_VISIBLE,
 };
@@ -128,6 +129,24 @@ impl WindowStyle {
 
     pub fn is_window_minimized(&self, hwnd: HWND) -> bool {
         0 != unsafe { IsIconic(hwnd) }
+    }
+
+    /// Minimize the shell window (in-app chrome replacement while borderless).
+    pub fn minimize_window(&self, hwnd: HWND) {
+        unsafe {
+            ShowWindow(hwnd, SW_MINIMIZE);
+        }
+    }
+
+    /// Toggle maximize/restore without going through OS caption buttons.
+    pub fn toggle_maximize_window(&self, hwnd: HWND) {
+        unsafe {
+            if IsZoomed(hwnd) != 0 {
+                ShowWindow(hwnd, SW_RESTORE);
+            } else {
+                ShowWindow(hwnd, SW_SHOWMAXIMIZED);
+            }
+        }
     }
 
     pub fn show_window_at(&self, hwnd: HWND, pos: HWND) {

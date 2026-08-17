@@ -51,19 +51,27 @@ PRELUDE = r"""/* mystremio-addon-soft-disable-worker */
   function shouldBlock(url) {
     try {
       var u = new URL(String(url || ""), self.location && self.location.href);
-      if (/\/manifest\.json$/i.test(u.pathname)) return false;
-      if (!matchesDisabled(u.href)) return false;
-      return /\/(catalog|stream|meta|subtitle|subtitles|addon_catalog)\//i.test(u.pathname);
+      return matchesDisabled(u.href);
     } catch (_) {
-      return false;
+      return matchesDisabled(String(url || ""));
     }
   }
 
-  function emptyResponse() {
-    return new Response(
-      JSON.stringify({ metas: [], streams: [], meta: null, subtitles: [] }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
+  function isManifest(url) {
+    return /\/manifest\.json(?:\?|$|#)/i.test(String(url || ""));
+  }
+
+  function isResource(url) {
+    return /\/(?:stream|catalog|meta|subtitle)s?\//i.test(String(url || ""));
+  }
+
+  function emptyBody(url) {
+    var target = String(url || "");
+    if (/\/(?:stream)s?\//i.test(target)) return '{"streams":[]}';
+    if (/\/(?:catalog)s?\//i.test(target)) return '{"metas":[]}';
+    if (/\/(?:meta)s?\//i.test(target)) return '{"meta":null}';
+    if (/\/(?:subtitle)s?\//i.test(target)) return '{"subtitles":[]}';
+    return "{}";
   }
 
   if (typeof self.fetch === "function") {
@@ -75,7 +83,15 @@ PRELUDE = r"""/* mystremio-addon-soft-disable-worker */
           : input && typeof input === "object" && "url" in input
             ? String(input.url)
             : String(input || "");
-      if (shouldBlock(url)) return Promise.resolve(emptyResponse());
+      if (shouldBlock(url)) {
+        if (isResource(url) && !isManifest(url)) {
+          return Promise.resolve(new Response(emptyBody(url), {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          }));
+        }
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
       return originalFetch(input, init);
     };
   }
@@ -118,6 +134,14 @@ PRELUDE = r"""/* mystremio-addon-soft-disable-worker */
 def patch_worker(path: Path) -> bool:
     text = path.read_text(encoding="utf-8")
     if MARKER in text:
+        start = text.find("/* mystremio-addon-soft-disable-worker */")
+        original = text.find("(()=>{", start + 10 if start >= 0 else 0)
+        if start >= 0 and original > start:
+            next_text = PRELUDE.rstrip() + "\n" + text[original:]
+            if next_text != text:
+                path.write_text(next_text, encoding="utf-8")
+                print(f"Updated addon soft-disable worker prelude in {path}")
+                return True
         print(f"Addon soft-disable worker patch already present in {path}")
         return False
     path.write_text(PRELUDE + "\n" + text, encoding="utf-8")

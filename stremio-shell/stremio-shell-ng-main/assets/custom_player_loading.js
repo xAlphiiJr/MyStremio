@@ -482,7 +482,7 @@
         ensureOpaqueReconcile();
         return;
       }
-      setShellBorderless(true, true);
+      setShellBorderless(false);
       scheduleViewportPunch();
       return;
     }
@@ -490,7 +490,7 @@
     clearMaxTimer();
 
     injectSessionStyles();
-    setShellBorderless(true, true);
+    setShellBorderless(false);
     setPhase(Phase.LOADING);
     startPoll();
 

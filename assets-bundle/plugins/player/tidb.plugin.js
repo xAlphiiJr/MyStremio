@@ -795,10 +795,14 @@
 		const domTime = readTimeFromSeekBarDom();
 
 		if (snap?.timeFresh && Number.isFinite(snap.position)) {
-			if (domTime != null && domTime > snap.position + 1.5) {
+			if (snap.playbackAdvanced && domTime != null && domTime > snap.position + 1.5) {
 				return domTime;
 			}
 			return snap.position;
+		}
+
+		if (snap && !snap.playbackAdvanced) {
+			return Number.isFinite(snap.position) ? snap.position : 0;
 		}
 
 		if (domTime != null) return domTime;
@@ -1206,6 +1210,7 @@
 			this._checkTimer = null;
 			this._observer = null;
 			this._autoSkippedKeys = new Set();
+			this._autoSkipCancelledKeys = new Set();
 			this._fetchGeneration = 0;
 			this._segmentsLoadedEpisodeId = null;
 			this.mediaImdbId = null;
@@ -1470,6 +1475,7 @@
 		}
 
 		tryAutoSkip(video, seg) {
+			if (!this.isPlaybackReadyForSkip()) return false;
 			if (seg.end == null || !Number.isFinite(seg.end)) {
 				return false;
 			}
@@ -1500,10 +1506,23 @@
 			return resolvePlaybackTimeSec();
 		}
 
+		isPlaybackReadyForSkip() {
+			const snap = window.StremioCustomPlayback?.getMpvSnapshot?.();
+			if (!snap) return false;
+			return Boolean(snap.playbackAdvanced && snap.timeFresh && !snap.seeking);
+		}
+
 		syncSkipButton() {
 			const video = this.getPlaybackVideo();
 			const duration = window.StremioCustomPlayback?.getDuration?.() || video?.duration;
 			if (!video || !Number.isFinite(duration) || duration <= 0) {
+				this.removeActiveButton();
+				this.activeSegment = null;
+				this.displayedSegmentType = null;
+				return;
+			}
+
+			if (!this.isPlaybackReadyForSkip()) {
 				this.removeActiveButton();
 				this.activeSegment = null;
 				this.displayedSegmentType = null;
@@ -1534,19 +1553,6 @@
 				return;
 			}
 
-			if (isAutoSkipEnabled(seg.type)) {
-				if (this.tryAutoSkip(video, seg)) {
-					const timeAfterSkip = this.getPlaybackCurrentTime(video);
-					seg = this.findActiveSegment(timeAfterSkip, duration);
-					this.activeSegment = seg;
-					if (!seg || this._autoSkippedKeys.has(this.getAutoSkipKey(seg))) {
-						this.removeActiveButton();
-						this.displayedSegmentType = null;
-						return;
-					}
-				}
-			}
-
 			if (!this.isSegmentButtonEnabled(seg.type)) {
 				this.removeActiveButton();
 				this.displayedSegmentType = null;
@@ -1557,6 +1563,7 @@
 			const segKey = this.getSkipSegmentKey(seg);
 			if (existing && existing.getAttribute("data-segment-key") === segKey) {
 				this.syncSkipButtonChromeVisibility();
+				this.syncAutoSkipCountdown();
 				return;
 			}
 
@@ -2622,13 +2629,55 @@
 
 		removeActiveButton() {
 			this.clearSkipGraceTimer();
+			this.clearSkipCountdownTimer();
 			this._skipBtnHovered = false;
+			this._autoSkipPending = false;
 			document.getElementById(ACTIVE_BTN_ID)?.remove();
 			document.getElementById("tidb-skip-btn-styles")?.remove();
 			document.querySelectorAll(".tidb-skip-btn").forEach((button) => button.remove());
 			this.displayedSegmentType = null;
 			this._skipGraceUntil = 0;
 			this._skipGraceSegmentKey = null;
+		}
+
+		clearSkipCountdownTimer() {
+			if (this._skipCountdownTimer) {
+				clearInterval(this._skipCountdownTimer);
+				this._skipCountdownTimer = null;
+			}
+		}
+
+		isAutoSkipPendingFor(segment) {
+			if (!segment || !isAutoSkipEnabled(segment.type)) return false;
+			if (this._autoSkipCancelledKeys.has(this.getAutoSkipKey(segment))) return false;
+			if (this._autoSkippedKeys.has(this.getAutoSkipKey(segment))) return false;
+			return true;
+		}
+
+		getAutoSkipCountdownLabel(segment) {
+			const name = (SEGMENT_SUBMIT_LABELS[segment?.type] || segment?.type || "segment").toLowerCase();
+			const remaining = Math.max(0, Math.ceil((Number(this._skipGraceUntil || 0) - Date.now()) / 1000));
+			return `Skipping ${name} in ${remaining}…`;
+		}
+
+		syncAutoSkipCountdown() {
+			const btn = document.getElementById(ACTIVE_BTN_ID);
+			const label = btn?.querySelector(".tidb-skip-label");
+			if (!btn || !label || !this._autoSkipPending || !this.activeSegment) return;
+			label.textContent = this.getAutoSkipCountdownLabel(this.activeSegment);
+		}
+
+		cancelPendingAutoSkip(segment) {
+			if (!segment) return;
+			this._autoSkipCancelledKeys.add(this.getAutoSkipKey(segment));
+			this._autoSkipPending = false;
+			this.clearSkipCountdownTimer();
+			const btn = document.getElementById(ACTIVE_BTN_ID);
+			btn?.querySelector(".tidb-skip-cancel")?.remove();
+			const label = btn?.querySelector(".tidb-skip-label");
+			if (label) label.textContent = SEGMENT_LABELS[segment.type] || "Skip Segment";
+			btn?.classList.remove("tidb-skip-grace");
+			this.syncSkipButtonChromeVisibility();
 		}
 
 		clearSkipGraceTimer() {
@@ -2680,6 +2729,25 @@
 					visibility: hidden !important;
 					pointer-events: none !important;
 				}
+				.tidb-skip-cancel {
+					margin-left: 2px;
+					width: 1.35rem;
+					height: 1.35rem;
+					border: 0;
+					border-radius: 999px;
+					background: rgba(255, 255, 255, 0.14);
+					color: #fff;
+					cursor: pointer;
+					font-size: 0.85rem;
+					line-height: 1;
+					display: inline-flex;
+					align-items: center;
+					justify-content: center;
+					padding: 0;
+				}
+				.tidb-skip-cancel:hover {
+					background: rgba(255, 255, 255, 0.28);
+				}
 				@keyframes tidb-skip-opacity-sweep {
 					from { clip-path: inset(0 0% 0 0); }
 					to { clip-path: inset(0 100% 0 0); }
@@ -2721,6 +2789,7 @@
 		}
 
 		showSkipButton(segment) {
+			if (!this.isPlaybackReadyForSkip()) return;
 			const segmentType = segment.type;
 			const theme = THEMES[this.theme] || THEMES.default;
 			const segmentKey = this.getSkipSegmentKey(segment);
@@ -2730,6 +2799,7 @@
 			const existing = document.getElementById(ACTIVE_BTN_ID);
 			if (existing && existing.getAttribute("data-segment-key") === segmentKey) {
 				this.syncSkipButtonChromeVisibility();
+				this.syncAutoSkipCountdown();
 				return;
 			}
 
@@ -2748,7 +2818,15 @@
 			skipBtn.className = this.theme === "glass" || isLiquidGlassThemeActive()
 				? "tidb-skip-btn tidb-theme-glass tidb-skip-grace"
 				: "tidb-skip-btn tidb-theme-default tidb-skip-grace";
-			skipBtn.textContent = SEGMENT_LABELS[segmentType] || "Skip Segment";
+
+			const autoSkip = this.isAutoSkipPendingFor(segment);
+			this._autoSkipPending = autoSkip;
+			this._skipGraceUntil = Date.now() + 10000;
+			const labelEl = document.createElement("span");
+			labelEl.className = "tidb-skip-label";
+			labelEl.textContent = autoSkip
+				? this.getAutoSkipCountdownLabel(segment)
+				: (SEGMENT_LABELS[segmentType] || "Skip Segment");
 
 			icon.src = "https://www.svgrepo.com/show/471906/skip-forward.svg";
 			icon.alt = "Skip icon";
@@ -2782,6 +2860,20 @@
 			});
 
 			skipBtn.prepend(icon);
+			skipBtn.appendChild(labelEl);
+			if (autoSkip) {
+				const cancelBtn = document.createElement("button");
+				cancelBtn.type = "button";
+				cancelBtn.className = "tidb-skip-cancel";
+				cancelBtn.setAttribute("aria-label", "Keep watching");
+				cancelBtn.textContent = "✕";
+				cancelBtn.addEventListener("click", (event) => {
+					event.preventDefault();
+					event.stopPropagation();
+					this.cancelPendingAutoSkip(segment);
+				});
+				skipBtn.appendChild(cancelBtn);
+			}
 
 			skipBtn.onmouseenter = () => {
 				this._skipBtnHovered = true;
@@ -2794,6 +2886,7 @@
 				this.syncSkipButtonChromeVisibility();
 			};
 			skipBtn.onclick = (event) => {
+				if (event.target.closest(".tidb-skip-cancel")) return;
 				event.preventDefault();
 				event.stopPropagation();
 				this.track("skip_clicked", {
@@ -2802,6 +2895,7 @@
 				const video = this.getPlaybackVideo();
 				if (video) {
 					video.currentTime = segment.end;
+					this._autoSkippedKeys.add(this.getAutoSkipKey(segment));
 					console.log(`${LOG_PREFIX} Skipping ${segmentType}: targetTime=${segment.end}`);
 				}
 				this.removeActiveButton();
@@ -2809,13 +2903,25 @@
 
 			document.body.appendChild(skipBtn);
 
-			// 10s grace: stay visible even if control bar hides; then follow chrome.
+			// 10s grace: stay visible even if control bar hides; autoskip seeks at deadline.
 			this._skipBtnHovered = false;
 			this._skipGraceSegmentKey = segmentKey;
 			this._skipGraceUntil = Date.now() + 10000;
+			if (autoSkip) {
+				labelEl.textContent = this.getAutoSkipCountdownLabel(segment);
+			}
 			this.clearSkipGraceTimer();
+			this.clearSkipCountdownTimer();
+			if (autoSkip) {
+				this._skipCountdownTimer = setInterval(() => this.syncAutoSkipCountdown(), 250);
+			}
 			this._skipGraceTimer = setTimeout(() => {
 				this._skipGraceTimer = null;
+				if (this._autoSkipPending) {
+					const video = this.getPlaybackVideo();
+					if (video) this.tryAutoSkip(video, segment);
+					return;
+				}
 				skipBtn.classList.remove("tidb-skip-grace");
 				this.syncSkipButtonChromeVisibility();
 			}, 10000);
@@ -3912,6 +4018,9 @@
 			this._segmentsLoadedEpisodeId = null;
 			if (this._autoSkippedKeys) {
 				this._autoSkippedKeys.clear();
+			}
+			if (this._autoSkipCancelledKeys) {
+				this._autoSkipCancelledKeys.clear();
 			}
 			Object.assign(this, {
 				video: null,

@@ -128,6 +128,8 @@
     }
   }
 
+  document.getElementById('mystremio-player-window-chrome')?.remove();
+
   window.__stremioCustomPlayerGlassEnsure = ensurePlayerGlassStyles;
   window.__stremioCustomPlayerGlassCss = GLASS_CSS;
 

@@ -21,7 +21,7 @@
   function clampLevel(value) {
     const level = Number(value);
     if (!Number.isFinite(level)) return null;
-    return Math.min(100, Math.max(0, Math.round(level)));
+    return Math.min(200, Math.max(0, Math.round(level)));
   }
 
   function normalizeMute(value) {
@@ -157,9 +157,11 @@
     return parsed.stringMode ? JSON.stringify(parsed.data) : parsed.data;
   }
 
+  let applyStoredVolumeOnce = true;
+
   /**
-   * Rewrites volume set-props to stored defaults outside a user gesture.
-   * Mute is never rewritten — every mute set-prop is treated as user/UI intent.
+   * Persist live volume/mute. Only rewrite an outgoing volume set when MPV has
+   * not yet received the stored default this session (loadfile/bootstrap).
    * @param {unknown[]} pair
    * @returns {unknown[]}
    */
@@ -177,11 +179,16 @@
 
     if (pair[0] === 'volume') {
       const level = clampLevel(pair[1]);
-      if (level != null && isUserVolumeGesture()) {
+      if (level != null) {
+        if (isUserVolumeGesture()) {
+          applyStoredVolumeOnce = false;
+          commitVolume(level, null);
+          return pair;
+        }
         commitVolume(level, null);
-        return pair;
       }
-      if (shouldApplyDefaults() && store.level != null) {
+      if (applyStoredVolumeOnce && shouldApplyDefaults() && store.level != null) {
+        applyStoredVolumeOnce = false;
         return ['volume', store.level];
       }
       return pair;
@@ -204,21 +211,7 @@
   }
 
   function rewriteShellIncoming(raw) {
-    const parsed = parseShellWire(raw);
-    if (!parsed || !shouldApplyDefaults()) return raw;
-
-    const args = parsed.args;
-    if (args[0] !== 'mpv-prop-change' || !args[1] || typeof args[1] !== 'object') {
-      return raw;
-    }
-
-    const change = args[1];
-    // Never rewrite live mute — UI must track MPV truth. Volume defaults only.
-    if (change.name === 'volume' && store.level != null && !isUserVolumeGesture()) {
-      change.data = store.level;
-      return serializeShellWire(parsed);
-    }
-
+    // MPV is source of truth during playback — never rewrite live volume/mute.
     return raw;
   }
 
@@ -243,7 +236,6 @@
       return;
     }
     if (prop === 'volume') {
-      if (!isUserVolumeGesture()) return;
       const level = clampLevel(value);
       if (level != null) commitVolume(level, null);
     }
@@ -270,11 +262,10 @@
     return null;
   }
 
-  function captureFromUserUi() {
-    if (!/#\/player/.test(location.hash || '')) return;
-    const level = readVolumeFromDomSlider();
-    // Mute is owned by outgoing mpv-set-prop — aria-labels lag and can undo mute.
-    if (level != null) commitVolume(level, null);
+  function isCastOverlayWheelTarget(target) {
+    return Boolean(
+      target?.closest?.('#mystremio-cast-overlay, [data-mystremio-cast-dialog]')
+    );
   }
 
   function bindVolumeUiWatch() {
@@ -286,9 +277,6 @@
 
     const onUserGesture = () => {
       markUserVolumeGesture();
-      window.setTimeout(captureFromUserUi, 0);
-      window.setTimeout(captureFromUserUi, 80);
-      window.setTimeout(captureFromUserUi, 220);
     };
 
     document.addEventListener(
@@ -321,6 +309,7 @@
     document.addEventListener(
       'wheel',
       (event) => {
+        if (isCastOverlayWheelTarget(event.target)) return;
         if (!event.target?.closest?.('[class*="player-container"]')) return;
         onUserGesture();
       },
@@ -360,6 +349,9 @@
 
   document.addEventListener('stremio-shell-outgoing', (event) => {
     captureFromShellOutgoing(event?.detail);
+  });
+  document.addEventListener('stremio-custom-stream-started', () => {
+    applyStoredVolumeOnce = true;
   });
   document.addEventListener('stremio-custom-bootstrap-ready', () => {
     hydrateFromDisk().finally(ensureVolumePersist);

@@ -29,6 +29,7 @@
   let overlayOpen = false;
   let outsideHandler = null;
   let keyHandler = null;
+  let wheelHandler = null;
   let ensureTimer = null;
   let layoutObserver = null;
   let uiWatcher = null;
@@ -112,13 +113,58 @@
   }
 
   /**
+   * Parses season/episode from a player hash like `#/player/.../tt123:1:3`.
+   * @returns {{season:number, episode:number}|null}
+   */
+  function parseEpisodeFromRoute() {
+    const match = (location.hash || location.href).match(/tt\d{7,8}:(\d+):(\d+)/i);
+    if (!match) return null;
+    const season = Number(match[1]);
+    const episode = Number(match[2]);
+    if (!Number.isInteger(season) || !Number.isInteger(episode) || season < 0 || episode < 1) {
+      return null;
+    }
+    return { season, episode };
+  }
+
+  /**
+   * Maps a TMDB credits person to overlay rows, sorted by billing `order`.
+   * @param {Array} people
+   * @returns {Array<{name:string, character:string, photo:string|null, order:number}>}
+   */
+  function mapTmdbCastPeople(people) {
+    return (Array.isArray(people) ? people : [])
+      .map((actor) => {
+        const character =
+          actor.character ||
+          actor.roles?.[0]?.character ||
+          (Array.isArray(actor.roles)
+            ? actor.roles.map((role) => role.character).filter(Boolean).join(' / ')
+            : '') ||
+          '';
+        return {
+          name: actor.name || '',
+          character,
+          photo: actor.profile_path ? `${TMDB_IMAGE_BASE}${actor.profile_path}` : null,
+          order: Number.isFinite(Number(actor.order)) ? Number(actor.order) : 9999,
+        };
+      })
+      .filter((actor) => actor.name);
+  }
+
+  /**
    * Fetches cast members for an IMDb id via TMDB find + credits endpoints.
+   * Movies use /credits. Series episodes use episode credits (billing order);
+   * series without S/E keep aggregate_credits.
    * @param {string} imdbId
    * @param {string} apiKey
    * @returns {Promise<Array<{name:string, character:string, photo:string|null}>>}
    */
   async function fetchCastFromTmdb(imdbId, apiKey) {
-    const cacheKey = `${imdbId}:${apiKey.slice(0, 6)}`;
+    const episode = parseEpisodeFromRoute();
+    const cacheKey = episode
+      ? `${imdbId}:s${episode.season}e${episode.episode}:${apiKey.slice(0, 6)}`
+      : `${imdbId}:${apiKey.slice(0, 6)}`;
     if (castCache.has(cacheKey)) return castCache.get(cacheKey);
 
     const findResponse = await fetch(
@@ -129,7 +175,7 @@
     const findData = await findResponse.json();
     let tmdbId = null;
     let mediaType = 'movie';
-    const prefersSeries = /tt\d{7,8}:\d+:\d+/i.test(location.hash || location.href);
+    const prefersSeries = Boolean(episode) || /tt\d{7,8}:\d+:\d+/i.test(location.hash || location.href);
 
     if (prefersSeries && findData.tv_results?.[0]) {
       tmdbId = findData.tv_results[0].id;
@@ -144,39 +190,39 @@
 
     if (!tmdbId) throw new Error('No TMDB match for this title');
 
-    // TV "Series Cast" lives in aggregate_credits; plain /credits is often tiny (3–5 people).
-    const creditsPath =
-      mediaType === 'tv'
-        ? `https://api.themoviedb.org/3/tv/${tmdbId}/aggregate_credits?api_key=${encodeURIComponent(apiKey)}`
-        : `https://api.themoviedb.org/3/movie/${tmdbId}/credits?api_key=${encodeURIComponent(apiKey)}`;
+    let creditsPath;
+    if (mediaType === 'movie') {
+      creditsPath = `https://api.themoviedb.org/3/movie/${tmdbId}/credits?api_key=${encodeURIComponent(apiKey)}`;
+    } else if (episode) {
+      creditsPath = `https://api.themoviedb.org/3/tv/${tmdbId}/season/${episode.season}/episode/${episode.episode}/credits?api_key=${encodeURIComponent(apiKey)}`;
+    } else {
+      creditsPath = `https://api.themoviedb.org/3/tv/${tmdbId}/aggregate_credits?api_key=${encodeURIComponent(apiKey)}`;
+    }
 
     const creditsResponse = await fetch(creditsPath);
     if (!creditsResponse.ok) throw new Error('TMDB credits request failed');
 
     const credits = await creditsResponse.json();
-    const rawCast = Array.isArray(credits.cast) ? [...credits.cast] : [];
-    if (mediaType === 'tv') {
-      rawCast.sort(
+    let people = Array.isArray(credits.cast) ? [...credits.cast] : [];
+    if (mediaType === 'tv' && episode) {
+      people = people.concat(Array.isArray(credits.guest_stars) ? credits.guest_stars : []);
+    } else if (mediaType === 'tv') {
+      people.sort(
         (a, b) =>
           Number(b.total_episode_count || b.roles?.[0]?.episode_count || 0) -
           Number(a.total_episode_count || a.roles?.[0]?.episode_count || 0)
       );
     }
 
-    const cast = rawCast.slice(0, MAX_CAST).map((actor) => {
-      const character =
-        actor.character ||
-        actor.roles?.[0]?.character ||
-        (Array.isArray(actor.roles)
-          ? actor.roles.map((role) => role.character).filter(Boolean).join(' / ')
-          : '') ||
-        '';
-      return {
-        name: actor.name || '',
-        character,
-        photo: actor.profile_path ? `${TMDB_IMAGE_BASE}${actor.profile_path}` : null,
-      };
-    });
+    const mapped = mapTmdbCastPeople(people);
+    if (mediaType !== 'tv' || episode) {
+      mapped.sort((a, b) => a.order - b.order);
+    }
+    const cast = mapped.slice(0, MAX_CAST).map(({ name, character, photo }) => ({
+      name,
+      character,
+      photo,
+    }));
 
     castCache.set(cacheKey, cast);
     return cast;
@@ -693,6 +739,27 @@
     document.addEventListener('mousedown', outsideHandler, true);
     document.addEventListener('click', outsideHandler, true);
     document.addEventListener('keydown', keyHandler);
+
+    wheelHandler = (event) => {
+      if (!overlayOpen) return;
+      const overlay = document.getElementById(OVERLAY_ID);
+      const dialog = overlay?.querySelector('[data-mystremio-cast-dialog]');
+      const target = event.target;
+      if (!(target instanceof Node) || !overlay) return;
+      if (!overlay.contains(target) && !(dialog && dialog.contains(target))) return;
+      event.stopPropagation();
+      const scroller =
+        overlay.querySelector('[data-mystremio-cast-body]') ||
+        overlay.querySelector('.mystremio-cast-body') ||
+        dialog;
+      if (!scroller) return;
+      const delta = Number(event.deltaY) || 0;
+      const atTop = scroller.scrollTop <= 0 && delta < 0;
+      const atBottom =
+        scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1 && delta > 0;
+      if (atTop || atBottom) event.preventDefault();
+    };
+    document.addEventListener('wheel', wheelHandler, { capture: true, passive: false });
   }
 
   function unbindOverlayHandlers() {
@@ -705,6 +772,10 @@
     if (keyHandler) {
       document.removeEventListener('keydown', keyHandler);
       keyHandler = null;
+    }
+    if (wheelHandler) {
+      document.removeEventListener('wheel', wheelHandler, true);
+      wheelHandler = null;
     }
   }
 

@@ -22,8 +22,9 @@
     metadataLoaded: false,
   };
   let lastMpvTimeAt = 0;
-  let lastSeekTarget = null;
-  let lastSeekAt = 0;
+  let seekClearTimer = null;
+  const SEEK_SETTLE_MAX_MS = 2500;
+  const SEEKING_CLASS = 'stremio-custom-seeking';
   let mpvCacheAheadSec = 0;
   let mpvCacheAheadReported = false;
   let mpvPause = false;
@@ -39,6 +40,8 @@
   let startupBaselineTime = null;
   let playbackAdvanced = false;
   let startupRecoveryCount = 0;
+  let lastSeekTarget = null;
+  let lastSeekAt = 0;
   /** Throttle heavy time-pos fan-out (~5 Hz) while keeping heartbeat every tick. */
   const TIME_POS_HEAVY_MS = 200;
   let lastHeavyTimePosAt = 0;
@@ -58,6 +61,10 @@
   const STARTUP_RECOVERY_WINDOW_MS = 45000;
   const shimmedVideos = new WeakSet();
 
+  function isPlayerRoute() {
+    return /#\/player/.test(location.hash || '');
+  }
+
   function isAutoPlaySuppressed() {
     return autoPlaySuppressCount > 0;
   }
@@ -70,8 +77,36 @@
     autoPlaySuppressCount = Math.max(0, autoPlaySuppressCount - 1);
   }
 
-  function isPlayerRoute() {
-    return /#\/player/.test(location.hash || '');
+  function setSeekingClass(active) {
+    try {
+      document.documentElement.classList.toggle(SEEKING_CLASS, Boolean(active));
+    } catch (_) {}
+  }
+
+  function endUserSeek() {
+    if (seekClearTimer) {
+      window.clearTimeout(seekClearTimer);
+      seekClearTimer = null;
+    }
+    const wasSeeking = shimState.seeking;
+    shimState.seeking = false;
+    setSeekingClass(false);
+    if (wasSeeking && Number.isFinite(shimState.currentTime)) {
+      flushHeavyTimePos(shimState.currentTime, true);
+      applyPreloadSettings();
+    }
+  }
+
+  function beginUserSeek(seconds) {
+    lastSeekTarget = seconds;
+    lastSeekAt = Date.now();
+    shimState.seeking = true;
+    setSeekingClass(true);
+    if (seekClearTimer) window.clearTimeout(seekClearTimer);
+    seekClearTimer = window.setTimeout(() => {
+      seekClearTimer = null;
+      endUserSeek();
+    }, SEEK_SETTLE_MAX_MS);
   }
 
   function sendMpvSetProp(prop, value) {
@@ -149,12 +184,7 @@
     const mpvFresh = lastMpvTimeAt > 0 && Date.now() - lastMpvTimeAt < 4000;
     const shimTime = Number.isFinite(shimState.currentTime) ? shimState.currentTime : 0;
 
-    if (mpvFresh) {
-      if (domTime != null && domTime > shimTime + 1.5) {
-        return domTime;
-      }
-      return shimTime;
-    }
+    if (mpvFresh) return shimTime;
 
     if (domTime != null) return domTime;
     return shimTime;
@@ -308,6 +338,7 @@
       cacheAhead: mpvCacheAheadSec,
       cacheObserved: mpvCacheAheadReported,
       playbackAdvanced,
+      seeking: shimState.seeking,
       startupAge: streamStartedAt > 0 ? Date.now() - streamStartedAt : 0,
     };
   }
@@ -490,16 +521,18 @@
     }
 
     if (change.name === 'time-pos') {
-      if (shimState.seeking) return;
       const seconds = Number(change.data);
-      if (Number.isFinite(seconds)) {
-        // Always mark MPV as alive on time-pos, even at 0:00 (delta filter in
-        // updateCurrentTime would otherwise leave lastMpvTimeAt at 0 and trigger
-        // false-positive recovery seeks that flip the play/pause UI).
-        lastMpvTimeAt = Date.now();
-        noteMpvTimeProgress(seconds);
-        flushHeavyTimePos(seconds, false);
+      if (!Number.isFinite(seconds)) return;
+      lastMpvTimeAt = Date.now();
+      noteMpvTimeProgress(seconds);
+      if (shimState.seeking) {
+        if (lastSeekTarget != null && Math.abs(seconds - lastSeekTarget) < 0.4) {
+          updateCurrentTime(seconds, 'mpv');
+          endUserSeek();
+        }
+        return;
       }
+      flushHeavyTimePos(seconds, false);
       return;
     }
 
@@ -829,13 +862,13 @@
 
         lastSeekTarget = seconds;
         lastSeekAt = Date.now();
-        shimState.seeking = true;
-        updateCurrentTime(seconds, 'user-seek');
+        if (playbackAdvanced) {
+          beginUserSeek(seconds);
+          updateCurrentTime(seconds, 'user-seek');
+        } else {
+          updateCurrentTime(seconds, 'resume');
+        }
         sendMpvSetProp('time-pos', seconds);
-
-        window.setTimeout(() => {
-          shimState.seeking = false;
-        }, 1200);
       },
     });
 
@@ -901,20 +934,7 @@
   }
 
   function maybeBoostPreload() {
-    if (preloadBoostApplied || !isPlayerRoute()) return;
-    if (Date.now() - streamStartedAt < 45000) return;
-
-    const targetSecs = resolvePreloadSecs();
-    const wantsFull = getPreloadMode() === 'full';
-    if (!wantsFull && targetSecs <= STARTUP_CACHE_SECS) {
-      preloadBoostApplied = true;
-      return;
-    }
-
-    const timeMoving =
-      shimState.currentTime > 0.15 && Date.now() - lastMpvTimeAt < 4000;
-    if (!timeMoving) return;
-
+    if (preloadBoostApplied || !isPlayerRoute() || !playbackAdvanced) return;
     applyPreloadSettings();
   }
 
@@ -940,6 +960,7 @@
   }
 
   function applyPreloadSettings() {
+    if (!playbackAdvanced) return 0;
     const isFull = getPreloadMode() === 'full';
     const secs = resolvePreloadSecs();
     if (!isFull && secs <= STARTUP_CACHE_SECS) {
@@ -949,9 +970,10 @@
 
     sendMpvSetProp('cache-secs', secs);
     sendMpvSetProp('demuxer-readahead-secs', secs);
+    sendMpvSetProp('back-buffer', secs);
     if (isFull) {
       sendMpvSetProp('demuxer-max-bytes', '8GiB');
-    } else if (secs >= 300) {
+    } else if (secs >= 240) {
       sendMpvSetProp('demuxer-max-bytes', '1GiB');
     } else if (secs > STARTUP_CACHE_SECS) {
       sendMpvSetProp('demuxer-max-bytes', '500MiB');
@@ -981,10 +1003,8 @@
     }
 
     const domTime = readTimeFromDom();
-    if (domTime != null) {
-      if (!mpvFresh || domTime > shimState.currentTime + 1.5) {
-        updateCurrentTime(domTime, 'dom');
-      }
+    if (domTime != null && !mpvFresh) {
+      updateCurrentTime(domTime, 'dom');
     }
 
     const domDuration = readDurationFromDom();
@@ -1010,6 +1030,36 @@
   function startPolling() {
     if (pollTimer) return;
     pollTimer = window.setInterval(pollDomFallback, 1000);
+    bindSeekPointerWatch();
+  }
+
+  function bindSeekPointerWatch() {
+    if (window.__stremioCustomSeekPointerBound) return;
+    window.__stremioCustomSeekPointerBound = true;
+    const isSeekTarget = (target) =>
+      Boolean(target?.closest?.('[class*="seek-bar-container"]'));
+    document.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (!isPlayerRoute() || !isSeekTarget(event.target)) return;
+        beginUserSeek(shimState.currentTime);
+      },
+      true
+    );
+    document.addEventListener(
+      'pointerup',
+      (event) => {
+        if (!isPlayerRoute()) return;
+        if (!shimState.seeking && !document.documentElement.classList.contains(SEEKING_CLASS)) {
+          return;
+        }
+        window.setTimeout(() => {
+          if (shimState.seeking) return;
+          setSeekingClass(false);
+        }, 80);
+      },
+      true
+    );
   }
 
   function stopPolling() {

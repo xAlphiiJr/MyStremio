@@ -365,7 +365,7 @@ fn normalize_player_volume(value: Value) -> Value {
     let level = volume
         .get("level")
         .and_then(|v| v.as_f64())
-        .map(|level| level.clamp(0.0, 100.0).round());
+        .map(|level| level.clamp(0.0, 200.0).round());
 
     json!({
         "level": level,
@@ -552,7 +552,7 @@ fn normalize_preferences(value: Value) -> Value {
             let level = vol
                 .get("level")
                 .and_then(|v| v.as_f64())
-                .map(|level| level.clamp(0.0, 100.0).round());
+                .map(|level| level.clamp(0.0, 200.0).round());
             json!({
                 "level": level,
                 "muted": vol.get("muted").and_then(|v| v.as_bool())
@@ -730,7 +730,7 @@ fn collect_early_storage_pairs(prefs: &Value) -> Map<String, Value> {
         if let Some(level) = volume.get("level").and_then(|v| v.as_f64()) {
             put(
                 "stremio-custom-player-volume",
-                (level.clamp(0.0, 100.0).round() as i64).to_string(),
+                (level.clamp(0.0, 200.0).round() as i64).to_string(),
             );
         }
         if let Some(muted) = volume.get("muted").and_then(|v| v.as_bool()) {

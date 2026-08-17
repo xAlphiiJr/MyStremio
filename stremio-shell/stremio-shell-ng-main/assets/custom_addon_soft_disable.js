@@ -115,26 +115,50 @@
     });
   }
 
-  function isResourcePath(pathname) {
-    return /\/(catalog|stream|meta|subtitle|subtitles|addon_catalog)\//i.test(pathname || '');
-  }
-
   function shouldBlockRequest(url) {
     try {
       const u = new URL(String(url || ''), location.href);
-      if (/\/manifest\.json$/i.test(u.pathname)) return false;
-      if (!matchesDisabledTransport(u.href)) return false;
-      return isResourcePath(u.pathname);
+      return matchesDisabledTransport(u.href);
     } catch (_) {
-      return false;
+      return matchesDisabledTransport(String(url || ''));
     }
   }
 
-  function emptyResourceResponse() {
-    return new Response(
-      JSON.stringify({ metas: [], streams: [], meta: null, subtitles: [] }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
+  function isManifestRequest(url) {
+    return /\/manifest\.json(?:\?|$|#)/i.test(String(url || ''));
+  }
+
+  function isAddonResourceRequest(url) {
+    return /\/(?:stream|catalog|meta|subtitle)s?\//i.test(String(url || ''));
+  }
+
+  function emptyAddonResourceBody(url) {
+    const target = String(url || '');
+    if (/\/(?:stream)s?\//i.test(target)) return '{"streams":[]}';
+    if (/\/(?:catalog)s?\//i.test(target)) return '{"metas":[]}';
+    if (/\/(?:meta)s?\//i.test(target)) return '{"meta":null}';
+    if (/\/(?:subtitle)s?\//i.test(target)) return '{"subtitles":[]}';
+    return '{}';
+  }
+
+  function emptyAddonResourceResponse(url) {
+    return Promise.resolve(
+      new Response(emptyAddonResourceBody(url), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
     );
+  }
+
+  function rejectDisabledFetch() {
+    return Promise.reject(new TypeError('Failed to fetch'));
+  }
+
+  function handleDisabledRequest(url) {
+    if (isAddonResourceRequest(url) && !isManifestRequest(url)) {
+      return emptyAddonResourceResponse(url);
+    }
+    return rejectDisabledFetch();
   }
 
   function installNetworkFilter() {
@@ -151,7 +175,7 @@
               ? String(input.url)
               : String(input || '');
         if (shouldBlockRequest(url)) {
-          return Promise.resolve(emptyResourceResponse());
+          return handleDisabledRequest(url);
         }
         return originalFetch(input, init);
       };
@@ -168,15 +192,25 @@
     };
     proto.send = function (...args) {
       if (shouldBlockRequest(this.__mystremioAddonUrl)) {
-        const body = JSON.stringify({ metas: [], streams: [], meta: null, subtitles: [] });
-        Object.defineProperty(this, 'readyState', { configurable: true, get: () => 4 });
-        Object.defineProperty(this, 'status', { configurable: true, get: () => 200 });
-        Object.defineProperty(this, 'responseText', { configurable: true, get: () => body });
-        Object.defineProperty(this, 'response', { configurable: true, get: () => body });
+        const url = this.__mystremioAddonUrl;
         const self = this;
+        if (isAddonResourceRequest(url) && !isManifestRequest(url)) {
+          const body = emptyAddonResourceBody(url);
+          Object.defineProperty(this, 'readyState', { configurable: true, get: () => 4 });
+          Object.defineProperty(this, 'status', { configurable: true, get: () => 200 });
+          Object.defineProperty(this, 'responseText', { configurable: true, get: () => body });
+          Object.defineProperty(this, 'response', { configurable: true, get: () => body });
+          queueMicrotask(() => {
+            self.dispatchEvent(new Event('readystatechange'));
+            self.dispatchEvent(new Event('load'));
+            self.dispatchEvent(new Event('loadend'));
+          });
+          return;
+        }
+        Object.defineProperty(this, 'readyState', { configurable: true, get: () => 4 });
+        Object.defineProperty(this, 'status', { configurable: true, get: () => 0 });
         queueMicrotask(() => {
-          self.dispatchEvent(new Event('readystatechange'));
-          self.dispatchEvent(new Event('load'));
+          self.dispatchEvent(new Event('error'));
           self.dispatchEvent(new Event('loadend'));
         });
         return;

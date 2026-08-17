@@ -112,6 +112,16 @@ function Test-WebUiAlreadyPatched {
     # Native Quick Settings section (menu + scroll-spy).
     if (-not (Select-String -Path $mainJs.FullName -Pattern '__mystremioQuickSection' -Quiet)) { return $false }
 
+    # Player wheel volume uses the 0–200 slider range.
+    if (-not (Select-String -Path $mainJs.FullName -Pattern '__mystremioVolumeWheelMax' -Quiet)) { return $false }
+
+    # Quick Settings Ultimate 240s preload preset.
+    if (-not (Select-String -Path $mainJs.FullName -Pattern '__mystremioPreload240' -Quiet)) { return $false }
+
+    # ShellVideo load uses sub-ass-override=force and replays last size/offset/color.
+    if (-not (Select-String -Path $mainJs.FullName -Pattern '__mystremioSubAssScale' -Quiet)) { return $false }
+    if (-not (Select-String -Path $mainJs.FullName -Pattern '__mystremioSubReplay' -Quiet)) { return $false }
+
     return $true
 }
 
@@ -235,6 +245,30 @@ function Repair-WebUiLanguageEmbeds {
         Invoke-WebUiPython $quickSectionScript $mainJs.FullName
         if ($LASTEXITCODE -ne 0) {
             throw "Quick Settings section patch failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    $volumeWheelScript = Join-Path $ScriptRoot "patch-webui-volume-wheel-max.py"
+    if (Test-Path $volumeWheelScript) {
+        Invoke-WebUiPython $volumeWheelScript $mainJs.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Volume wheel max patch failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    $preload240Script = Join-Path $ScriptRoot "patch-webui-preload-240.py"
+    if (Test-Path $preload240Script) {
+        Invoke-WebUiPython $preload240Script $mainJs.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Preload 240s patch failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    $subAssScaleScript = Join-Path $ScriptRoot "patch-webui-sub-ass-scale.py"
+    if (Test-Path $subAssScaleScript) {
+        Invoke-WebUiPython $subAssScaleScript $mainJs.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Subtitle ass-override scale patch failed with exit code $LASTEXITCODE"
         }
     }
 

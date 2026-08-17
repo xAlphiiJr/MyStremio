@@ -101,6 +101,11 @@
         transition: width 0.12s linear, margin-left 0.12s linear !important;
       }
 
+      html.stremio-custom-seeking [class*="seek-bar-container"] [class*="slider-container"] [class*="track-before"],
+      html.stremio-custom-seeking .stremio-custom-preload-segment {
+        transition: none !important;
+      }
+
       [class*="seek-bar-container"] [class*="slider-container"] [class*="track-after"] {
         z-index: 3 !important;
       }
@@ -122,6 +127,10 @@
         box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12) !important;
         transition: width 0.12s linear !important;
         z-index: 3 !important;
+      }
+
+      html.stremio-custom-seeking .stremio-custom-preload-segment {
+        transition: none !important;
       }
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -320,7 +329,7 @@
     if (Number.isFinite(current) && current > lastCurrentTime + 0.05 && now - lastAdvanceAt < 2500) {
       estimatedAheadSec = Math.min(configuredMax, estimatedAheadSec + (current - lastCurrentTime) * 2.5);
     }
-    if (Math.abs(current - lastCurrentTime) > 3) {
+    if (current - lastCurrentTime > 3) {
       estimatedAheadSec = 0;
     }
     if (cacheAheadSec > 0) {

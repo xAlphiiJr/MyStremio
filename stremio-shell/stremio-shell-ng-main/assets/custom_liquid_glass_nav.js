@@ -276,7 +276,11 @@
   function fixNavOnRouteChange() {
     // Do not begin a clone on every route change — that stuck the search FAB on
     // detail/player. Tab clicks still call beginNavTransition via onNavLinkClick.
-    tryEndNavTransition();
+    if (/#\/player/.test(location.hash || '')) {
+      endNavTransition();
+    } else {
+      tryEndNavTransition();
+    }
     scheduleFix();
     requestAnimationFrame(scheduleFix);
   }

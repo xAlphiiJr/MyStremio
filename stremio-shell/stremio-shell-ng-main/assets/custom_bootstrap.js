@@ -633,7 +633,7 @@
       if (levelRaw != null && levelRaw !== '') {
         const parsed = Number(levelRaw);
         if (Number.isFinite(parsed)) {
-          level = Math.min(100, Math.max(0, Math.round(parsed)));
+          level = Math.min(200, Math.max(0, Math.round(parsed)));
         }
       }
       const mutedRaw = localStorage.getItem(VOLUME_KEYS.muted);
@@ -665,7 +665,7 @@
     if (typeof prefs.level === 'number' && Number.isFinite(prefs.level)) {
       localStorage.setItem(
         VOLUME_KEYS.level,
-        String(Math.min(100, Math.max(0, Math.round(prefs.level))))
+        String(Math.min(200, Math.max(0, Math.round(prefs.level))))
       );
     }
     if (typeof prefs.muted === 'boolean') {
@@ -1347,6 +1347,7 @@
     'interface/context-menu-fix.plugin.js',
     'interface/enhanced-titlebar.plugin.js',
     'interface/stream-ui.plugin.js',
+    HORIZONTAL_NAV_PLUGIN,
     'player/tidb.plugin.js',
     'player/seek-buttons.plugin.js',
     'player/hover-timestamps.plugin.js',

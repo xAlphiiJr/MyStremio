@@ -9,8 +9,12 @@
   const OVERLAY_ID = 'stremio-custom-cinebye-overlay';
   const STYLE_ID = 'stremio-custom-cinebye-addons-style';
 
-  let injectTimer = null;
   let addonsRetryTimer = null;
+  let findRootTimer = null;
+  /** @type {MutationObserver|null} */
+  let observer = null;
+  /** @type {Element|null} */
+  let observerRoot = null;
 
   function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -222,62 +226,109 @@
   }
 
   function startAddonsRetry() {
-    stopAddonsRetry();
-    if (!isAddonsPage()) return;
-
-    let attempts = 0;
+    if (addonsRetryTimer || !isAddonsPage()) return;
     addonsRetryTimer = window.setInterval(() => {
       if (!isAddonsPage()) {
-        stopAddonsRetry();
+        onLeaveAddons();
         return;
       }
-      if (injectAddonsButton() || attempts >= 30) {
+      if (injectAddonsButton()) {
         stopAddonsRetry();
-        return;
+        ensureAddonsObserver();
       }
-      attempts += 1;
     }, 250);
   }
 
-  function scheduleInject() {
-    if (injectTimer) clearTimeout(injectTimer);
-    injectTimer = setTimeout(() => {
-      injectTimer = null;
-      if (!isAddonsPage()) {
-        closeOverlay();
-        stopAddonsRetry();
-        return;
-      }
-      if (!injectAddonsButton()) {
-        startAddonsRetry();
-      }
-    }, 120);
+  function disconnectAddonsObserver() {
+    if (findRootTimer) {
+      window.clearTimeout(findRootTimer);
+      findRootTimer = null;
+    }
+    if (!observer) return;
+    try {
+      observer.disconnect();
+    } catch (_) {}
+    observer = null;
+    observerRoot = null;
   }
 
-  window.__stremioCustomCinebyeAddonsEnsure = scheduleInject;
-
-  ensureStyles();
-  window.addEventListener('hashchange', scheduleInject);
-  window.addEventListener('popstate', scheduleInject);
-  document.addEventListener('stremio-custom-bootstrap-ready', scheduleInject);
-
-  const observer = new MutationObserver(scheduleInject);
-  const observeTarget = () => {
-    const root = document.body || document.documentElement;
-    if (!root) {
-      window.setTimeout(observeTarget, 200);
+  function ensureAddonsObserver() {
+    if (!isAddonsPage()) {
+      disconnectAddonsObserver();
       return;
     }
-    observer.observe(root, { childList: true, subtree: true });
-    scheduleInject();
-  };
-  observeTarget();
+
+    const root = document.querySelector('[class*="addons-container"]');
+    if (!root) {
+      if (!findRootTimer) {
+        findRootTimer = window.setTimeout(() => {
+          findRootTimer = null;
+          ensureAddonsObserver();
+        }, 200);
+      }
+      return;
+    }
+
+    if (!observer) {
+      observer = new MutationObserver(() => {
+        if (!isAddonsPage()) {
+          onLeaveAddons();
+          return;
+        }
+        if (!injectAddonsButton()) startAddonsRetry();
+      });
+    }
+
+    if (observerRoot !== root) {
+      try {
+        observer.disconnect();
+      } catch (_) {}
+      observerRoot = root;
+    }
+
+    try {
+      observer.observe(root, { childList: true, subtree: true });
+    } catch (_) {}
+  }
+
+  function onLeaveAddons() {
+    closeOverlay();
+    stopAddonsRetry();
+    disconnectAddonsObserver();
+  }
+
+  function onEnterAddons() {
+    ensureStyles();
+    if (injectAddonsButton()) stopAddonsRetry();
+    else startAddonsRetry();
+    ensureAddonsObserver();
+  }
+
+  function onRouteOrBoot() {
+    if (!isAddonsPage()) {
+      onLeaveAddons();
+      return;
+    }
+    onEnterAddons();
+  }
+
+  window.__stremioCustomCinebyeAddonsEnsure = onRouteOrBoot;
+
+  window.addEventListener('hashchange', onRouteOrBoot);
+  window.addEventListener('popstate', onRouteOrBoot);
+  document.addEventListener('stremio-custom-bootstrap-ready', onRouteOrBoot);
+  document.addEventListener('stremio-custom-route-change', onRouteOrBoot);
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', onRouteOrBoot, { once: true });
+  } else {
+    onRouteOrBoot();
+  }
 
   window.StremioCustomCinebyeAddons = {
     openCinebyeInApp,
     closeOverlay,
     buildCinebyeUrl,
-    scheduleInject,
   };
 
   console.info('[StremioCustom] Cinebye addon manager ready.');

@@ -34,6 +34,8 @@
   const STATE_CACHE_MS = 300;
   /** Keep Titlebar paused briefly after reveal / LoadNextPage. */
   const ROW_BUSY_IDLE_MS = 400;
+  /** React remount insurance after Board enter. */
+  const ENTER_RETRY_MS = [80, 250, 700, 1500, 3000];
   const ITEM_COUNT_ATTR = 'data-mystremio-nav-items';
   const NAV_READY_ATTR = 'data-mystremio-nav-ready';
 
@@ -52,6 +54,7 @@
   let rowBusyIdleTimer = null;
   /** @type {number[]} */
   let enterRetryTimers = [];
+  let enterRouteCoalesce = false;
   /** @type {Map<Element, ResizeObserver|{disconnect(): void}>} */
   const chevronLayoutObservers = new Map();
   /** Named scroll handlers so catalog teardown can remove listeners. */
@@ -1474,14 +1477,9 @@
 
     runFull();
     requestAnimationFrame(runFull);
-    // One delayed remount insurance — scoped chevron sweep only.
-    enterRetryTimers.push(
-      window.setTimeout(() => {
-        if (!isBoardRoute()) return;
-        ensureObserver();
-        ensureChevronsPresent();
-      }, 400)
-    );
+    for (const delayMs of ENTER_RETRY_MS) {
+      enterRetryTimers.push(window.setTimeout(runFull, delayMs));
+    }
   }
 
   function clearAllRowWidthFreezes() {
@@ -1570,14 +1568,17 @@
       teardownBoardNav();
       return;
     }
-    ensureBoardNavOnEnter();
+    if (enterRouteCoalesce) return;
+    enterRouteCoalesce = true;
+    queueMicrotask(() => {
+      enterRouteCoalesce = false;
+      if (isBoardRoute()) ensureBoardNavOnEnter();
+    });
   }
 
   document.addEventListener('focusin', onFocusIn, true);
   document.addEventListener('keydown', onKeyDown, true);
   document.addEventListener('stremio-custom-route-change', onRoute);
-  // Capture so we tear down before React finishes unmounting the board tree.
-  window.addEventListener('hashchange', onRoute, true);
   window.addEventListener('resize', () => {
     if (!isBoardRoute()) return;
     containmentPinned = false;
@@ -1670,9 +1671,7 @@
 
   window.__mystremioEnsureBoardRowNav = function () {
     if (!isBoardRoute()) return;
-    injectStyles();
-    scheduleEnhance();
-    ensureChevronsPresent();
+    ensureBoardNavOnEnter();
   };
 
   window.__mystremioTeardownCatalogRowNav = teardownCatalogRowNav;

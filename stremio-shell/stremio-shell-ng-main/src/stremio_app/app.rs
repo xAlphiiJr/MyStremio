@@ -41,6 +41,8 @@ pub struct MainWindow {
     pub autoupdater_setup_file: Arc<Mutex<Option<PathBuf>>>,
     pub requested_fullscreen: Arc<Mutex<Option<bool>>>,
     pub requested_borderless: Arc<Mutex<Option<bool>>>,
+    /// Pending in-app window chrome action: "min" | "max" | "close".
+    pub requested_window_chrome: Arc<Mutex<Option<String>>>,
     /// Pending WebView2 DefaultBackgroundColor transparency (MPV punch-through).
     pub requested_webview_transparent: Arc<Mutex<Option<bool>>>,
     pub saved_window_style: RefCell<WindowStyle>,
@@ -82,6 +84,9 @@ pub struct MainWindow {
     #[nwg_control]
     #[nwg_events(OnNotice: [Self::on_toggle_borderless_notice] )]
     pub toggle_borderless_notice: nwg::Notice,
+    #[nwg_control]
+    #[nwg_events(OnNotice: [Self::on_window_chrome_notice] )]
+    pub window_chrome_notice: nwg::Notice,
     #[nwg_control]
     #[nwg_events(OnNotice: [Self::on_webview_background_notice] )]
     pub webview_background_notice: nwg::Notice,
@@ -284,6 +289,7 @@ impl MainWindow {
 
         let toggle_fullscreen_sender = self.toggle_fullscreen_notice.sender();
         let toggle_borderless_sender = self.toggle_borderless_notice.sender();
+        let window_chrome_sender = self.window_chrome_notice.sender();
         let webview_background_sender = self.webview_background_notice.sender();
         let toggle_pip_sender = self.toggle_pip_notice.sender();
         let (pip_response_tx, pip_response_rx) = flume::bounded::<bool>(1);
@@ -302,6 +308,7 @@ impl MainWindow {
         let autoupdater_setup_mutex = self.autoupdater_setup_file.clone();
         let requested_fullscreen = self.requested_fullscreen.clone();
         let requested_borderless = self.requested_borderless.clone();
+        let requested_window_chrome = self.requested_window_chrome.clone();
         let requested_webview_transparent = self.requested_webview_transparent.clone();
         thread::spawn(move || loop {
             let Ok(raw) = web_rx.recv() else {
@@ -379,6 +386,15 @@ impl MainWindow {
                             toggle_borderless_sender.notice();
                         }
                     }
+                    Some("win-minimize") => {
+                        *requested_window_chrome.lock().unwrap() = Some("min".to_string());
+                        window_chrome_sender.notice();
+                    }
+                    Some("win-maximize") => {
+                        *requested_window_chrome.lock().unwrap() = Some("max".to_string());
+                        window_chrome_sender.notice();
+                    }
+                    Some("win-close") => quit_sender.notice(),
                     Some("webview-set-background") => {
                         if let Some(transparent) = msg
                             .get_params()
@@ -601,6 +617,24 @@ impl MainWindow {
             // Critical: removing caption grows the client rect; without this, a white
             // ring of HWND background remains around the (still smaller) WebView2.
             self.webview.fit_to_window(Some(hwnd));
+        }
+    }
+
+    /// Applies pending in-app min/max from player nav chrome (borderless has no OS caption).
+    fn on_window_chrome_notice(&self) {
+        let action = self.requested_window_chrome.lock().unwrap().take();
+        let Some(hwnd) = self.window.handle.hwnd() else {
+            return;
+        };
+        if let Ok(style) = self.saved_window_style.try_borrow() {
+            match action.as_deref() {
+                Some("min") => style.minimize_window(hwnd),
+                Some("max") => {
+                    style.toggle_maximize_window(hwnd);
+                    self.webview.fit_to_window(Some(hwnd));
+                }
+                _ => {}
+            }
         }
     }
 

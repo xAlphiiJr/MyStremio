@@ -20,6 +20,7 @@
 
   window.__stremioHorizontalNavUnload = function () {
     window.__mystremioCatalogScrollEnabled = false;
+    delete window.__stremioHorizontalNavPlugin;
     try {
       window.__mystremioTeardownCatalogRowNav?.();
     } catch (_) {

@@ -18,6 +18,36 @@ use crate::stremio_app::stremio_player::{
 /// Last `glsl-shaders` value applied via `mpv-set-prop` (re-applied after each loadfile).
 static LAST_GLSL_SHADERS: Mutex<String> = Mutex::new(String::new());
 
+/// Last native subtitle style props. React does not re-send unchanged values
+/// after the next `loadfile`, so MPV would otherwise snap back to defaults.
+#[derive(Clone)]
+struct LastSubtitleStyles {
+    override_mode: Option<String>,
+    scale: Option<f64>,
+    pos: Option<f64>,
+    delay: Option<f64>,
+    color: Option<String>,
+    back_color: Option<String>,
+    border_color: Option<String>,
+}
+
+impl LastSubtitleStyles {
+    const fn new() -> Self {
+        Self {
+            override_mode: None,
+            scale: None,
+            pos: None,
+            delay: None,
+            color: None,
+            back_color: None,
+            border_color: None,
+        }
+    }
+}
+
+static LAST_SUBTITLE_STYLES: Mutex<LastSubtitleStyles> =
+    Mutex::new(LastSubtitleStyles::new());
+
 struct ObserveProperty {
     name: String,
     format: Format,
@@ -88,6 +118,7 @@ fn create_shareable_mpv(window_handle: HWND) -> Arc<Mpv> {
         #[cfg(windows)]
         set_property!("gpu-api", "d3d11");
         set_property!("cache", "yes");
+        let _ = initializer.set_property("volume-max", 200i64);
         // Fast first frame: small startup cache (user preload boost applies after playback starts).
         set_property!("cache-secs", "12");
         set_property!("demuxer-readahead-secs", "12");
@@ -133,7 +164,7 @@ fn cmd_is_loadfile(cmd: &CmdVal) -> bool {
 fn apply_stored_player_volume(mpv: &Mpv) {
     let stored = custom_api::player_volume();
     if let Some(level) = stored.get("level").and_then(|value| value.as_f64()) {
-        let _ = mpv.set_property("volume", level.clamp(0.0, 100.0));
+        let _ = mpv.set_property("volume", level.clamp(0.0, 200.0));
     }
     if let Some(muted) = stored.get("muted").and_then(|value| value.as_bool()) {
         let _ = mpv.set_property("mute", muted);
@@ -155,6 +186,76 @@ fn apply_stored_glsl_shaders(mpv: &Mpv) {
 fn remember_glsl_shaders(value: &str) {
     if let Ok(mut guard) = LAST_GLSL_SHADERS.lock() {
         *guard = value.to_string();
+    }
+}
+
+fn remember_subtitle_f64(name: &str, value: f64) {
+    let Ok(mut guard) = LAST_SUBTITLE_STYLES.lock() else {
+        return;
+    };
+    match name {
+        "sub-scale" => guard.scale = Some(value),
+        "sub-pos" => guard.pos = Some(value),
+        "sub-delay" => guard.delay = Some(value),
+        _ => {}
+    }
+}
+
+fn remember_subtitle_str(name: &str, value: &str) {
+    let Ok(mut guard) = LAST_SUBTITLE_STYLES.lock() else {
+        return;
+    };
+    match name {
+        // `no` is ShellVideo's stock load default and would lock in ignored styles.
+        "sub-ass-override" if value != "no" => {
+            guard.override_mode = Some(value.to_string());
+        }
+        "sub-color" => guard.color = Some(value.to_string()),
+        "sub-back-color" => guard.back_color = Some(value.to_string()),
+        "sub-border-color" => guard.border_color = Some(value.to_string()),
+        _ => {}
+    }
+}
+
+fn apply_stored_subtitle_styles(mpv: &Mpv) {
+    let styles = match LAST_SUBTITLE_STYLES.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => return,
+    };
+    if let Some(value) = styles.override_mode.as_deref() {
+        if let Err(error) = mpv.set_property("sub-ass-override", value) {
+            eprintln!("cannot re-apply sub-ass-override after loadfile: '{error:#}'");
+        }
+    }
+    if let Some(value) = styles.scale {
+        if let Err(error) = mpv.set_property("sub-scale", value) {
+            eprintln!("cannot re-apply sub-scale after loadfile: '{error:#}'");
+        }
+    }
+    if let Some(value) = styles.pos {
+        if let Err(error) = mpv.set_property("sub-pos", value) {
+            eprintln!("cannot re-apply sub-pos after loadfile: '{error:#}'");
+        }
+    }
+    if let Some(value) = styles.delay {
+        if let Err(error) = mpv.set_property("sub-delay", value) {
+            eprintln!("cannot re-apply sub-delay after loadfile: '{error:#}'");
+        }
+    }
+    if let Some(value) = styles.color.as_deref() {
+        if let Err(error) = mpv.set_property("sub-color", value) {
+            eprintln!("cannot re-apply sub-color after loadfile: '{error:#}'");
+        }
+    }
+    if let Some(value) = styles.back_color.as_deref() {
+        if let Err(error) = mpv.set_property("sub-back-color", value) {
+            eprintln!("cannot re-apply sub-back-color after loadfile: '{error:#}'");
+        }
+    }
+    if let Some(value) = styles.border_color.as_deref() {
+        if let Err(error) = mpv.set_property("sub-border-color", value) {
+            eprintln!("cannot re-apply sub-border-color after loadfile: '{error:#}'");
+        }
     }
 }
 
@@ -244,6 +345,7 @@ fn create_message_thread(
             let is_loadfile = cmd_is_loadfile(cmd);
             if is_loadfile {
                 apply_stored_player_volume(&mpv);
+                apply_stored_subtitle_styles(&mpv);
             }
             let cmd = cmd.clone();
             let a1;
@@ -283,6 +385,7 @@ fn create_message_thread(
             }
             if is_loadfile {
                 apply_stored_glsl_shaders(&mpv);
+                apply_stored_subtitle_styles(&mpv);
             }
         };
 
@@ -320,10 +423,12 @@ fn create_message_thread(
                     set_property(name, value, &mpv);
                 }
                 InMsg(InMsgFn::MpvSetProp, InMsgArgs::StProp(name, PropVal::Num(value))) => {
+                    remember_subtitle_f64(&name.to_string(), value);
                     set_property(name, value, &mpv);
                 }
                 InMsg(InMsgFn::MpvSetProp, InMsgArgs::StProp(name, PropVal::Str(value))) => {
-                    let value = if name.to_string() == "vo" {
+                    let name_str = name.to_string();
+                    let value = if name_str == "vo" {
                         let mut value = value;
                         if !value.is_empty() && !value.ends_with(',') {
                             value.push(',');
@@ -333,9 +438,10 @@ fn create_message_thread(
                     } else {
                         value
                     };
-                    if name.to_string() == "glsl-shaders" {
+                    if name_str == "glsl-shaders" {
                         remember_glsl_shaders(&value);
                     }
+                    remember_subtitle_str(&name_str, &value);
                     set_property(name, value, &mpv);
                 }
                 InMsg(InMsgFn::MpvCommand, InMsgArgs::Cmd(cmd)) => {
