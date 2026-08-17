@@ -176,13 +176,21 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 ## 🛠️ Patch Notes
 
+
+### 2.3.9
+- **Addon Toggle** — Hardened addon toggles and fixed toggles getting overwritten by StreamUI
+- **Cast Overlay** — Now displays episode specific cast members if available
+- **Auto Skip** — Changed from instantly skipping segments to a 10 sec timer which can be canceled
+- **Player Scroll Wheel** — Scrolling inside Cast no longer changes volume
+- **Subtitles** — Fixed an issue where the custom subtitle settings won't get saved correctly for the next stream/episode
+
 ### 2.3.8
 
 - **Download badges** — README shows GitHub release download counts
 - **Picture Settings** — Master Dim / tone no longer dims subtitles
 - **Skip Intro** — Skip button auto-hides after 10s with a countdown; after that it follows the control bar
 - **Horizontal Navigation** — Board catalog chevrons/scroll moved to a toggleable plugin (default on); Continue Watching chevrons always stay
-- **Addon toggle** — Disable installed addons without uninstalling; they stay listed but contribute no catalogs/streams in MyStremio
+- **Addon Toggle** — Disable installed addons without uninstalling; they stay listed but contribute no catalogs/streams in MyStremio
 - **Quick Settings** — Are now part of the settings menu bar
 
 
@@ -241,24 +249,6 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 - **Central API Keys** — Shared API keys (TMDB, RPDB, TheIntroDB, IntroDB, …) live under **Settings → MyStremio → API Keys**, discovered from installed plugin schemas; plugin cards show Set/Missing instead of duplicate inputs.
 - **Player navigation fix** — Fixed the black screen after Episode → Next (Detail streams) → Back by syncing shell leave-cleanup with HashRouter `pushState`/`replaceState` and keeping the shell opaque until MPV actually presents frames.
 - **Stream re-open fix** — Re-clicking the same stream after Back opens the player again normally (no history bounce away from a fresh stream click).
-
-
-
-### 2.3.1
-
-- **NEW Cast Overlay Plugin** — Optional player cast bubble with TMDB photos; TV series use TMDB Series Cast (`aggregate_credits`).
-- **Data Enrichment cast** — TV detail cast also uses `aggregate_credits` so Series Cast matches TMDB instead of a tiny credits subset.
-- **Rating links** — StreamUI rating cards now clickable and open the correct source pages.
-- **Intro Skip Plugin** — Added +/- buttons to allow for small corrections before submitting.
-- **Hover Timestamps and Brightness** — Switched the Hover Timestamps and Brightness features from native settings to plugins to allow more individualisation.
-
-
-
-### 2.3.0
-
-- **IntroDB integration** — TheIntroDB plugin now loads skip segments from both [TheIntroDB](https://theintrodb.org/) and [IntroDB](https://introdb.app/), with separate API keys, contributor target selection, and a shell-side IntroDB proxy to bypass browser CORS limits.
-- **Library title fix** — Library items now show the correct title reliably across navigation and route changes.
-- **UI scaling settings** — New **Settings → Interface → UI Scaling** dropdown (75%–200%), independent of Windows display scaling, persisted across restarts via WebView2 zoom.
 
 
 ---
