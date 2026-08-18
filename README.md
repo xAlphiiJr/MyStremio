@@ -101,10 +101,9 @@ The StreamUI plugin offers a clean and modern sidebar with folders to pick strea
 
 MyStremio comes with a few custom settings including Favorite Languages, Plugins and Buffering.
 
-#### ⚡ Quick Select
+#### ⚡ Quick Settings
 
-Quick Select reads your favorites and exposes them as one-click subtitle/audio buttons, so switching language is fast and consistent.
-How to define favorites is explained in the section below.
+At the top of the settings page you'll find the quick settings. Here you're able to hot swap between your favorite languages and enable autoskip for individual segment types. Quick Select reads your favorite languages and exposes them as one-click subtitle/audio buttons. How to define favorites is explained in the section below.
 
 #### 🌐 Favorite subtitle and audio languages
 
