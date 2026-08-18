@@ -166,8 +166,9 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 ### 💡 Planned Features
 
-- **PiP:** I'm working on a picture in picture video mode
+- **PiP:** I want to implement a picture in picture video mode.
 - **Seek Bar Thumbnail:** I want to add a thumbnail when hovering over the seek bar in the player.
+- **Your suggestions:** Please let me know if you have any feature requests for MyStremio, I'd be happy to further improve the app for everyone! <3
 
 ---
 
