@@ -292,7 +292,6 @@ MyStremio includes parts of the following independent community projects:
 
 - [REVENGE977/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced)
 - [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme)
-- [Bo0ii/StreamGo](https://github.com/Bo0ii/StreamGo)
 - [allecsc/Stremio-Kai](https://github.com/allecsc/Stremio-Kai)
 - [bloc97/Anime4K](https://github.com/bloc97/Anime4K)
 - [TheIntroDB](https://theintrodb.org/)
