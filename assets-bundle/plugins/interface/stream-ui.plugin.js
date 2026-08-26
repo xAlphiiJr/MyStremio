@@ -1626,7 +1626,6 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
         return;
       }
       if (!aggStreams.length && !imdbStreams.length) {
-        // Leftover rows from another title — hide them, drop stale panel.
         hideAll(allStreams);
         document.getElementById(ROOT)?.remove();
         lastSig = '';
@@ -1681,6 +1680,11 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
         }));
       }
 
+      if (!panels.length) {
+        hideAll(allStreams);
+        return;
+      }
+
       const root = document.createElement('div');
       root.id = ROOT;
       root.dataset.contentKey = contentKey;
@@ -1695,7 +1699,6 @@ html.sui-pending [class*="streams-container-"] > button[class*="stream-container
           if (hideTimer) clearTimeout(hideTimer);
           hideTimer = setTimeout(() => {
             hideTimer = null;
-            // Rebuild when streams change — hide-only left stale "Ratings" from prior titles.
             build(box);
           }, 80);
         });

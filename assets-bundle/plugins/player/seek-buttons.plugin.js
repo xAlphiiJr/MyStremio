@@ -22,7 +22,7 @@
 
 
 
-	const PLUGIN_VERSION = "1.6.1";
+	const PLUGIN_VERSION = "1.6.2";
 
 	const PLUGIN_ID = "seek-buttons";
 
@@ -101,6 +101,10 @@
 		skipSeconds: DEFAULT_SKIP_SEC,
 
 		settingsReady: null,
+
+		lastRequestedSec: null,
+
+		lastRequestedAt: 0,
 
 	};
 
@@ -444,7 +448,27 @@
 
 	function seekRelative(deltaSec) {
 
-		let target = getCurrentTimeSec() + deltaSec;
+		const now = Date.now();
+
+		const live = getCurrentTimeSec();
+
+		let base = live;
+
+		if (
+
+			state.lastRequestedSec != null &&
+
+			now - state.lastRequestedAt < 2000 &&
+
+			Number.isFinite(state.lastRequestedSec)
+
+		) {
+
+			base = state.lastRequestedSec;
+
+		}
+
+		let target = base + deltaSec;
 
 		const duration = getDurationSec();
 
@@ -455,6 +479,22 @@
 		} else {
 
 			target = Math.max(0, target);
+
+		}
+
+		state.lastRequestedSec = target;
+
+		state.lastRequestedAt = now;
+
+		const applied = target - base;
+
+		const api = window.StremioCustomPlayback;
+
+		if (api?.seekRelative && Number.isFinite(applied) && applied !== 0) {
+
+			api.seekRelative(applied);
+
+			return;
 
 		}
 
@@ -666,15 +706,31 @@
 
 
 
-		button.addEventListener("click", (event) => {
+		button.addEventListener("pointerdown", (event) => {
+
+			if (event.button != null && event.button !== 0) return;
 
 			event.preventDefault();
 
 			event.stopPropagation();
 
+			if (typeof event.stopImmediatePropagation === "function") {
+
+				event.stopImmediatePropagation();
+
+			}
+
 			const step = getSkipSeconds();
 
 			seekRelative(direction === "back" ? -step : step);
+
+		});
+
+		button.addEventListener("click", (event) => {
+
+			event.preventDefault();
+
+			event.stopPropagation();
 
 		});
 
@@ -803,6 +859,8 @@
 	 * Stops observers/intervals while off the player route without unloading the plugin.
 	 */
 	function suspendRuntime() {
+		state.lastRequestedSec = null;
+		state.lastRequestedAt = 0;
 		document.getElementById(GROUP_ID)?.remove();
 		if (buttonsObserver) {
 			buttonsObserver.disconnect();

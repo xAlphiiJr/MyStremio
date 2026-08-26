@@ -42,7 +42,7 @@ It combines UI upgrades, player improvements, plugins/themes and library tools i
 
 -Better stream organization and metadata presentation (enrichment panels and cleaner stream UI behavior)
 
--Integrated Cinebye addon manager (manage addons, disable Cinemeta)
+-Integrated addon manager (manage addons, disable Cinemeta)
 
 -Custom library groups with JSON import/export
 
@@ -146,7 +146,7 @@ Built in plugin that adds timestamps when hovering the seek bar in the player.
 
 #### 👤 Cast Overlay Plugin
 
-Built in plugin that adds a cast section directly into the player.
+Built in plugin that adds a cast section directly into the player. For TV shows it displays the cast of the season your watching.
 
 #### 🎇 Anime4K Plugin
 
@@ -158,7 +158,9 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 ### 🎞️ Addon Manager
 
-[Cinebye](https://cinebye.elfhosted.com/) is integrated so you can manage addons inside Stremio. MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay installed but stop contributing catalogs/streams in this desktop client. This only works locally!
+A self made addon manager is integrated so you can reorder, rename or dis/enable catalogues inside Stremio.
+Additionally you can pick which addons can contribute metadata for your streams. This can help to avoid having duplicate titles in the library.
+MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay installed but stop contributing catalogs/streams in this desktop client. This only works locally!
 
 ---
 
@@ -175,6 +177,14 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 
 ## 🛠️ Patch Notes
+
+### 2.4.1
+- **Addon Manager** — Self made addon manager which combines the standard manager tools with the ability to disable cinemeta
+- **Cast Overlay** — Now displays season specific cast
+- **Letterboxt score** — Data Enrichment and Meta Hover Panel now show Letterboxt scores if available
+- **Data Enrichment** — On tv shows DE now displays episode ratings next to the overall series rating cards
+- **Player start** — Optimized video playback start, reduced rubberbanding
+- **Intro Skip** — Added episode info fallback to fetch segments, often needed for anime with false meta/season/episode info
 
 
 ### 2.3.9
@@ -219,7 +229,6 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 ### Known Issues
 
 - **Cast Search Addon:** The Cast Search Addon is not compatible with the StreamUI plugin as the cast members load the same way as video streams which messes with correct grouping.
-- **Data Enrichment:** Shows Metadata from another title in the "Continue Watching" bar when switching back from episode detail page to series detail page.
 
 ---
 
@@ -228,7 +237,7 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 ## 💾 Installation
 
 1. Download the latest installer from this repository's **[Releases](https://github.com/xAlphiiJr/MyStremio/releases/latest)** page.
-2. Run `MyStremioSetup-v2.3.8_x64.exe` (or the latest version).
+2. Run `MyStremioSetup-v2.4.0_x64.exe` (or the latest version).
 3. The installer sets up:
   - App binaries (`mystremio-shell.exe`, streaming server, FFmpeg, libmpv)
   - Bundled plugins and themes
@@ -268,7 +277,7 @@ cd stremio-shell\stremio-shell-ng-main
 .\package-release.ps1
 ```
 
-Output: `release\MyStremioSetup-v2.3.6_x64.exe`
+Output: `release\MyStremioSetup-v2.4.0_x64.exe`
 
 The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle. To rebuild the Web UI from source, clone [stremio-web](https://github.com/Stremio/stremio-web) into `.tmp/stremio-web`, apply MyStremio patches, then run the build script again.
 

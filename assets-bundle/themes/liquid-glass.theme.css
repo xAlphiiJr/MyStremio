@@ -277,6 +277,24 @@ html {
     height: 0 !important;
 }
 
+/* Search suggestions portal — same glass as context menus, not the opaque charcoal fill. */
+#mystremio-search-suggestions {
+    background: rgba(30, 30, 30, 0.92) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: var(--border-radius, 12px) !important;
+    box-shadow:
+        0 8px 32px rgba(0, 0, 0, 0.5),
+        0 4px 16px rgba(0, 0, 0, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+    backdrop-filter: var(--backdrop-filter-menu) !important;
+    -webkit-backdrop-filter: var(--backdrop-filter-menu) !important;
+}
+#mystremio-search-suggestions .mss-item:hover,
+#mystremio-search-suggestions .mss-item:focus,
+#mystremio-search-suggestions .mss-item.active {
+    background: rgba(255, 255, 255, 0.12) !important;
+}
+
 /* ========================= NAV BAR / HEADER ========================= */
 
 /* Nav transition clone must never show a ghost search FAB over live UI. */
@@ -306,6 +324,7 @@ html {
 }
 
 /* Expanded state */
+.search-bar-container-asfq1:hover,
 .search-bar-container-asfq1:focus-within,
 .search-bar-container-asfq1.expanded {
     width: 30% !important; /* Your original expanded width */
@@ -340,12 +359,56 @@ html {
 }
 
 /* Show input when expanded */
+.search-bar-container-asfq1:hover .search-input-IQ0ZW,
 .search-bar-container-asfq1:focus-within .search-input-IQ0ZW,
 .search-bar-container-asfq1.expanded .search-input-IQ0ZW {
     opacity: 1 !important;
     width: 100% !important;
     padding: 0 0.5rem 0 0.5rem !important;
     flex: 1 !important;
+}
+
+/* Detail → search results: stay collapsed (X only), beat :focus-within. */
+html.mystremio-search-unfocused .search-bar-container-asfq1,
+html.mystremio-search-unfocused .search-bar-container-asfq1:focus-within,
+html.mystremio-search-unfocused .search-bar-container-asfq1.expanded,
+html.mystremio-search-unfocused .search-bar-container-asfq1.active,
+.search-bar-container-asfq1[data-mystremio-search-collapsed="1"],
+.search-bar-container-asfq1[data-mystremio-search-collapsed="1"]:focus-within,
+.search-bar-container-asfq1[data-mystremio-search-collapsed="1"].expanded,
+.search-bar-container-asfq1[data-mystremio-search-collapsed="1"].active {
+    width: 50px !important;
+    justify-content: center !important;
+}
+html.mystremio-search-unfocused .search-bar-container-asfq1:hover,
+.search-bar-container-asfq1[data-mystremio-search-collapsed="1"]:hover {
+    width: 30% !important;
+    justify-content: space-between !important;
+}
+html.mystremio-search-unfocused .search-bar-container-asfq1 .search-input-IQ0ZW,
+html.mystremio-search-unfocused .search-bar-container-asfq1:focus-within .search-input-IQ0ZW,
+html.mystremio-search-unfocused .search-bar-container-asfq1.expanded .search-input-IQ0ZW,
+.search-bar-container-asfq1[data-mystremio-search-collapsed="1"] .search-input-IQ0ZW,
+.search-bar-container-asfq1[data-mystremio-search-collapsed="1"]:focus-within .search-input-IQ0ZW,
+.search-bar-container-asfq1[data-mystremio-search-collapsed="1"].expanded .search-input-IQ0ZW {
+    opacity: 0 !important;
+    width: 0 !important;
+    padding: 0 !important;
+    flex: none !important;
+}
+html.mystremio-search-unfocused .search-bar-container-asfq1:hover .search-input-IQ0ZW,
+.search-bar-container-asfq1[data-mystremio-search-collapsed="1"]:hover .search-input-IQ0ZW {
+    opacity: 1 !important;
+    width: 100% !important;
+    padding: 0 0.5rem 0 0.5rem !important;
+    flex: 1 !important;
+}
+
+.search-bar-container-asfq1[data-mystremio-search-collapsed="1"] [class*="menu-container"],
+.search-bar-h60ja[data-mystremio-search-collapsed="1"] [class*="menu-container"] {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
 }
 
 .horizontal-nav-bar-container-Y_zvK .search-bar-h60ja {
@@ -416,6 +479,39 @@ html {
     justify-content: center !important;
     min-width: 35px !important;
     order: 2 !important; /* Icon goes to the right when expanded */
+}
+
+html.mystremio-search-unfocused .horizontal-nav-bar-container-Y_zvK .search-bar-h60ja,
+html.mystremio-search-unfocused .horizontal-nav-bar-container-Y_zvK .search-bar-h60ja:focus,
+html.mystremio-search-unfocused .horizontal-nav-bar-container-Y_zvK .search-bar-h60ja:focus-within,
+html.mystremio-search-unfocused .horizontal-nav-bar-container-Y_zvK .search-bar-h60ja.expanded,
+.horizontal-nav-bar-container-Y_zvK .search-bar-h60ja[data-mystremio-search-collapsed="1"],
+.horizontal-nav-bar-container-Y_zvK .search-bar-h60ja[data-mystremio-search-collapsed="1"]:focus,
+.horizontal-nav-bar-container-Y_zvK .search-bar-h60ja[data-mystremio-search-collapsed="1"]:focus-within,
+.horizontal-nav-bar-container-Y_zvK .search-bar-h60ja[data-mystremio-search-collapsed="1"].expanded {
+    width: 45px !important;
+    justify-content: center !important;
+}
+html.mystremio-search-unfocused .horizontal-nav-bar-container-Y_zvK .search-bar-h60ja:hover,
+.horizontal-nav-bar-container-Y_zvK .search-bar-h60ja[data-mystremio-search-collapsed="1"]:hover {
+    width: 300px !important;
+    justify-content: space-between !important;
+}
+html.mystremio-search-unfocused .horizontal-nav-bar-container-Y_zvK .search-bar-h60ja .search-input-IQ0ZW,
+html.mystremio-search-unfocused .horizontal-nav-bar-container-Y_zvK .search-bar-h60ja:focus-within .search-input-IQ0ZW,
+.horizontal-nav-bar-container-Y_zvK .search-bar-h60ja[data-mystremio-search-collapsed="1"] .search-input-IQ0ZW,
+.horizontal-nav-bar-container-Y_zvK .search-bar-h60ja[data-mystremio-search-collapsed="1"]:focus-within .search-input-IQ0ZW {
+    opacity: 0 !important;
+    width: 0 !important;
+    padding: 0 !important;
+    flex: none !important;
+}
+html.mystremio-search-unfocused .horizontal-nav-bar-container-Y_zvK .search-bar-h60ja:hover .search-input-IQ0ZW,
+.horizontal-nav-bar-container-Y_zvK .search-bar-h60ja[data-mystremio-search-collapsed="1"]:hover .search-input-IQ0ZW {
+    opacity: 1 !important;
+    width: 100% !important;
+    padding: 8px 16px !important;
+    flex: 1 !important;
 }
 
 /* Style any menu/button container in the top nav */
@@ -3080,8 +3176,14 @@ body.ghost-clicking #heroLoadingScreen {
 }
 
 /* Enhanced Genres: cast-style pills with SVG icons (no TMDB artwork) */
-.enhanced-genres-section {
+.enhanced-genres-section,
+.enhanced-franchise-section {
     margin-bottom: 24px;
+}
+
+[class*="meta-details"].mystremio-de-active [class*="meta-links-container"]:not([class*="enhanced-"]),
+[class*="meta-preview"].mystremio-de-active [class*="meta-links-container"]:not([class*="enhanced-"]) {
+    display: none !important;
 }
 
 .enhanced-genre-icon-circle {
@@ -4019,10 +4121,4 @@ html body #app [class*="updater-banner"] [class*="close"] svg {
     color: inherit !important;
     fill: currentColor !important;
     opacity: 1 !important;
-}
-
-/* Soften MetaPreview → Meta backdrop handoff on detail pages */
-[class*="metadetails"] [class*="background-image"],
-[class*="meta-details"] [class*="background-image"] {
-    transition: opacity 0.35s ease;
 }

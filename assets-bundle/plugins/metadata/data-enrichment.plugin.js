@@ -1,7 +1,7 @@
 ﻿/**
  * @name Data Enrichment
  * @description Enriches movie and TV show details with TMDB data including genres, cast, directors, similar titles, and collections.
- * @version 2.1.4
+ * @version 2.1.5
  * @category metadata
  * @author MrBlu03 edited by MyStremio
  */
@@ -12,14 +12,17 @@
     window.__DataEnrichmentLoaded = true;
 
 /**
-     * Installs the shared multi-ratings bar used by Data Enrichment and Meta Hover.
+     * Installs the Data Enrichment multi-ratings bar (detail + episode).
+     * Hover ratings are owned by meta-hover-panel — this bar is not a shared UI.
      * Fetches via shell `get-title-ratings` (CORS-safe fan-out).
      */
+    try {
     (function installRatingsBar() {
         if (window.__mystremioRatingsBar) return;
 
-        const STYLE_ID = 'mystremio-ratings-bar-styles-v3';
+        const STYLE_ID = 'mystremio-ratings-bar-styles-v8';
         const BAR_CLASS = 'mystremio-ratings-bar';
+        const ROW_CLASS = 'msb-ratings-row';
         const HIDDEN_IMDB_ATTR = 'data-mystremio-imdb-hidden';
         const CACHE_TTL_MS = 10 * 60 * 1000;
         /** @type {Map<string, { at: number, ratings: object[] }>} */
@@ -40,6 +43,7 @@
             metacritic: '#2ecc71',
             trakt: '#ed1c24',
             mcusers: '#b19cd9',
+            letterboxd: '#00e054',
         };
 
         /**
@@ -102,44 +106,89 @@
             return null;
         }
 
+        function orderRatings(ratings) {
+            const order = ['fsk', 'imdb', 'mal', 'rt', 'tmdb', 'metacritic', 'trakt', 'mcusers', 'letterboxd'];
+            const by = Object.fromEntries(
+                (ratings || []).filter((r) => r?.key).map((r) => [r.key, r])
+            );
+            return order.filter((k) => by[k]).map((k) => by[k]);
+        }
+
+        function hintedMediaTypes(typeHint, isEpisode) {
+            const hint = String(typeHint || '').toLowerCase();
+            if (isEpisode) return { types: ['series'], typeKnown: true };
+            if (hint === 'series' || hint === 'tv' || hint === 'show' || hint === 'anime') {
+                return { types: ['series'], typeKnown: true };
+            }
+            if (hint === 'movie') return { types: ['movie'], typeKnown: true };
+            return { types: ['movie'], typeKnown: false };
+        }
+
+        /**
+         * @param {{ season?: number|null, episode?: number|null, exactCinemeta?: boolean, episodeLayout?: string }} [episodeRef]
+         * @returns {string}
+         */
+        function episodeCacheSuffix(episodeRef) {
+            const layout = String(episodeRef?.episodeLayout || '').toLowerCase();
+            if (layout === 'tmdb' || layout === 'cinemeta' || layout === 'absolute') {
+                return `:${layout}`;
+            }
+            if (episodeRef?.exactCinemeta === false) return ':abs';
+            if (episodeRef?.exactCinemeta === true) return ':exact';
+            return ':auto';
+        }
+
         /**
          * @param {string} imdbId
          * @param {string|null} [typeHint]
-         * @param {{ season?: number|null, episode?: number|null }} [episodeRef]
+         * @param {{ season?: number|null, episode?: number|null, exactCinemeta?: boolean, episodeLayout?: string }} [episodeRef]
+         * @param {{ mode?: 'fast'|'full' }} [options]
          * @returns {Promise<object[]>}
          */
-        async function fetchRatings(imdbId, typeHint = null, episodeRef = null) {
+        async function fetchRatings(imdbId, typeHint = null, episodeRef = null, options = null) {
             const id = normalizeImdbId(imdbId);
             if (!id) return [];
             const season = Number(episodeRef?.season) || 0;
             const episode = Number(episodeRef?.episode) || 0;
             const isEpisode = season > 0 && episode > 0;
-            const cacheKey = isEpisode ? `${id}:s${season}e${episode}` : id;
-            const cached = cache.get(cacheKey);
-            if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.ratings.slice();
-            if (pending.has(cacheKey)) return pending.get(cacheKey);
+            const exactCinemeta = episodeRef?.exactCinemeta;
+            const episodeLayout = String(episodeRef?.episodeLayout || '').toLowerCase();
+            const mode = options?.mode === 'fast' ? 'fast' : 'full';
+            const layoutKey = episodeCacheSuffix(episodeRef);
+            const cacheKey = isEpisode ? `${id}:s${season}e${episode}${layoutKey}` : id;
+            const pendingKey = `${cacheKey}:${mode}`;
+            if (mode === 'full') {
+                const cached = cache.get(cacheKey);
+                if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.ratings.slice();
+            }
+            if (pending.has(pendingKey)) return pending.get(pendingKey);
 
-            const hint = String(typeHint || '').toLowerCase();
-            // Episode scores must never fall back to a movie lookup (wrong cache key fill).
-            const types = isEpisode
-                ? ['series']
-                : hint === 'series' || hint === 'tv' || hint === 'show' || hint === 'anime'
-                  ? ['series', 'movie']
-                  : ['movie', 'series'];
+            const { types, typeKnown } = hintedMediaTypes(typeHint, isEpisode);
 
             const job = (async () => {
                 const client = apiClient();
                 let ratings = [];
                 if (client?.invoke) {
-                    for (const type of types) {
+                    const tryTypes = types.slice();
+                    for (const type of tryTypes) {
                         try {
                             const payload = {
                                 imdbId: id,
                                 type,
+                                mode,
                             };
                             if (isEpisode) {
                                 payload.season = season;
                                 payload.episode = episode;
+                                if (exactCinemeta === false) payload.exactCinemeta = false;
+                                if (exactCinemeta === true) payload.exactCinemeta = true;
+                                if (
+                                    episodeLayout === 'tmdb' ||
+                                    episodeLayout === 'cinemeta' ||
+                                    episodeLayout === 'absolute'
+                                ) {
+                                    payload.episodeLayout = episodeLayout;
+                                }
                             }
                             const result = await client.invoke('get-title-ratings', payload);
                             if (Array.isArray(result?.ratings) && result.ratings.length) {
@@ -150,18 +199,70 @@
                             /* try next */
                         }
                     }
+                    if (!ratings.length && !typeKnown && !isEpisode && mode === 'full') {
+                        const fallback = types[0] === 'movie' ? 'series' : 'movie';
+                        try {
+                            const result = await client.invoke('get-title-ratings', {
+                                imdbId: id,
+                                type: fallback,
+                                mode: 'full',
+                            });
+                            if (Array.isArray(result?.ratings) && result.ratings.length) {
+                                ratings = result.ratings;
+                            }
+                        } catch (_) {}
+                    }
                 }
-                const order = ['fsk', 'imdb', 'mal', 'rt', 'tmdb', 'metacritic', 'trakt', 'mcusers'];
-                const by = Object.fromEntries(
-                    (ratings || []).filter((r) => r?.key).map((r) => [r.key, r])
-                );
-                const ordered = order.filter((k) => by[k]).map((k) => by[k]);
-                cache.set(cacheKey, { at: Date.now(), ratings: ordered });
+                const ordered = orderRatings(ratings);
+                const ageOnly = new Set(['fsk', 'mpaa', 'age']);
+                const hasScore = ordered.some((item) => !ageOnly.has(String(item?.key || '').toLowerCase()));
+                if (isEpisode && !hasScore) return [];
+                if (mode === 'full' && ordered.length && hasScore) {
+                    cache.set(cacheKey, { at: Date.now(), ratings: ordered });
+                }
                 return ordered.slice();
-            })().finally(() => pending.delete(cacheKey));
+            })().finally(() => pending.delete(pendingKey));
 
-            pending.set(cacheKey, job);
+            pending.set(pendingKey, job);
             return job;
+        }
+
+        /**
+         * @param {string} imdbId
+         * @param {string|null} typeHint
+         * @param {{ season?: number|null, episode?: number|null }|null} episodeRef
+         * @param {(ratings: object[]) => void} [onPartial]
+         * @returns {Promise<object[]>}
+         */
+        async function fetchRatingsProgressive(imdbId, typeHint, episodeRef, onPartial) {
+            const fastPromise = fetchRatings(imdbId, typeHint, episodeRef, { mode: 'fast' });
+            const fullPromise = fetchRatings(imdbId, typeHint, episodeRef, { mode: 'full' });
+            let fast = [];
+            try {
+                fast = await fastPromise;
+                if (fast.length) onPartial?.(fast);
+            } catch (_) {}
+            try {
+                const full = await fullPromise;
+                if (full.length) {
+                    const merged = orderRatings([...(fast || []), ...(full || [])]);
+                    const id = normalizeImdbId(imdbId);
+                    const season = Number(episodeRef?.season) || 0;
+                    const episode = Number(episodeRef?.episode) || 0;
+                    const hasScore = merged.some((item) => {
+                        const key = String(item?.key || '').toLowerCase();
+                        return key && key !== 'fsk' && key !== 'mpaa' && key !== 'age';
+                    });
+                    if (id && hasScore) {
+                        const layoutKey = episodeCacheSuffix(episodeRef);
+                        const cacheKey =
+                            season > 0 && episode > 0 ? `${id}:s${season}e${episode}${layoutKey}` : id;
+                        cache.set(cacheKey, { at: Date.now(), ratings: merged });
+                    }
+                    return merged;
+                }
+            } catch (_) {}
+            return fast;
         }
 
         function ensureStyles() {
@@ -169,9 +270,13 @@
             const style = document.createElement('style');
             style.id = STYLE_ID;
             style.textContent = `
+              .${ROW_CLASS}{
+                display:inline-flex;flex-direction:row;flex-wrap:nowrap;
+                align-items:center;gap:8px;vertical-align:middle;max-width:100%;
+              }
               .${BAR_CLASS}{
-                display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px;
-                vertical-align:middle;max-width:100%;
+                display:inline-flex;flex-wrap:nowrap;align-items:center;gap:8px;
+                vertical-align:middle;flex:0 1 auto;
               }
               .${BAR_CLASS} .msb-item{
                 display:inline-flex;align-items:center;gap:7px;
@@ -203,6 +308,7 @@
               .${BAR_CLASS} .msb-brand-mc{background:#ffcc33;color:#111;min-width:26px;border-radius:4px}
               .${BAR_CLASS} .msb-brand-mcu{background:#6c5ce7;color:#fff;min-width:36px;border-radius:4px}
               .${BAR_CLASS} .msb-brand-trakt{background:#ed1c24;color:#fff;min-width:36px;border-radius:4px}
+              .${BAR_CLASS} .msb-brand-lb{background:#14181c;color:#00e054;min-width:28px}
               .${BAR_CLASS} .msb-icon{width:15px;height:15px;display:inline-flex;align-items:center;flex-shrink:0}
               .${BAR_CLASS} .msb-icon svg{width:15px;height:15px;display:block}
               .${BAR_CLASS} .msb-value{font-weight:700}
@@ -216,6 +322,10 @@
               .${BAR_CLASS}.msb-compact .msb-value{font-size:12px}
               .${BAR_CLASS}.msb-compact .msb-icon,.${BAR_CLASS}.msb-compact .msb-icon svg{width:13px;height:13px}
               .${BAR_CLASS}.msb-compact .msb-age{font-size:10px;padding:1px 6px}
+              .${BAR_CLASS}[data-msb-host="episode"] .msb-ep-label{
+                font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+                color:rgba(255,255,255,.5);margin-right:2px;
+              }
               [${HIDDEN_IMDB_ATTR}="1"]{display:none!important}
             `;
             document.documentElement.appendChild(style);
@@ -239,11 +349,24 @@
                     return `<span class="msb-brand msb-brand-mcu">MC U</span>`;
                 case 'trakt':
                     return `<span class="msb-brand msb-brand-trakt">Trakt</span>`;
+                case 'letterboxd':
+                    return `<span class="msb-brand msb-brand-lb">LB</span>`;
                 case 'rt':
                     return `<span class="msb-icon">${RATING_ICONS.rt}</span>`;
                 default:
                     return `<span class="msb-brand msb-brand-imdb">${esc(rating.label || '?')}</span>`;
             }
+        }
+
+        /**
+         * Stable chip identity so cache-then-paint does not rewrite identical HTML.
+         * @param {object[]} ratings
+         * @returns {string}
+         */
+        function ratingsSignature(ratings) {
+            return (ratings || [])
+                .map((r) => `${r?.key || ''}:${r?.value || ''}:${r?.url || ''}`)
+                .join('|');
         }
 
         /**
@@ -359,6 +482,11 @@
                 case 'fsk':
                     return imdbId
                         ? `https://www.imdb.com/title/${imdbId}/parentalguide`
+                        : null;
+                case 'letterboxd':
+                    if (imdbId) return `https://letterboxd.com/imdb/${imdbId}/`;
+                    return title
+                        ? `https://letterboxd.com/search/${encodeURIComponent(title)}/`
                         : null;
                 default:
                     return null;
@@ -491,46 +619,25 @@
         }
 
         /**
-         * Ratings bar next to the visible native IMDb control (in-flow).
-         * Relocates if a stale bar is still connected under a hidden mount.
+         * Drop leftover 2.3.16 column wraps that broke the meta row.
+         */
+        function unwrapLegacyStacks() {
+            document.querySelectorAll('.msb-detail-stack').forEach((wrap) => {
+                const parent = wrap.parentElement;
+                if (!parent) {
+                    wrap.remove();
+                    return;
+                }
+                while (wrap.firstChild) parent.insertBefore(wrap.firstChild, wrap);
+                wrap.remove();
+            });
+        }
+
+        /**
+         * Native runtime/year/IMDb row on the live details page.
          * @returns {Element|null}
          */
-        function ensureDetailHost() {
-            ensureStyles();
-            const anchor = findVisibleImdbAnchor();
-
-            // Drop orphan / wrong-mount bars (episode↔overview remount race).
-            document.querySelectorAll(`.${BAR_CLASS}[data-msb-host="detail"]`).forEach((el) => {
-                const nextToAnchor =
-                    Boolean(anchor?.parentElement) &&
-                    el.parentElement === anchor.parentElement &&
-                    el.previousElementSibling === anchor;
-                const inReleaseRow = isInReleaseInfoRow(el);
-                if (!nextToAnchor && !inReleaseRow) el.remove();
-            });
-
-            let host = document.querySelector(`.${BAR_CLASS}[data-msb-host="detail"]`);
-            if (host?.isConnected && anchor && host.previousElementSibling === anchor) {
-                hideNativeImdbButtons();
-                return host;
-            }
-            if (host?.isConnected && !anchor && isInReleaseInfoRow(host)) {
-                hideNativeImdbButtons();
-                return host;
-            }
-            if (host) host.remove();
-
-            host = document.createElement('div');
-            host.className = BAR_CLASS;
-            host.dataset.msbHost = 'detail';
-            host.hidden = true;
-
-            if (anchor?.parentElement) {
-                anchor.insertAdjacentElement('afterend', host);
-                hideNativeImdbButtons();
-                return host;
-            }
-
+        function findReleaseInfoRow() {
             const meta =
                 document.querySelector(
                     '[class*="metadetails"] [class*="meta-info-container"]'
@@ -543,57 +650,214 @@
                 ) ||
                 document.querySelector('[class*="meta-info-container"]');
             if (!meta?.isConnected) return null;
-
-            const releaseRow =
+            return (
                 meta.querySelector('[class*="runtime-release-info"]') ||
-                meta.querySelector('[class*="duration-release-info"]');
-            if (releaseRow) {
-                releaseRow.appendChild(host);
-                hideNativeImdbButtons();
-                return host;
+                meta.querySelector('[class*="duration-release-info"]')
+            );
+        }
+
+        /**
+         * Horizontal group in the native meta row: series host + episode host.
+         * @returns {Element|null}
+         */
+        function ensureRatingsRow() {
+            ensureStyles();
+            unwrapLegacyStacks();
+            const anchor = findVisibleImdbAnchor();
+            const rows = [...document.querySelectorAll(`.${ROW_CLASS}`)];
+            const live = rows.find((el) => {
+                if (!el?.isConnected) return false;
+                if (anchor && el.previousElementSibling === anchor) return true;
+                return isInReleaseInfoRow(el);
+            });
+            rows.forEach((el) => {
+                if (el !== live) el.remove();
+            });
+            if (live) {
+                if (anchor?.parentElement && live.previousElementSibling !== anchor) {
+                    anchor.insertAdjacentElement('afterend', live);
+                }
+                return live;
             }
-            // Wait for MetaPreview — never prepend above the logo.
+            const row = document.createElement('div');
+            row.className = ROW_CLASS;
+            if (anchor?.parentElement) {
+                anchor.insertAdjacentElement('afterend', row);
+                return row;
+            }
+            const releaseRow = findReleaseInfoRow();
+            if (releaseRow) {
+                releaseRow.appendChild(row);
+                return row;
+            }
             return null;
         }
 
         /**
+         * @param {Element|null} el
+         * @returns {boolean}
+         */
+        function hostHasChips(el) {
+            return Boolean(el?.isConnected && !el.hidden && el.querySelector?.('.msb-item'));
+        }
+
+        /**
+         * True when the series host sits in the live ratings row (same meta line as IMDb).
+         * @param {Element|null} el
+         * @returns {boolean}
+         */
+        function isLiveDetailHost(el) {
+            if (!el?.isConnected || el.dataset?.msbHost !== 'detail') return false;
+            const row = el.closest(`.${ROW_CLASS}`);
+            if (!row?.isConnected) return false;
+            const anchor = findVisibleImdbAnchor();
+            if (anchor && row.previousElementSibling === anchor) return true;
+            if (!isInReleaseInfoRow(row)) return false;
+            return Boolean(
+                row.closest(
+                    '[class*="metadetails"], [class*="meta-details"], [class*="meta-preview"]'
+                )
+            );
+        }
+
+        /**
+         * Series/movie host inside the ratings row (after IMDb).
+         * @returns {Element|null}
+         */
+        function ensureDetailHost() {
+            const row = ensureRatingsRow();
+            if (!row) return null;
+            document.querySelectorAll(`.${BAR_CLASS}[data-msb-host="detail"]`).forEach((el) => {
+                if (!row.contains(el)) el.remove();
+            });
+            let host = row.querySelector(`.${BAR_CLASS}[data-msb-host="detail"]`);
+            if (!host) {
+                host = document.createElement('div');
+                host.className = BAR_CLASS;
+                host.dataset.msbHost = 'detail';
+                host.hidden = true;
+                const episode = row.querySelector(`.${BAR_CLASS}[data-msb-host="episode"]`);
+                if (episode) row.insertBefore(host, episode);
+                else row.appendChild(host);
+            }
+            return host;
+        }
+
+        /**
+         * Episode host in the same ratings row. Does not wait for series chips.
+         * @returns {Element|null}
+         */
+        function ensureEpisodeHost() {
+            const row = ensureRatingsRow();
+            if (!row) return null;
+            document.querySelectorAll(`.${BAR_CLASS}[data-msb-host="episode"]`).forEach((el) => {
+                if (!row.contains(el)) el.remove();
+            });
+            let host = row.querySelector(`.${BAR_CLASS}[data-msb-host="episode"]`);
+            if (!host) {
+                host = document.createElement('div');
+                host.className = BAR_CLASS;
+                host.dataset.msbHost = 'episode';
+                host.hidden = true;
+                row.appendChild(host);
+            }
+            const detail = row.querySelector(`.${BAR_CLASS}[data-msb-host="detail"]`);
+            if (detail && host.previousElementSibling !== detail) {
+                detail.insertAdjacentElement('afterend', host);
+            }
+            return host;
+        }
+
+        /**
+         * @param {Element|null} host
+         */
+        function hideEpisodeHost(host) {
+            if (!host?.isConnected) return;
+            host.innerHTML = '';
+            host.hidden = true;
+            delete host.dataset.msbRendered;
+            delete host.dataset.msbSignature;
+        }
+
+        function removeEpisodeHost() {
+            document.querySelectorAll(`.${BAR_CLASS}[data-msb-host="episode"]`).forEach((el) => {
+                hideEpisodeHost(el);
+                el.remove();
+            });
+        }
+
+        /**
+         * Paint series/movie chips onto a live host and hide native IMDb only when chips exist.
+         * @param {Element} liveHost
+         * @param {object[]} ratings
+         * @param {{ id: string, mediaType: string, mountToken: string, title: string }} ctx
+         * @returns {Element|null}
+         */
+        function paintDetailHost(liveHost, ratings, ctx) {
+            if (!liveHost?.isConnected || !ratings.length) return null;
+            const liveTitle = extractPageTitle() || ctx.title;
+            ensureStyles();
+            liveHost.className = BAR_CLASS;
+            liveHost.dataset.msbHost = 'detail';
+            liveHost.dataset.imdbId = ctx.id;
+            liveHost.dataset.mediaType = ctx.mediaType;
+            liveHost.dataset.msbToken = ctx.mountToken;
+            liveHost.dataset.msbRendered = ctx.mountToken;
+            delete liveHost.dataset.season;
+            delete liveHost.dataset.episode;
+            if (liveTitle) liveHost.dataset.title = liveTitle;
+            liveHost.hidden = false;
+            const signature = ratingsSignature(ratings);
+            if (liveHost.dataset.msbSignature !== signature) {
+                liveHost.innerHTML = ratings.map(itemHtml).join('');
+                liveHost.dataset.msbSignature = signature;
+                wireClicks(liveHost);
+            }
+            let host = liveHost;
+            if (!isLiveDetailHost(host)) {
+                host = ensureDetailHost() || host;
+            }
+            if (isLiveDetailHost(host) && hostHasChips(host)) {
+                hideNativeImdbButtons();
+            } else {
+                restoreNativeImdbButtons();
+            }
+            return host;
+        }
+
+        /**
+         * Series/movie chip bar next to native IMDb (2.3.15 behavior).
+         * Prefetches scores even when the IMDb anchor is not mounted yet.
          * @param {string} imdbId
          * @param {string|null} [typeHint]
-         * @param {{ season?: number|null, episode?: number|null }} [episodeRef]
          * @returns {Promise<void>}
          */
-        async function mountOnDetail(imdbId, typeHint = null, episodeRef = null) {
+        async function mountOnDetail(imdbId, typeHint = null) {
             const id = normalizeImdbId(imdbId);
             if (!id) return;
-            const host = ensureDetailHost();
-            if (!host) return;
             const mediaType =
                 String(typeHint || '').toLowerCase() === 'series' ||
                 String(typeHint || '').toLowerCase() === 'tv'
                     ? 'series'
                     : 'movie';
-            const season = Number(episodeRef?.season) || 0;
-            const episode = Number(episodeRef?.episode) || 0;
             const title = extractPageTitle();
-            const mountToken = `${id}:s${season}e${episode}`;
-            host.dataset.imdbId = id;
-            host.dataset.mediaType = mediaType;
-            host.dataset.msbToken = mountToken;
-            if (season > 0) host.dataset.season = String(season);
-            else delete host.dataset.season;
-            if (episode > 0) host.dataset.episode = String(episode);
-            else delete host.dataset.episode;
-            if (title) host.dataset.title = title;
-            // Drop previous title's chips immediately so navigation never shows mixed scores.
-            if (host.dataset.msbRendered !== mountToken) {
-                host.innerHTML = '';
-                host.hidden = true;
+            const mountToken = `${id}:s0e0`;
+            const ctx = { id, mediaType, mountToken, title };
+            const cached = peekCachedRatings(id);
+
+            let host = ensureDetailHost();
+            if (cached?.length && host) {
+                paintDetailHost(isLiveDetailHost(host) ? host : ensureDetailHost() || host, cached, ctx);
             }
-            const ratings = await fetchRatings(id, typeHint, { season, episode });
-            // MetaPreview may have remounted during fetch â€” re-anchor before paint.
-            const liveHost = ensureDetailHost();
+
+            const ratings = await fetchRatingsProgressive(id, typeHint, null, (partial) => {
+                const live = isLiveDetailHost(host) ? host : ensureDetailHost();
+                if (!live?.isConnected || !partial.length) return;
+                paintDetailHost(live, partial, ctx);
+            });
+            const liveHost = isLiveDetailHost(host) ? host : ensureDetailHost();
             if (!liveHost?.isConnected) {
-                restoreNativeImdbButtons();
+                if (!ratings.length) restoreNativeImdbButtons();
                 return;
             }
             liveHost.dataset.imdbId = id;
@@ -601,26 +865,96 @@
             liveHost.dataset.msbToken = mountToken;
             if (!ratings.length) {
                 restoreNativeImdbButtons();
-                liveHost.remove();
+                liveHost.hidden = true;
+                liveHost.innerHTML = '';
+                delete liveHost.dataset.msbRendered;
+                delete liveHost.dataset.msbSignature;
                 return;
             }
-            hideNativeImdbButtons();
+            paintDetailHost(liveHost, ratings, ctx);
+        }
+
+        /**
+         * Episode chips in the same ratings row as series scores. Never remounts the series host.
+         * @param {string} imdbId
+         * @param {string|null} [typeHint]
+         * @param {{ season?: number|null, episode?: number|null, exactCinemeta?: boolean, episodeLayout?: string }} [episodeRef]
+         * @returns {Promise<void>}
+         */
+        async function mountEpisodeRatings(imdbId, typeHint = null, episodeRef = null) {
+            const id = normalizeImdbId(imdbId);
+            if (!id) return;
+            const season = Number(episodeRef?.season) || 0;
+            const episode = Number(episodeRef?.episode) || 0;
+            if (season <= 0 && episode <= 0) {
+                removeEpisodeHost();
+                return;
+            }
+            let host = ensureEpisodeHost();
+            if (!host) return;
+            const mediaType =
+                String(typeHint || '').toLowerCase() === 'series' ||
+                String(typeHint || '').toLowerCase() === 'tv' ||
+                String(typeHint || '').toLowerCase() === 'anime'
+                    ? 'series'
+                    : 'movie';
+            const title = extractPageTitle();
+            const layoutKey = episodeCacheSuffix(episodeRef);
+            const mountToken = `${id}:s${season}e${episode}${layoutKey}`;
+            host.dataset.imdbId = id;
+            host.dataset.mediaType = mediaType;
+            host.dataset.msbToken = mountToken;
+            host.dataset.season = String(season);
+            host.dataset.episode = String(episode);
+            if (title) host.dataset.title = title;
+            if (host.dataset.msbRendered !== mountToken) {
+                host.innerHTML = '';
+                host.hidden = true;
+                delete host.dataset.msbRendered;
+                delete host.dataset.msbSignature;
+            }
+            const ratings = await fetchRatingsProgressive(id, typeHint, episodeRef, (partial) => {
+                if (!host?.isConnected || !partial.length) return;
+                const live = ensureEpisodeHost();
+                if (live) host = live;
+                ensureStyles();
+                host.className = BAR_CLASS;
+                host.dataset.msbHost = 'episode';
+                host.hidden = false;
+                const signature = `ep|${ratingsSignature(partial)}`;
+                if (host.dataset.msbSignature !== signature) {
+                    host.innerHTML = `<span class="msb-ep-label">Episode</span>${partial.map(itemHtml).join('')}`;
+                    host.dataset.msbSignature = signature;
+                    wireClicks(host);
+                }
+                host.dataset.msbRendered = mountToken;
+            });
+            if (!host.isConnected) {
+                host = ensureEpisodeHost();
+                if (!host) return;
+            }
+            if (!ratings.length) {
+                hideEpisodeHost(host);
+                return;
+            }
             const liveTitle = extractPageTitle() || title;
             ensureStyles();
-            liveHost.className = BAR_CLASS;
-            liveHost.dataset.msbHost = 'detail';
-            liveHost.dataset.imdbId = id;
-            liveHost.dataset.mediaType = mediaType;
-            liveHost.dataset.msbToken = mountToken;
-            liveHost.dataset.msbRendered = mountToken;
-            if (season > 0) liveHost.dataset.season = String(season);
-            else delete liveHost.dataset.season;
-            if (episode > 0) liveHost.dataset.episode = String(episode);
-            else delete liveHost.dataset.episode;
-            if (liveTitle) liveHost.dataset.title = liveTitle;
-            liveHost.hidden = false;
-            liveHost.innerHTML = ratings.map(itemHtml).join('');
-            wireClicks(liveHost);
+            host.className = BAR_CLASS;
+            host.dataset.msbHost = 'episode';
+            host.dataset.imdbId = id;
+            host.dataset.mediaType = mediaType;
+            host.dataset.msbToken = mountToken;
+            host.dataset.season = String(season);
+            host.dataset.episode = String(episode);
+            if (liveTitle) host.dataset.title = liveTitle;
+            host.hidden = false;
+            const signature = `ep|${ratingsSignature(ratings)}`;
+            if (host.dataset.msbSignature !== signature) {
+                host.innerHTML = `<span class="msb-ep-label">Episode</span>${ratings.map(itemHtml).join('')}`;
+                host.dataset.msbSignature = signature;
+                wireClicks(host);
+            }
+            host.dataset.msbRendered = mountToken;
         }
 
         window.__mystremioRatingsBar = {
@@ -632,11 +966,19 @@
             hideNativeImdbButtons,
             restoreNativeImdbButtons,
             mountOnDetail,
+            mountEpisodeRatings,
+            removeEpisodeHost,
+            isLiveDetailHost,
             normalizeImdbId,
             openExternalUrl,
             buildRatingSourceUrl,
         };
     })();
+    } catch (err) {
+        try {
+            console.warn('[DataEnrichment] ratings bar install failed', err);
+        } catch (_) {}
+    }
 
 
     const PLUGIN_ID = 'data-enrichment';
@@ -645,10 +987,12 @@
     const SETTING_KEYS = {
         TMDB_API_KEY: 'tmdbApiKey',
         RPDB_API_KEY: 'rpdbApiKey',
+        MDBLIST_API_KEY: 'mdblistApiKey',
         ENHANCED_CAST: 'enhancedCast',
         SIMILAR_TITLES: 'similarTitles',
         SHOW_COLLECTION: 'showCollection',
         POSTER_RATINGS: 'showRatingsOnPosters',
+        EPISODE_RATINGS: 'showEpisodeRatings',
     };
 
     function escapeHtml(text) {
@@ -849,6 +1193,7 @@
             similarTitles: true,
             showCollection: true,
             showRatingsOnPosters: true,
+            showEpisodeRatings: true,
         };
     }
 
@@ -868,6 +1213,7 @@
             this.cache = new Map();
             this.observer = null;
             this.enrichedImdbId = null;
+            this._activeMetaId = null;
             this.lastEnrichmentTime = 0;
             /** Monotonic session id ÔÇö bumped on every navigation to cancel stale enrich. */
             this.sessionId = 0;
@@ -879,10 +1225,17 @@
             this._backupTimer = null;
             this._boundOnRouteChange = null;
             this._boundOnStreamsBack = null;
+            this._boundOnEpisodeClick = null;
             /** @type {Element|null} Mount identity ÔÇö remount when React replaces meta-info. */
             this._mountEl = null;
             /** @type {string|null} `type/metaId/videoId` ÔÇö episodeÔåöoverview invalidates. */
             this._activeDetailKey = null;
+            /** Bumped when leaving the episode surface so in-flight chip jobs cannot repaint leftover scores. */
+            this._episodePaintGen = 0;
+            /** @type {{ season: number, episode: number, episodeLayout?: string, exactCinemeta?: boolean }|null} */
+            this._pendingEpisodeRef = null;
+            this._episodeRetryTimer = null;
+            this._episodeRetryCount = 0;
             /** @type {ReturnType<typeof setTimeout>[]} */
             this._remountTimers = [];
             /** @type {ReturnType<typeof setTimeout>|null} Coalesces route + streams-back. */
@@ -942,6 +1295,10 @@
                     payload[SETTING_KEYS.POSTER_RATINGS],
                     this.config.showRatingsOnPosters
                 ),
+                showEpisodeRatings: normalizeToggle(
+                    payload[SETTING_KEYS.EPISODE_RATINGS],
+                    this.config.showEpisodeRatings
+                ),
             };
         }
 
@@ -967,6 +1324,7 @@
                 similarTitles,
                 showCollection,
                 showRatingsOnPosters,
+                showEpisodeRatings,
             ] = await Promise.all([
                 this.readSetting(SETTING_KEYS.TMDB_API_KEY),
                 this.readSetting(SETTING_KEYS.RPDB_API_KEY),
@@ -974,6 +1332,7 @@
                 this.readSetting(SETTING_KEYS.SIMILAR_TITLES),
                 this.readSetting(SETTING_KEYS.SHOW_COLLECTION),
                 this.readSetting(SETTING_KEYS.POSTER_RATINGS),
+                this.readSetting(SETTING_KEYS.EPISODE_RATINGS),
             ]);
 
             this.config = {
@@ -984,6 +1343,7 @@
                 similarTitles: normalizeToggle(similarTitles, true),
                 showCollection: normalizeToggle(showCollection, true),
                 showRatingsOnPosters: normalizeToggle(showRatingsOnPosters, true),
+                showEpisodeRatings: normalizeToggle(showEpisodeRatings, true),
             };
         }
 
@@ -1005,7 +1365,15 @@
                     type: 'input',
                     label: 'RPDB API Key',
                     placeholder: 'Enter your RPDB API key',
-                    description: 'Get your API key at ratingposterdb.com (https://ratingposterdb.com)',
+                    description: 'Get your API key at ratingposterdb.com (https://ratingposterdb.com). Overlay needs a resolvable IMDb/TMDB id on the card; Cinemeta rows need an RPDB-capable addon or Default Poster Manager.',
+                    defaultValue: '',
+                },
+                {
+                    key: SETTING_KEYS.MDBLIST_API_KEY,
+                    type: 'input',
+                    label: 'MDBList API Key (Ratings)',
+                    placeholder: 'Enter your MDBList API key',
+                    description: 'Ratings (Detail + Meta Hover): Metacritic, Trakt, RT, MC Users and more via MDBList. Without a key: Aggregator + Cinemeta only. Free key: https://mdblist.com/preferences/',
                     defaultValue: '',
                 },
                 {
@@ -1030,6 +1398,14 @@
                     key: SETTING_KEYS.POSTER_RATINGS,
                     type: 'toggle',
                     label: 'Ratings on Posters',
+                    defaultValue: true,
+                },
+                {
+                    key: SETTING_KEYS.EPISODE_RATINGS,
+                    type: 'toggle',
+                    label: 'Episode Ratings',
+                    description:
+                        'Second chip bar on episode pages (season/episode scores). Series scores stay in the title bar.',
                     defaultValue: true,
                 },
             ];
@@ -1108,6 +1484,7 @@
                 this.pendingFetch = null;
                 this.enrichedImdbId = null;
                 this.reconcile();
+                this.checkForPosters();
             });
         }
 
@@ -1165,8 +1542,15 @@
 
             const type = match[1] || null;
             const metaId = match[2] || null;
-            const videoId = match[3] || null;
-            const imdbId = this.normalizeImdbId(h);
+            const query = new URLSearchParams(h.includes('?') ? h.slice(h.indexOf('?') + 1) : '');
+            const videoFromQuery =
+                query.get('video') || query.get('videoId') || query.get('video_id') || null;
+            let videoId = match[3] || videoFromQuery || null;
+            if (!videoId && metaId) {
+                const fromMeta = this.parseEpisodeRef({ videoId: metaId, metaId });
+                if (fromMeta.episode) videoId = metaId;
+            }
+            const imdbId = this.normalizeImdbId(metaId) || this.normalizeImdbId(videoId);
 
             return {
                 surface: 'detail',
@@ -1174,7 +1558,6 @@
                 metaId,
                 videoId,
                 imdbId,
-                // Detail surface always; IMDb may come from hash or DOM (Discover handoff).
                 shouldEnrich: true,
             };
         }
@@ -1195,6 +1578,750 @@
          */
         isDetailRoute(hash = window.location.hash) {
             return this.parseDetailRoute(hash).surface === 'detail';
+        }
+
+        /**
+         * @param {string|null|undefined} value
+         * @returns {string}
+         */
+        decodeRouteId(value) {
+            const raw = String(value || '').trim();
+            if (!raw) return '';
+            try {
+                return decodeURIComponent(raw).trim();
+            } catch (_) {
+                return raw;
+            }
+        }
+
+        /**
+         * @param {string|null|undefined} metaId
+         * @returns {{ raw: string, tmdbId: number|null, imdbId: string|null }}
+         */
+        parseCatalogMetaId(metaId) {
+            const raw = this.decodeRouteId(metaId);
+            const tmdb = raw.match(/^tmdb:(\d+)/i);
+            if (tmdb) {
+                return { raw, tmdbId: Number(tmdb[1]), imdbId: null };
+            }
+            return { raw, tmdbId: null, imdbId: this.normalizeImdbId(raw) };
+        }
+
+        /**
+         * @param {string|null|undefined} typeHint
+         * @returns {'tv'|'movie'}
+         */
+        tmdbMediaType(typeHint) {
+            const type = String(typeHint || '').toLowerCase();
+            return type === 'movie' ? 'movie' : 'tv';
+        }
+
+        /**
+         * Visible series/movie details root — never the board/CW strip.
+         * @param {Element|null} [mount]
+         * @returns {Element|null}
+         */
+        detailsRoot(mount = null) {
+            return (
+                mount?.closest('[class*="meta-details"], [class*="meta-preview"]') ||
+                document.querySelector(
+                    '[class*="meta-details"]:not([class*="placeholder"])'
+                ) ||
+                null
+            );
+        }
+
+        /**
+         * IMDb only inside the current details tree.
+         * @param {Element|null} root
+         * @returns {string|null}
+         */
+        extractImdbIdFromRoot(root) {
+            if (!root) return null;
+            const imdbLink = root.querySelector('a[href*="imdb.com/title/tt"]');
+            if (imdbLink) {
+                const fromLink = this.normalizeImdbId(imdbLink.href || imdbLink.getAttribute('href'));
+                if (fromLink) return fromLink;
+            }
+            const metaElements = root.querySelectorAll('[data-imdbid], [data-imdb-id]');
+            for (const el of metaElements) {
+                const fromData = this.normalizeImdbId(el.dataset.imdbid || el.dataset.imdbId);
+                if (fromData) return fromData;
+            }
+            const links = root.querySelectorAll('a[href*="imdb"]');
+            for (const link of links) {
+                const fromHref = this.normalizeImdbId(link.href || link.getAttribute('href'));
+                if (fromHref) return fromHref;
+            }
+            return null;
+        }
+
+        /**
+         * Title of the open details page only.
+         * @param {Element|null} root
+         * @returns {string}
+         */
+        extractTitleFromRoot(root) {
+            if (!root) return '';
+            const logo = root.querySelector(
+                'img[class*="logo"][alt], [class*="logo-container"] img[alt], [class*="meta-details"] img[alt]'
+            )?.getAttribute('alt');
+            if (logo && String(logo).trim().length > 1) return String(logo).trim();
+            const name = root.querySelector(
+                '[class*="title-name"], [class*="name-container"] [class*="name-"], [class*="title-container"], h1, h2'
+            )?.textContent;
+            return String(name || '').replace(/\s+/g, ' ').trim();
+        }
+
+        /**
+         * IMDb from a TMDB payload (title-search path for kitsu: hashes).
+         * @param {object|null} data
+         * @returns {string|null}
+         */
+        imdbFromTmdbData(data) {
+            return this.normalizeImdbId(data?.external_ids?.imdb_id || data?.imdb_id);
+        }
+
+        /**
+         * Raster for a catalog video id: Cinemeta tt:s:e, TMDB tmdb:id:s:e, Kitsu ordinal.
+         * @param {string|null|undefined} videoId
+         * @param {string|null|undefined} [metaId]
+         * @returns {'tmdb'|'cinemeta'|'absolute'|null}
+         */
+        episodeLayoutFromIds(videoId, metaId = null) {
+            const ids = [this.decodeRouteId(videoId), this.decodeRouteId(metaId)].filter(Boolean);
+            for (const id of ids) {
+                if (/^kitsu:/i.test(id)) return 'absolute';
+                if (/^tt\d+:\d+:\d+/i.test(id)) return 'cinemeta';
+                if (/^tmdb:(?:tv|show|movie):/i.test(id) || /^tmdb:/i.test(id)) return 'tmdb';
+                if (/^\d+:\d+:\d+(?:\b|$)/.test(id)) return 'tmdb';
+            }
+            const meta = this.decodeRouteId(metaId);
+            const video = this.decodeRouteId(videoId);
+            if (/^kitsu:/i.test(meta) && /^\d+:\d+$/.test(video)) return 'absolute';
+            if (/^tt\d+:\d+$/i.test(video) && !/:\d+:\d+/.test(video)) return 'absolute';
+            return null;
+        }
+
+        /**
+         * Season/episode from the detail videoId (episode page only).
+         * Accepts tmdb:tv|show:id:s:e, tmdb:id:s:e, bare id:s:e, tt…:s:e, and kitsu:id:ordinal.
+         * @param {{ videoId?: string|null, metaId?: string|null }} route
+         * @returns {{ season: number|null, episode: number|null, exactCinemeta?: boolean, absolute?: boolean, episodeLayout?: string }}
+         */
+        parseEpisodeRef(route) {
+            const videoId = this.decodeRouteId(route?.videoId);
+            if (!videoId) return { season: null, episode: null };
+            const candidates = [videoId];
+            const tail = videoId.split('/').pop();
+            if (tail && tail !== videoId) candidates.push(tail);
+
+            const metaIsKitsu = /^kitsu:/i.test(this.decodeRouteId(route?.metaId || ''));
+
+            for (const id of candidates) {
+                const kitsu = id.match(/^kitsu:(\d+):(\d{1,4})(?:\b|$)/i);
+                if (kitsu) {
+                    return {
+                        season: 1,
+                        episode: Number(kitsu[2]),
+                        absolute: true,
+                        exactCinemeta: false,
+                        episodeLayout: 'absolute',
+                    };
+                }
+                if (metaIsKitsu) {
+                    const kitsuBare = id.match(/^(\d+):(\d{1,4})$/);
+                    if (kitsuBare) {
+                        return {
+                            season: 1,
+                            episode: Number(kitsuBare[2]),
+                            absolute: true,
+                            exactCinemeta: false,
+                            episodeLayout: 'absolute',
+                        };
+                    }
+                }
+                const tt = id.match(/^(tt\d{7,8}):(\d{1,3}):(\d{1,4})(?:\b|$)/i);
+                if (tt) {
+                    return {
+                        season: Number(tt[2]),
+                        episode: Number(tt[3]),
+                        episodeLayout: 'cinemeta',
+                        exactCinemeta: true,
+                    };
+                }
+                const ttAbsolute = id.match(/^(tt\d{7,8}):(\d{1,4})$/i);
+                if (ttAbsolute) {
+                    return {
+                        season: 1,
+                        episode: Number(ttAbsolute[2]),
+                        absolute: true,
+                        exactCinemeta: false,
+                        episodeLayout: 'absolute',
+                    };
+                }
+                const tmdbTyped = id.match(
+                    /^tmdb:(?:tv|show|movie):(\d+):(\d{1,3}):(\d{1,4})(?:\b|$)/i
+                );
+                if (tmdbTyped) {
+                    return {
+                        season: Number(tmdbTyped[2]),
+                        episode: Number(tmdbTyped[3]),
+                        episodeLayout: 'tmdb',
+                    };
+                }
+                const tmdbOrBare = id.match(/^(?:tmdb:)?(\d+):(\d{1,3}):(\d{1,4})(?:\b|$)/i);
+                if (tmdbOrBare) {
+                    return {
+                        season: Number(tmdbOrBare[2]),
+                        episode: Number(tmdbOrBare[3]),
+                        episodeLayout: 'tmdb',
+                    };
+                }
+                const tmdbTrailing = id.match(/^tmdb:.+:(\d{1,3}):(\d{1,4})$/i);
+                if (tmdbTrailing) {
+                    return {
+                        season: Number(tmdbTrailing[1]),
+                        episode: Number(tmdbTrailing[2]),
+                        episodeLayout: 'tmdb',
+                    };
+                }
+            }
+            return { season: null, episode: null };
+        }
+
+        /**
+         * @param {string} selector
+         * @returns {boolean}
+         */
+        isLivePanel(selector) {
+            const el = document.querySelector(selector);
+            if (!el?.isConnected || el.hidden) return false;
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            return el.getBoundingClientRect().height > 8;
+        }
+
+        /**
+         * Episode/streams page only. Series overview never qualifies, even when Core
+         * still holds the previously opened episode.
+         * @param {{ videoId?: string|null, metaId?: string|null }} [route]
+         * @returns {boolean}
+         */
+        isEpisodeDetailSurface(route) {
+            const videoId = this.decodeRouteId(route?.videoId);
+            const metaId = this.decodeRouteId(route?.metaId);
+            if (videoId && videoId.toLowerCase() !== metaId.toLowerCase()) return true;
+            const fromMeta = this.parseEpisodeRef({
+                videoId: route?.metaId,
+                metaId: route?.metaId,
+            });
+            if (fromMeta.episode) return true;
+            if (this.isLivePanel('[class*="streams-list"], [class*="streams-container"]')) return true;
+            return Boolean(this._pendingEpisodeRef && !this.isLivePanel('[class*="videos-list"]'));
+        }
+
+        /**
+         * Episode id buried in the hash when the path parser missed tmdb:tv:…:s:e.
+         * @returns {string}
+         */
+        episodeIdFromHash() {
+            const hash = this.decodeRouteId(window.location.hash || '');
+            const match =
+                hash.match(/tmdb:(?:tv|show|movie):\d+:\d{1,3}:\d{1,4}/i) ||
+                hash.match(/tmdb:\d+:\d{1,3}:\d{1,4}/i) ||
+                hash.match(/kitsu:\d+:\d{1,4}/i) ||
+                hash.match(/tt\d{7,8}:\d{1,3}:\d{1,4}/i);
+            return match ? match[0] : '';
+        }
+
+        /**
+         * Drop leftover episode chips without touching the series host.
+         * @param {object|null} [bar]
+         */
+        dropStaleEpisodePaint(bar = window.__mystremioRatingsBar) {
+            const host = document.querySelector('.mystremio-ratings-bar[data-msb-host="episode"]');
+            let hadEpJob = false;
+            if (this._pinInFlight) {
+                for (const key of [...this._pinInFlight.keys()]) {
+                    if (String(key).startsWith('ep:')) {
+                        hadEpJob = true;
+                        this._pinInFlight.delete(key);
+                    }
+                }
+            }
+            if (!host && !hadEpJob) return;
+            this._episodePaintGen = (this._episodePaintGen || 0) + 1;
+            bar?.removeEpisodeHost?.();
+        }
+
+        videosFromMetaState(node) {
+            if (!node || typeof node !== 'object') return [];
+            if (Array.isArray(node.videos)) return node.videos;
+            if (node.metaItem) {
+                const nested = this.videosFromMetaState(node.metaItem);
+                if (nested.length) return nested;
+            }
+            const content = node.content;
+            if (content && typeof content === 'object') {
+                if (Array.isArray(content.videos)) return content.videos;
+                if (Array.isArray(content.content?.videos)) return content.content.videos;
+                return this.videosFromMetaState(content);
+            }
+            return [];
+        }
+
+        /**
+         * @param {object|null} node
+         * @returns {boolean}
+         */
+        isLoadingMetaNode(node) {
+            if (!node || typeof node !== 'object') return false;
+            const type = String(node.type || '').toLowerCase();
+            if (type === 'loading') return true;
+            if (node.metaItem) return this.isLoadingMetaNode(node.metaItem);
+            if (node.content && !Array.isArray(node.content)) {
+                return this.isLoadingMetaNode(node.content);
+            }
+            return false;
+        }
+
+        extraField(path, name) {
+            const extra = path?.extra;
+            if (!Array.isArray(extra)) return null;
+            const hit = extra.find(
+                (entry) => String(entry?.name || '').toLowerCase() === String(name).toLowerCase()
+            );
+            if (!hit) return null;
+            return hit.value ?? hit.id ?? null;
+        }
+
+        /**
+         * Core selected stream path + optional seriesInfo from meta_details.
+         * @param {object|null} node
+         * @returns {{ videoId: string|null, season: number|null, episode: number|null }|null}
+         */
+        selectedFromMetaState(node) {
+            if (!node || typeof node !== 'object') return null;
+            const selected = node.selected;
+            if (selected && typeof selected === 'object') {
+                const seriesInfo = selected.seriesInfo || selected.series_info || {};
+                const streamPath = selected.streamPath || selected.stream_path || null;
+                const metaPath = selected.metaPath || selected.meta_path || null;
+                const pathId =
+                    typeof streamPath === 'string'
+                        ? streamPath
+                        : streamPath?.id ||
+                          streamPath?.video_id ||
+                          streamPath?.videoId ||
+                          this.extraField(streamPath, 'videoId') ||
+                          this.extraField(streamPath, 'video') ||
+                          null;
+                const season = Number(
+                    seriesInfo.season ??
+                        selected.season ??
+                        this.extraField(streamPath, 'season') ??
+                        this.extraField(metaPath, 'season')
+                );
+                const episode = Number(
+                    seriesInfo.episode ??
+                        selected.episode ??
+                        this.extraField(streamPath, 'episode') ??
+                        this.extraField(metaPath, 'episode')
+                );
+                return {
+                    videoId:
+                        pathId ||
+                        selected.video_id ||
+                        selected.videoId ||
+                        null,
+                    season: Number.isInteger(season) && season > 0 ? season : null,
+                    episode: Number.isInteger(episode) && episode > 0 ? episode : null,
+                };
+            }
+            if (node.metaItem) {
+                const nested = this.selectedFromMetaState(node.metaItem);
+                if (nested) return nested;
+            }
+            if (node.content && typeof node.content === 'object' && !Array.isArray(node.content)) {
+                return this.selectedFromMetaState(node.content);
+            }
+            return null;
+        }
+
+        /**
+         * Page-eval fallback when this script cannot see window.core (same pattern as TIDB).
+         * @param {string} model
+         * @returns {Promise<object|null>}
+         */
+        evalCoreState(model) {
+            const name = String(model || '').replace(/[^a-zA-Z0-9_]/g, '');
+            if (!name) return Promise.resolve(null);
+            return new Promise((resolve) => {
+                const event = `mystremio-de-state-${Math.random().toString(36).slice(2)}`;
+                const script = document.createElement('script');
+                const done = (detail) => {
+                    script.remove();
+                    resolve(detail && typeof detail === 'object' ? detail : null);
+                };
+                window.addEventListener(
+                    event,
+                    (browserEvent) => done(browserEvent.detail),
+                    { once: true }
+                );
+                script.textContent = `(async()=>{try{const g=(window.core&&window.core.getState)||(window.services&&window.services.core&&window.services.core.transport&&window.services.core.transport.getState);const out=typeof g==='function'?await g('${name}'):null;window.dispatchEvent(new CustomEvent('${event}',{detail:out}));}catch(err){window.dispatchEvent(new CustomEvent('${event}',{detail:null}));}})();`;
+                (document.head || document.documentElement).appendChild(script);
+            });
+        }
+
+        /**
+         * @param {string} model
+         * @returns {Promise<object|null>}
+         */
+        async getCoreState(model) {
+            const tryGet = async (getState) => {
+                if (typeof getState !== 'function') return null;
+                try {
+                    return await getState(model);
+                } catch (_) {
+                    return null;
+                }
+            };
+            const direct =
+                (await tryGet(window.core?.getState)) ||
+                (await tryGet(window.services?.core?.transport?.getState));
+            if (direct) return direct;
+            return this.evalCoreState(model);
+        }
+
+        /**
+         * @param {boolean} [retry]
+         * @returns {Promise<object|null>}
+         */
+        async loadDetailState(retry = true) {
+            let state =
+                (await this.getCoreState('meta_details')) ||
+                (await this.getCoreState('metaDetails'));
+            if (retry && this.isLoadingMetaNode(state)) {
+                await new Promise((resolve) => setTimeout(resolve, 220));
+                state =
+                    (await this.getCoreState('meta_details')) ||
+                    (await this.getCoreState('metaDetails'));
+            }
+            return state;
+        }
+
+        async loadDetailVideos() {
+            const state = await this.loadDetailState(true);
+            return this.videosFromMetaState(state);
+        }
+
+        videoIdsMatch(left, right) {
+            const a = this.decodeRouteId(left).toLowerCase();
+            const b = this.decodeRouteId(right).toLowerCase();
+            if (!a || !b) return false;
+            if (a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`)) return true;
+            const stripPrefix = (id) =>
+                id.replace(/^(?:tmdb:(?:tv|show|movie):|tmdb:|kitsu:)/i, '');
+            const sa = stripPrefix(a);
+            const sb = stripPrefix(b);
+            return sa === sb || a.endsWith(`:${sb}`) || b.endsWith(`:${sa}`);
+        }
+
+        episodeRefFromVideo(video) {
+            if (!video) return null;
+            const parsed = this.parseEpisodeRef({
+                videoId: video.id || video.episode_id,
+                metaId: video.id,
+            });
+            const layout =
+                parsed.episodeLayout ||
+                this.episodeLayoutFromIds(video.id || video.episode_id, video.id);
+            if (parsed.absolute && parsed.episode) {
+                return {
+                    season: parsed.season || 1,
+                    episode: parsed.episode,
+                    exactCinemeta: false,
+                    episodeLayout: 'absolute',
+                    fromVideos: true,
+                };
+            }
+            const season = Number(parsed.season) || Number(video.season);
+            const episode = Number(parsed.episode) || Number(video.episode);
+            if (!Number.isInteger(season) || season < 1 || !Number.isInteger(episode) || episode < 1) {
+                return null;
+            }
+            return {
+                season,
+                episode,
+                fromVideos: true,
+                episodeLayout: layout || undefined,
+                exactCinemeta: layout === 'cinemeta' ? true : parsed.exactCinemeta,
+            };
+        }
+
+        seasonFromVideosBar() {
+            const scopes = document.querySelectorAll(
+                '[class*="videos-list"], [class*="series-content"], [class*="seasons"]'
+            );
+            for (const scope of scopes) {
+                const nodes = scope.querySelectorAll(
+                    'button, [class*="label"], [class*="selected"], [class*="select"]'
+                );
+                for (const el of nodes) {
+                    const match = String(el.textContent || '').match(/(?:season|staffel)\s*(\d+)/i);
+                    if (!match) continue;
+                    const num = Number(match[1]);
+                    if (Number.isInteger(num) && num > 0) return num;
+                }
+            }
+            return null;
+        }
+
+        episodeRefFromVideoRow(row) {
+            if (!row?.isConnected) return null;
+            const title =
+                row.querySelector('[class*="title-container"], [class*="video-title"]')?.textContent ||
+                '';
+            const epMatch = String(title).trim().match(/^(\d{1,4})\s*[.:]/);
+            if (!epMatch) return null;
+            const episode = Number(epMatch[1]);
+            if (!Number.isInteger(episode) || episode < 1) return null;
+            const season = this.seasonFromVideosBar();
+            const route = this.parseDetailRoute();
+            return {
+                season: season || 1,
+                episode,
+                fromClick: true,
+                episodeLayout: this.episodeLayoutFromIds(route.videoId, route.metaId) || undefined,
+            };
+        }
+
+        rememberClickedEpisode(event) {
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+            if (target.closest('[class*="streams-list"]')) return;
+            const row = target.closest(
+                '[class*="video-container"], [class*="videos-list"] [class*="video"]'
+            );
+            if (!row || !row.closest('[class*="videos-list"]')) return;
+            const ref = this.episodeRefFromVideoRow(row);
+            if (!ref) return;
+            this._pendingEpisodeRef = ref;
+            this.loadDetailVideos()
+                .then((videos) => {
+                    const match = videos.find((video) => {
+                        if (Number(video?.episode) !== ref.episode) return false;
+                        if (ref.season && Number(video?.season) && Number(video.season) !== ref.season) {
+                            return false;
+                        }
+                        return true;
+                    });
+                    const fromVideo = this.episodeRefFromVideo(match);
+                    if (fromVideo) this._pendingEpisodeRef = fromVideo;
+                })
+                .catch(() => {});
+        }
+
+        isSeriesOverviewSurface() {
+            return (
+                this.isLivePanel('[class*="videos-list"]') &&
+                !this.isLivePanel('[class*="streams-list"], [class*="streams-container"]')
+            );
+        }
+
+        /**
+         * Hash / video id first, then Core videos on the episode surface only.
+         * Never uses leftover Core selected or the season-list UI (series overview).
+         * @param {{ videoId?: string|null, metaId?: string|null }} route
+         * @returns {Promise<{ season: number|null, episode: number|null, exactCinemeta?: boolean, episodeLayout?: string }>}
+         */
+        async resolveEpisodeRef(route) {
+            if (!this.isEpisodeDetailSurface(route)) {
+                return { season: null, episode: null };
+            }
+            let parsed = this.parseEpisodeRef(route);
+            if (!parsed.episode) {
+                const fromHash = this.episodeIdFromHash();
+                if (fromHash) {
+                    parsed = this.parseEpisodeRef({
+                        videoId: fromHash,
+                        metaId: route?.metaId,
+                    });
+                }
+            }
+            if (parsed.absolute && parsed.episode) {
+                return {
+                    season: parsed.season || 1,
+                    episode: parsed.episode,
+                    exactCinemeta: false,
+                    episodeLayout: 'absolute',
+                };
+            }
+            if (parsed.season && parsed.episode) return parsed;
+
+            let state = await this.loadDetailState(true);
+            let selected = this.selectedFromMetaState(state);
+            let videos = this.videosFromMetaState(state);
+            const videoId = this.decodeRouteId(route?.videoId || selected?.videoId);
+
+            if (videoId && (this.isLoadingMetaNode(state) || videos.length === 0)) {
+                await new Promise((resolve) => setTimeout(resolve, 220));
+                if (!this.isEpisodeDetailSurface(this.parseDetailRoute())) {
+                    return { season: null, episode: null };
+                }
+                state = await this.loadDetailState(false);
+                selected = this.selectedFromMetaState(state) || selected;
+                videos = this.videosFromMetaState(state);
+            }
+
+            if (videoId && videos.length) {
+                const match = videos.find(
+                    (video) =>
+                        this.videoIdsMatch(video?.id, videoId) ||
+                        this.videoIdsMatch(video?.episode_id, videoId)
+                );
+                const fromVideo = this.episodeRefFromVideo(match);
+                if (fromVideo) return fromVideo;
+            }
+
+            if (videoId) {
+                const fromPath = this.parseEpisodeRef({
+                    videoId,
+                    metaId: route?.metaId,
+                });
+                if (fromPath.absolute && fromPath.episode) {
+                    return {
+                        season: fromPath.season || 1,
+                        episode: fromPath.episode,
+                        exactCinemeta: false,
+                        episodeLayout: 'absolute',
+                    };
+                }
+                if (fromPath.season && fromPath.episode) return fromPath;
+            }
+
+            const layoutHint = this.episodeLayoutFromIds(videoId || route?.videoId, route?.metaId);
+
+            if (selected?.season && selected?.episode) {
+                return {
+                    season: selected.season,
+                    episode: selected.episode,
+                    fromSelection: true,
+                    episodeLayout: layoutHint || undefined,
+                };
+            }
+
+            if (this._pendingEpisodeRef?.episode) {
+                return {
+                    ...this._pendingEpisodeRef,
+                    episodeLayout:
+                        this._pendingEpisodeRef.episodeLayout || layoutHint || undefined,
+                };
+            }
+
+            const header = document.querySelector(
+                '[class*="streams-list"] [class*="episode-title"], [class*="streams-container"] [class*="episode-title"]'
+            );
+            const headerText = String(header?.textContent || '').replace(/\s+/g, ' ').trim();
+            const headerSe =
+                headerText.match(/S(?:eason)?\s*(\d+)\s*[:.\-x×]?\s*E(?:p(?:isode)?)?\s*(\d+)/i) ||
+                headerText.match(/\b(\d{1,2})\s*[x×]\s*(\d{1,3})\b/);
+            if (headerSe) {
+                return {
+                    season: Number(headerSe[1]),
+                    episode: Number(headerSe[2]),
+                    episodeLayout: layoutHint || undefined,
+                };
+            }
+
+            return parsed;
+        }
+
+        tmdbSeasonLengths(data) {
+            const seasons = Array.isArray(data?.seasons) ? data.seasons : [];
+            const counts = new Map();
+            let maxSeason = 0;
+            for (const entry of seasons) {
+                const number = Number(entry?.season_number);
+                if (!Number.isInteger(number) || number < 1) continue;
+                counts.set(number, Number(entry?.episode_count) || 0);
+                maxSeason = Math.max(maxSeason, number);
+            }
+            if (!maxSeason) return [];
+            const lengths = [];
+            for (let season = 1; season <= maxSeason; season++) {
+                lengths.push(counts.get(season) || 0);
+            }
+            return lengths;
+        }
+
+        mapTmdbSeason(data, episodeRef) {
+            const season = Number(episodeRef?.season) || 0;
+            const episode = Number(episodeRef?.episode) || 0;
+            if (season < 1) return null;
+            const lengths = this.tmdbSeasonLengths(data);
+            const length = lengths[season - 1] || 0;
+            if (length > 0 && episode > length) {
+                let remaining = episode;
+                for (let i = 0; i < lengths.length; i++) {
+                    const count = lengths[i] || 0;
+                    if (remaining <= count) return i + 1;
+                    remaining -= count;
+                }
+            }
+            return season;
+        }
+
+        async fetchSeasonAggregateCredits(tmdbId, season) {
+            const id = Number(tmdbId);
+            const seasonN = Number(season);
+            if (!Number.isFinite(id) || id <= 0 || !Number.isFinite(seasonN) || seasonN < 1) {
+                return null;
+            }
+            const cacheKey = `tmdb-season-cast:${id}:${seasonN}`;
+            if (this.cache.has(cacheKey)) return this.cache.get(cacheKey);
+            const apiKey = this.config.tmdbApiKey;
+            if (!apiKey) return null;
+            try {
+                const url = `https://api.themoviedb.org/3/tv/${id}/season/${seasonN}/aggregate_credits?api_key=${encodeURIComponent(apiKey)}`;
+                const response = await fetch(url);
+                if (!response.ok) return null;
+                const json = await response.json();
+                this.cache.set(cacheKey, json);
+                return json;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        async withSeasonCast(data, route) {
+            if (!data || data.media_type !== 'tv') return data;
+            const episodeRef = await this.resolveEpisodeRef(route);
+            const mappedSeason = this.mapTmdbSeason(data, episodeRef);
+            if (!mappedSeason) return data;
+            const seasonCredits = await this.fetchSeasonAggregateCredits(data.id, mappedSeason);
+            if (!Array.isArray(seasonCredits?.cast) || !seasonCredits.cast.length) return data;
+            return { ...data, aggregate_credits: seasonCredits, _castSeason: mappedSeason };
+        }
+
+        /**
+         * Identity for the series/movie currently in the hash — never CW posters.
+         * @param {{ type?: string|null, metaId?: string|null, imdbId?: string|null }} route
+         * @param {Element|null} [mount]
+         * @returns {{ metaId: string, tmdbId: number|null, imdbId: string|null, type: string|null, title: string }}
+         */
+        resolveDetailIdentity(route, mount = null) {
+            const parsed = this.parseCatalogMetaId(route?.metaId);
+            const root = this.detailsRoot(mount);
+            const scopedImdb = this.extractImdbIdFromRoot(root);
+            return {
+                metaId: parsed.raw,
+                tmdbId: parsed.tmdbId,
+                imdbId: parsed.imdbId || scopedImdb || null,
+                type: route?.type || null,
+                title: this.extractTitleFromRoot(root),
+            };
         }
 
         /**
@@ -1247,19 +2374,19 @@
 
         /**
          * @param {Element} mount
-         * @param {string} imdbId
+         * @param {string} metaId
          * @returns {boolean}
          */
-        isPaintedInMount(mount, imdbId) {
-            const normalized = this.normalizeImdbId(imdbId);
-            if (!mount || !normalized) return false;
+        isPaintedInMount(mount, metaId) {
+            const id = this.decodeRouteId(metaId);
+            if (!mount || !id) return false;
             const container = mount.querySelector('.data-enrichment-container');
             return Boolean(
                 container &&
                     container.isConnected &&
-                    this.normalizeImdbId(container.dataset.imdbId) === normalized &&
+                    this.decodeRouteId(container.dataset.metaId) === id &&
                     container.querySelector(
-                        '.enhanced-genres-section, .enhanced-directors-section, .enhanced-cast-section, .enhanced-similar-section, .enhanced-collection-section'
+                        '.enhanced-franchise-section, .enhanced-genres-section, .enhanced-directors-section, .enhanced-cast-section, .enhanced-similar-section, .enhanced-collection-section'
                     )
             );
         }
@@ -1370,20 +2497,161 @@
         }
 
         /**
+         * @param {{ metaId?: string, tmdbId?: number|null, imdbId?: string|null }} identity
+         * @returns {string|null}
+         */
+        identityCacheKey(identity) {
+            const metaId = this.decodeRouteId(identity?.metaId);
+            if (identity?.tmdbId) return `tmdb:${identity.tmdbId}`;
+            if (identity?.imdbId) return this.normalizeImdbId(identity.imdbId);
+            return metaId ? `meta:${metaId}` : null;
+        }
+
+        /**
+         * Numeric Kitsu anime id from a catalog metaId (`kitsu:1555` / `kitsu:1555:12`).
+         * @param {string|null|undefined} metaId
+         * @returns {number|null}
+         */
+        parseKitsuId(metaId) {
+            const raw = this.decodeRouteId(metaId);
+            const match = raw.match(/^kitsu:(\d+)/i);
+            if (!match) return null;
+            const id = Number(match[1]);
+            return Number.isFinite(id) && id > 0 ? id : null;
+        }
+
+        /**
+         * Series titles + optional IMDb from Kitsu — never the episode DOM string.
+         * @param {number} kitsuId
+         * @returns {Promise<{ titles: string[], imdbId: string|null }>}
+         */
+        async fetchKitsuSeriesInfo(kitsuId) {
+            const cacheKey = `kitsu-info:${kitsuId}`;
+            if (this.cache.has(cacheKey)) return this.cache.get(cacheKey);
+            const titles = [];
+            const seen = new Set();
+            const pushTitle = (value) => {
+                const title = String(value || '').replace(/\s+/g, ' ').trim();
+                if (!title || title.length < 2 || seen.has(title.toLowerCase())) return;
+                seen.add(title.toLowerCase());
+                titles.push(title);
+            };
+            let imdbId = null;
+            try {
+                const animeRes = await fetch(`https://kitsu.io/api/edge/anime/${kitsuId}`, {
+                    headers: { Accept: 'application/vnd.api+json' },
+                });
+                if (animeRes.ok) {
+                    const json = await animeRes.json();
+                    const attrs = json?.data?.attributes || {};
+                    pushTitle(attrs.canonicalTitle);
+                    const named = attrs.titles || {};
+                    pushTitle(named.en);
+                    pushTitle(named.en_us);
+                    pushTitle(named.en_jp);
+                    pushTitle(named.ja_jp);
+                }
+            } catch (_) {}
+            try {
+                const mapRes = await fetch(`https://kitsu.io/api/edge/anime/${kitsuId}/mappings`, {
+                    headers: { Accept: 'application/vnd.api+json' },
+                });
+                if (mapRes.ok) {
+                    const json = await mapRes.json();
+                    const entries = Array.isArray(json?.data) ? json.data : [];
+                    for (const entry of entries) {
+                        const site = String(entry?.attributes?.externalSite || entry?.attributes?.external_site || '');
+                        const externalId = String(entry?.attributes?.externalId || entry?.attributes?.external_id || '');
+                        if (/imdb/i.test(site)) {
+                            imdbId = this.normalizeImdbId(externalId) || imdbId;
+                        }
+                    }
+                }
+            } catch (_) {}
+            const info = { titles, imdbId };
+            this.cache.set(cacheKey, info);
+            return info;
+        }
+
+        /**
+         * TMDB payload for this detail page (tmdb id, imdb, or title of THIS page).
+         * @param {{ metaId: string, tmdbId?: number|null, imdbId?: string|null, type?: string|null, title?: string }} identity
+         * @param {AbortSignal|null} signal
+         * @returns {Promise<object|null>}
+         */
+        async ensureDataForIdentity(identity, signal) {
+            await this.settingsReady.catch(() => {});
+            if (signal?.aborted) return null;
+            if (!this.config.tmdbApiKey) return null;
+
+            const cacheKey = this.identityCacheKey(identity);
+            if (cacheKey && this.cache.has(cacheKey)) {
+                return this.cache.get(cacheKey);
+            }
+            if (identity?.imdbId && this.cache.has(identity.imdbId)) {
+                return this.cache.get(identity.imdbId);
+            }
+
+            let data = null;
+            if (identity?.tmdbId) {
+                data = await this.fetchTMDBDataByTmdbId(identity.tmdbId, this.tmdbMediaType(identity.type));
+            }
+            if (!data && identity?.imdbId) {
+                data = await this.ensureData(identity.imdbId, signal);
+            }
+            const kitsuId = this.parseKitsuId(identity?.metaId);
+            if (!data && kitsuId) {
+                const kitsu = await this.fetchKitsuSeriesInfo(kitsuId);
+                if (signal?.aborted) return null;
+                if (kitsu.imdbId) {
+                    identity.imdbId = identity.imdbId || kitsu.imdbId;
+                    data = await this.ensureData(kitsu.imdbId, signal);
+                }
+                if (!data) {
+                    for (const title of kitsu.titles) {
+                        data = await this.searchTmdbByTitle(title, identity.type);
+                        if (!data) data = await this.searchTmdbByTitle(title, 'tv');
+                        if (!data) data = await this.searchTmdbByTitle(title, 'movie');
+                        if (data) break;
+                    }
+                }
+            }
+            if (!data) {
+                const title = String(identity?.title || '').trim();
+                if (title) {
+                    data = await this.searchTmdbByTitle(title, identity.type);
+                    if (!data && kitsuId) {
+                        data = await this.searchTmdbByTitle(title, 'tv');
+                        if (!data) data = await this.searchTmdbByTitle(title, 'movie');
+                    }
+                }
+            }
+            if (signal?.aborted) return null;
+            if (data && cacheKey) this.cache.set(cacheKey, data);
+            if (data && identity?.metaId) this.cache.set(`meta:${this.decodeRouteId(identity.metaId)}`, data);
+            return data || null;
+        }
+
+        /**
          * Synchronous DOM paint from already-fetched TMDB data (slogan-style re-bind).
          * @param {Element} mount
-         * @param {string} imdbId
+         * @param {{ metaId: string, imdbId?: string|null }} identity
          * @param {object} data
          * @returns {boolean}
          */
-        paint(mount, imdbId, data) {
-            imdbId = this.normalizeImdbId(imdbId);
-            if (!mount?.isConnected || !imdbId || !data) return false;
+        paint(mount, identity, data) {
+            const metaId = this.decodeRouteId(identity?.metaId);
+            const imdbId = this.normalizeImdbId(identity?.imdbId) || this.imdbFromTmdbData(data);
+            if (!mount?.isConnected || !metaId || !data) return false;
 
-            if (this.isPaintedInMount(mount, imdbId)) {
+            const liveRoute = this.parseDetailRoute();
+            if (this.decodeRouteId(liveRoute.metaId) !== metaId) return false;
+
+            if (this.isPaintedInMount(mount, metaId)) {
                 this.hideNativeMetaSections(mount);
                 this.enrichedImdbId = imdbId;
-                this.pinImdbRating(imdbId);
+                this._activeMetaId = metaId;
+                if (imdbId) this.pinImdbRating(imdbId, liveRoute.type);
                 return true;
             }
 
@@ -1403,12 +2671,17 @@
 
             if (!container.isConnected) return false;
 
-            container.dataset.imdbId = imdbId;
+            container.dataset.metaId = metaId;
+            if (imdbId) container.dataset.imdbId = imdbId;
+            else delete container.dataset.imdbId;
+            if (data?._castSeason) container.dataset.castSeason = String(data._castSeason);
+            else delete container.dataset.castSeason;
 
             const oldBadge = document.querySelector('.enhanced-tmdb-badge');
             if (oldBadge) oldBadge.remove();
 
-            // Order: Genres ÔåÆ Directors ÔåÆ Cast ÔåÆ Similar ÔåÆ Collection
+            const franchiseLinks = this.collectNativeFranchiseLinks(mount);
+            this.injectEnhancedFranchise(franchiseLinks, container);
             this.injectEnhancedGenres(data.genres, container);
             this.injectEnhancedDirectors(this.resolveDirectors(data), container);
 
@@ -1442,21 +2715,39 @@
 
             const hasInjectedSections = Boolean(
                 container.querySelector(
-                    '.enhanced-genres-section, .enhanced-directors-section, .enhanced-cast-section, .enhanced-similar-section, .enhanced-collection-section'
+                    '.enhanced-franchise-section, .enhanced-genres-section, .enhanced-directors-section, .enhanced-cast-section, .enhanced-similar-section, .enhanced-collection-section'
                 )
             );
 
             if (hasInjectedSections) {
                 this.hideNativeMetaSections(mount);
                 this.enrichedImdbId = imdbId;
+                this._activeMetaId = metaId;
                 this._mountEl = mount;
                 this.lastEnrichmentTime = Date.now();
-                this.pinImdbRating(imdbId);
+                if (imdbId) this.pinImdbRating(imdbId, liveRoute.type);
                 return true;
             }
 
             this.restoreNativeMetaSections();
             return false;
+        }
+
+        /**
+         * Paints after swapping in season aggregate credits on episode pages.
+         * @param {Element} mount
+         * @param {{ metaId: string, imdbId?: string|null }} identity
+         * @param {object} data
+         * @returns {Promise<boolean>}
+         */
+        async paintWithCast(mount, identity, data) {
+            const route = this.parseDetailRoute();
+            const next = await this.withSeasonCast(data, route);
+            if (this.decodeRouteId(this.parseDetailRoute().metaId) !== this.decodeRouteId(identity?.metaId)) {
+                return false;
+            }
+            const liveMount = this.findMetaInfoContainer() || mount;
+            return this.paint(liveMount, identity, next);
         }
 
         /**
@@ -1493,9 +2784,11 @@
 
             const route = this.parseDetailRoute();
             this._activeDetailKey = this.detailKey(route);
-            if (route.imdbId) {
-                this.prefetchTMDBData(route.imdbId);
-                this.pinImdbRating(route.imdbId, route.type);
+            const identity = this.resolveDetailIdentity(route);
+            this._activeMetaId = identity.metaId || null;
+            if (identity.imdbId) {
+                this.prefetchTMDBData(identity.imdbId);
+                this.pinImdbRating(identity.imdbId, route.type);
             }
             if (route.surface !== 'detail') return;
 
@@ -1518,15 +2811,23 @@
             const route = this.parseDetailRoute();
 
             if (route.surface !== 'detail' || !route.shouldEnrich) {
+                this.dropStaleEpisodePaint();
                 this.cleanup(true);
                 this._mountEl = null;
                 this._activeDetailKey = null;
+                this._activeMetaId = null;
                 return;
+            }
+
+            if (!this.isEpisodeDetailSurface(route)) {
+                if (this.isSeriesOverviewSurface()) {
+                    this._pendingEpisodeRef = null;
+                    this.dropStaleEpisodePaint();
+                }
             }
 
             const key = this.detailKey(route);
             if (key && this._activeDetailKey && key !== this._activeDetailKey) {
-                // Same IMDb, different videoId (episode ÔåÆ overview) ÔÇö treat as remount.
                 this.beginNewSession();
                 this.cleanup(true);
                 this._mountEl = null;
@@ -1535,55 +2836,66 @@
 
             const mount = this.findMetaInfoContainer();
             if (!mount) {
+                const identity = this.resolveDetailIdentity(route);
+                if (identity.imdbId) this.pinImdbRating(identity.imdbId, route.type);
                 this.scheduleReconcile(120);
                 return;
             }
 
-            const imdbId = route.imdbId || this.extractImdbId();
-            if (!imdbId) {
+            const identity = this.resolveDetailIdentity(route, mount);
+            if (!identity.metaId) {
+                if (identity.imdbId) this.pinImdbRating(identity.imdbId, route.type);
                 this.scheduleReconcile(200);
                 return;
             }
+            this._activeMetaId = identity.metaId;
 
-            // Always re-assert Cinemeta IMDb score (meta-addon race).
-            this.pinImdbRating(imdbId, route.type);
+            const cacheKey = this.identityCacheKey(identity);
+            const cached =
+                (cacheKey && this.cache.get(cacheKey)) ||
+                (identity.imdbId && this.cache.get(identity.imdbId)) ||
+                this.cache.get(`meta:${identity.metaId}`);
+            const resolvedImdb = identity.imdbId || this.imdbFromTmdbData(cached);
+            if (resolvedImdb) {
+                this.pinImdbRating(resolvedImdb, route.type);
+            }
 
-            // Mount identity: painted on a stale node does not count.
             const mountChanged = Boolean(this._mountEl && this._mountEl !== mount);
             if (mountChanged) {
                 this._mountEl = null;
             }
 
-            if (!mountChanged && this.isPaintedInMount(mount, imdbId)) {
+            if (!mountChanged && this.isPaintedInMount(mount, identity.metaId)) {
                 this.hideNativeMetaSections(mount);
-                this.enrichedImdbId = imdbId;
+                this.enrichedImdbId = resolvedImdb;
                 this._mountEl = mount;
                 return;
             }
 
-            // Cache hit ÔåÆ synchronous paint (survives episodeÔåöoverview / Discover overlay remounts)
-            if (this.cache.has(imdbId)) {
-                this.paint(mount, imdbId, this.cache.get(imdbId));
+            if (cached) {
+                void this.paintWithCast(mount, identity, cached);
                 return;
             }
 
             const sessionId = this.sessionId;
             const signal = this.enrichAbort?.signal || null;
-            this.prefetchTMDBData(imdbId);
+            if (identity.imdbId) this.prefetchTMDBData(identity.imdbId);
 
-            this.ensureData(imdbId, signal).then((data) => {
+            this.ensureDataForIdentity(identity, signal).then((data) => {
                 if (sessionId !== this.sessionId || signal?.aborted) return;
                 if (!data) {
                     this.restoreNativeMetaSections();
                     this.scheduleReconcile(800);
                     return;
                 }
+                const live = this.parseDetailRoute();
+                if (this.decodeRouteId(live.metaId) !== identity.metaId) return;
                 const remount = this.findMetaInfoContainer();
                 if (!remount) {
                     this.scheduleReconcile(180);
                     return;
                 }
-                this.paint(remount, imdbId, data);
+                this.paintWithCast(remount, this.resolveDetailIdentity(live, remount), data);
             });
         }
 
@@ -1594,15 +2906,18 @@
             this.setupRouteListener();
             this.setupReconcileBackup();
 
-            this.settingsReady
-                .then(() => {
-                    const route = this.parseDetailRoute();
-                    if (route.imdbId) this.prefetchTMDBData(route.imdbId);
-                    this.reconcile();
-                })
+        this.settingsReady
+            .then(() => {
+                const route = this.parseDetailRoute();
+                if (route.imdbId) this.prefetchTMDBData(route.imdbId);
+                this.reconcile();
+                this.checkForPosters();
+                if (window.stremioCustomSuspendBackground?.()) this.suspendBackground();
+            })
                 .catch(() => {
                     this.config = this.loadLegacyConfig();
                     this.reconcile();
+                    this.checkForPosters();
                 });
         }
 
@@ -1610,6 +2925,7 @@
          * Slow backup: if detail wants enrichment but none is painted, reconcile.
          */
         setupReconcileBackup() {
+            if (this._backgroundSuspended) return;
             if (this._backupTimer) clearInterval(this._backupTimer);
             this._backupTimer = setInterval(() => {
                 if (this._remountTimers.length > 0) return;
@@ -1617,13 +2933,13 @@
                 if (!route.shouldEnrich) return;
 
                 const mount = this.findMetaInfoContainer();
-                const imdbId = route.imdbId || this.extractImdbId();
-                if (!mount || !imdbId) return;
+                const identity = this.resolveDetailIdentity(route, mount);
+                if (!mount || !identity.metaId) return;
 
-                if (!this.isPaintedInMount(mount, imdbId)) {
+                if (!this.isPaintedInMount(mount, identity.metaId)) {
                     this.reconcile();
-                } else {
-                    this.pinImdbRating(imdbId, route.type);
+                } else if (identity.imdbId) {
+                    this.pinImdbRating(identity.imdbId, route.type);
                 }
             }, 8000);
         }
@@ -1637,6 +2953,14 @@
             this._boundOnRouteChange = (event) => {
                 const next = event?.detail?.next ?? window.location.hash ?? '';
                 const route = this.parseDetailRoute(next);
+
+                if (!this.isEpisodeDetailSurface(route)) {
+                    if (this.isSeriesOverviewSurface()) {
+                        this._pendingEpisodeRef = null;
+                        this._episodeRetryCount = 0;
+                        this.dropStaleEpisodePaint();
+                    }
+                }
 
                 // Entering player ÔÇö drop enrichment paint, do not forceRemount (avoids ghost panels).
                 if (/#\/player(?:\/|$|\?|#)/.test(next)) {
@@ -1664,18 +2988,17 @@
 
                 const key = this.detailKey(route);
                 const mount = this.findMetaInfoContainer();
-                const imdbId = route.imdbId || this.extractImdbId();
+                const identity = this.resolveDetailIdentity(route, mount);
 
-                // Same detail after PlayerÔåÆBack: already painted on live mount ÔåÆ skip wipe.
                 if (
                     key &&
                     key === this._activeDetailKey &&
                     mount &&
-                    imdbId &&
-                    this.isPaintedInMount(mount, imdbId)
+                    identity.metaId &&
+                    this.isPaintedInMount(mount, identity.metaId)
                 ) {
                     this._mountEl = mount;
-                    this.pinImdbRating(imdbId, route.type);
+                    if (identity.imdbId) this.pinImdbRating(identity.imdbId, route.type);
                     return;
                 }
 
@@ -1699,33 +3022,31 @@
                     return;
                 }
 
-                const keyBefore = this._activeDetailKey;
                 window.setTimeout(() => {
                     const route = this.parseDetailRoute();
                     if (route.surface !== 'detail') return;
-                    const key = this.detailKey(route);
-                    const mount = this.findMetaInfoContainer();
-                    const imdbId = route.imdbId || this.extractImdbId();
-                    if (
-                        key &&
-                        key === keyBefore &&
-                        mount &&
-                        imdbId &&
-                        this.isPaintedInMount(mount, imdbId)
-                    ) {
-                        return;
+                    if (!this.isEpisodeDetailSurface(route)) {
+                        if (this.isSeriesOverviewSurface()) {
+                            this._pendingEpisodeRef = null;
+                            this.dropStaleEpisodePaint();
+                        }
                     }
-                    if (!mount || !imdbId || !this.isPaintedInMount(mount, imdbId)) {
-                        this.forceRemount();
-                    }
+                    this.forceRemount();
                 }, 120);
             };
 
             document.addEventListener('stremio-custom-route-change', this._boundOnRouteChange);
             document.addEventListener('click', this._boundOnStreamsBack, true);
+            if (!this._boundOnEpisodeClick) {
+                this._boundOnEpisodeClick = (event) => this.rememberClickedEpisode(event);
+                document.addEventListener('click', this._boundOnEpisodeClick, true);
+            }
         }
 
         setupObserver() {
+            if (this.observer) {
+                this.observer.disconnect();
+            }
             this.observer = new MutationObserver((mutations) => {
                 const route = this.parseDetailRoute();
                 if (route.surface !== 'detail') return;
@@ -1749,6 +3070,21 @@
                 let relevant = false;
                 let enrichmentEvicted = false;
                 let imdbRatingTouched = false;
+                let streamsAppeared = false;
+
+                const isStreamsNode = (node) => {
+                    if (!node || node.nodeType !== 1) return false;
+                    return Boolean(
+                        node.matches?.('[class*="streams-list"]') ||
+                            node.querySelector?.('[class*="streams-list"]')
+                    );
+                };
+
+                for (const mutation of mutations) {
+                    for (const node of mutation.addedNodes) {
+                        if (isStreamsNode(node)) streamsAppeared = true;
+                    }
+                }
 
                 const touchesImdbRating = (mutation) => {
                     const inImdb = (node) => {
@@ -1774,7 +3110,30 @@
                     return false;
                 };
 
+                const isRatingsBarNode = (node) => {
+                    if (!node) return false;
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        return Boolean(node.parentElement?.closest?.('.mystremio-ratings-bar'));
+                    }
+                    if (node.nodeType !== 1) return false;
+                    return Boolean(
+                        node.classList?.contains('mystremio-ratings-bar') ||
+                            node.closest?.('.mystremio-ratings-bar') ||
+                            node.querySelector?.('.mystremio-ratings-bar')
+                    );
+                };
+
+                const isRatingsBarMutation = (mutation) => {
+                    if (isRatingsBarNode(mutation.target)) return true;
+                    const elements = [...mutation.addedNodes, ...mutation.removedNodes].filter(
+                        (node) => node.nodeType === 1
+                    );
+                    if (!elements.length) return false;
+                    return elements.every(isRatingsBarNode);
+                };
+
                 for (const mutation of mutations) {
+                    if (isRatingsBarMutation(mutation)) continue;
                     if (touchesImdbRating(mutation)) {
                         imdbRatingTouched = true;
                     }
@@ -1789,6 +3148,7 @@
 
                     if (isEnrichmentNode(mutation.target)) continue;
                     for (const node of mutation.addedNodes) {
+                        if (isStreamsNode(node)) streamsAppeared = true;
                         if (!isEnrichmentNode(node)) {
                             relevant = true;
                             break;
@@ -1816,15 +3176,25 @@
                 }
 
                 if (imdbRatingTouched) {
-                    const imdbId = route.imdbId || this.extractImdbId();
+                    const identity = this.resolveDetailIdentity(route, this.findMetaInfoContainer());
+                    const imdbId = identity.imdbId || this.imdbFromTmdbData(
+                        this.cache.get(this.identityCacheKey(identity)) ||
+                            (identity.imdbId && this.cache.get(identity.imdbId)) ||
+                            this.cache.get(`meta:${identity.metaId}`)
+                    );
                     const normId = this.normalizeImdbId(imdbId);
+                    const token = normId ? `${normId}:s0e0` : '';
                     const host = document.querySelector('.mystremio-ratings-bar[data-msb-host="detail"]');
                     const barReady =
-                        Boolean(normId) &&
+                        Boolean(token) &&
                         host?.isConnected &&
-                        host.dataset.imdbId === normId &&
-                        (host.dataset.msbRendered || host.children.length > 0);
+                        host.dataset.msbRendered === token;
                     if (!barReady && imdbId) this.pinImdbRating(imdbId, route.type);
+                }
+
+                if (streamsAppeared) {
+                    const identity = this.resolveDetailIdentity(route, this.findMetaInfoContainer());
+                    if (identity.imdbId) this.pinImdbRating(identity.imdbId, route.type);
                 }
 
                 if (!relevant) return;
@@ -1877,6 +3247,22 @@
                 subtree: true,
                 characterData: true,
             });
+            if (this._backgroundSuspended) this.observer.disconnect();
+        }
+
+        suspendBackground() {
+            this._backgroundSuspended = true;
+            this.observer?.disconnect();
+            if (this._backupTimer) {
+                clearInterval(this._backupTimer);
+                this._backupTimer = null;
+            }
+        }
+
+        resumeBackground() {
+            this._backgroundSuspended = false;
+            this.setupObserver();
+            this.setupReconcileBackup();
         }
 
         cleanup(force = false) {
@@ -1887,6 +3273,7 @@
             if (badge) badge.remove();
             this.restoreNativeMetaSections();
             this.enrichedImdbId = null;
+            this._activeMetaId = null;
             this._mountEl = null;
         }
 
@@ -1899,9 +3286,53 @@
             const text = String(label || '').trim().toLowerCase();
             if (!text) return false;
             return (
-                /^(genres?|cast|actors?|directors?|director|creators?|created by|regie|regisseur|darsteller)$/i.test(text) ||
-                /^(genre|cast|director|creator|regie)/i.test(text)
+                /^(genres?|cast|actors?|directors?|director|creators?|created by|regie|regisseur|darsteller|franchise|sequel|prequel|related)$/i.test(
+                    text
+                ) ||
+                /^(genre|cast|director|creator|regie|franchise|sequel|prequel|related)/i.test(text)
             );
+        }
+
+        ensureDeHideStyles() {
+            const id = 'mystremio-de-hide-native';
+            if (document.getElementById(id)) return;
+            const style = document.createElement('style');
+            style.id = id;
+            style.textContent = `
+                [class*="meta-details"].mystremio-de-active [class*="meta-links-container"]:not([class*="enhanced-"]),
+                [class*="meta-preview"].mystremio-de-active [class*="meta-links-container"]:not([class*="enhanced-"]) {
+                    display: none !important;
+                }
+            `;
+            document.documentElement.appendChild(style);
+        }
+
+        markDeActive(mount, active) {
+            const root = this.detailsRoot(mount);
+            if (!root) return;
+            root.classList.toggle('mystremio-de-active', Boolean(active));
+        }
+
+        collectNativeFranchiseLinks(mount) {
+            const root = this.detailsRoot(mount);
+            if (!root) return [];
+            const links = [];
+            const seen = new Set();
+            root.querySelectorAll('[class*="meta-links-container"]').forEach((section) => {
+                if (section.closest('.data-enrichment-container')) return;
+                const label = String(
+                    section.querySelector('[class*="label-container"]')?.textContent || ''
+                ).trim();
+                if (!/franchise|sequel|prequel|related/i.test(label)) return;
+                section.querySelectorAll('a').forEach((anchor) => {
+                    const name = String(anchor.textContent || '').replace(/\s+/g, ' ').trim();
+                    const href = String(anchor.getAttribute('href') || '').trim();
+                    if (!name || seen.has(name.toLowerCase())) return;
+                    seen.add(name.toLowerCase());
+                    links.push({ name, href });
+                });
+            });
+            return links;
         }
 
         /**
@@ -1909,26 +3340,41 @@
          * @param {Element|null} [mount]
          */
         hideNativeMetaSections(mount = null) {
+            const painted =
+                (mount && mount.querySelector?.('.data-enrichment-container')) ||
+                document.querySelector('.data-enrichment-container');
+            if (
+                !painted?.querySelector?.(
+                    '.enhanced-franchise-section, .enhanced-genres-section, .enhanced-directors-section, .enhanced-cast-section, .enhanced-similar-section, .enhanced-collection-section'
+                )
+            ) {
+                return;
+            }
+            this.ensureDeHideStyles();
+            this.markDeActive(mount, true);
             const detailsRoot =
                 mount?.closest('[class*="meta-details"], [class*="meta-preview"]') || null;
             const sections = document.querySelectorAll(
-                '[class*="meta-links-container"], [class*="genres-container"]'
+                '[class*="meta-links-container"]'
             );
             sections.forEach((section) => {
                 if (section.closest('.data-enrichment-container')) return;
+                if (String(section.className || '').includes('enhanced-')) return;
                 if (detailsRoot && !detailsRoot.contains(section)) return;
-
-                // Dedicated genres container (no meta-links label)
-                if (String(section.className || '').includes('genres-container')) {
-                    section.style.display = 'none';
-                    section.dataset.mystremioEnrichedHidden = '1';
-                    return;
-                }
 
                 const labelEl = section.querySelector('[class*="label-container"]');
                 const label = labelEl?.textContent || '';
                 if (!this.isReplacedNativeMetaLabel(label)) return;
 
+                section.style.display = 'none';
+                section.dataset.mystremioEnrichedHidden = '1';
+            });
+
+            const nativeGenres = (detailsRoot || document).querySelectorAll('[class*="genres-container"]');
+            nativeGenres.forEach((section) => {
+                if (section.closest('.data-enrichment-container')) return;
+                if (String(section.className || '').includes('enhanced-')) return;
+                if (detailsRoot && !detailsRoot.contains(section)) return;
                 section.style.display = 'none';
                 section.dataset.mystremioEnrichedHidden = '1';
             });
@@ -1938,6 +3384,10 @@
          * Restores native meta sections hidden by {@link hideNativeMetaSections}.
          */
         restoreNativeMetaSections() {
+            this.markDeActive(null, false);
+            document.querySelectorAll('.mystremio-de-active').forEach((root) => {
+                root.classList.remove('mystremio-de-active');
+            });
             document
                 .querySelectorAll('[data-mystremio-enriched-hidden="1"]')
                 .forEach((section) => {
@@ -1946,29 +3396,9 @@
                 });
         }
 
-        extractImdbId() {
-            const fromHash = this.normalizeImdbId(window.location.hash || window.location.href);
-            if (fromHash) return fromHash;
-
-            const imdbLink = document.querySelector('a[href*="imdb.com/title/tt"]');
-            if (imdbLink) {
-                const fromLink = this.normalizeImdbId(imdbLink.href);
-                if (fromLink) return fromLink;
-            }
-
-            const metaElements = document.querySelectorAll('[data-imdbid], [data-imdb-id]');
-            for (const el of metaElements) {
-                const fromData = this.normalizeImdbId(el.dataset.imdbid || el.dataset.imdbId);
-                if (fromData) return fromData;
-            }
-
-            const allLinks = document.querySelectorAll('a[href*="imdb"]');
-            for (const link of allLinks) {
-                const fromHref = this.normalizeImdbId(link.href);
-                if (fromHref) return fromHref;
-            }
-
-            return null;
+        extractImdbId(mount = null) {
+            const route = this.parseDetailRoute();
+            return this.resolveDetailIdentity(route, mount || this.findMetaInfoContainer()).imdbId;
         }
 
         /**
@@ -2059,6 +3489,78 @@
         }
 
         /**
+         * Episode chips next to series scores, only on the episode/streams page.
+         * Series overview never keeps leftover chips from the previously open episode.
+         * @param {string} id
+         * @param {string} type
+         * @param {{ videoId?: string|null, metaId?: string|null }} route
+         * @param {object} bar
+         * @returns {Promise<void>}
+         */
+        async mountEpisodeRatingsBar(id, type, route, bar) {
+            if (!this.config.showEpisodeRatings) {
+                this.dropStaleEpisodePaint(bar);
+                return;
+            }
+            if (!this.isEpisodeDetailSurface(route)) {
+                if (this.isSeriesOverviewSurface()) this.dropStaleEpisodePaint(bar);
+                return;
+            }
+            const paintGen = this._episodePaintGen;
+            const episodeRef = await this.resolveEpisodeRef(route);
+            if (paintGen !== this._episodePaintGen) return;
+            if (!this.isEpisodeDetailSurface(this.parseDetailRoute())) {
+                if (this.isSeriesOverviewSurface()) this.dropStaleEpisodePaint(bar);
+                return;
+            }
+            if (!episodeRef.season && !episodeRef.episode) {
+                if (this._episodeRetryCount >= 12) {
+                    bar.removeEpisodeHost?.();
+                    return;
+                }
+                this._episodeRetryCount += 1;
+                if (this._episodeRetryTimer) clearTimeout(this._episodeRetryTimer);
+                this._episodeRetryTimer = setTimeout(() => {
+                    this._episodeRetryTimer = null;
+                    if (!this.isEpisodeDetailSurface(this.parseDetailRoute())) return;
+                    this.mountEpisodeRatingsBar(id, type, this.parseDetailRoute(), bar);
+                }, 200);
+                return;
+            }
+            this._episodeRetryCount = 0;
+            const layout = String(episodeRef.episodeLayout || '').toLowerCase();
+            const layoutKey =
+                layout === 'tmdb' || layout === 'cinemeta' || layout === 'absolute'
+                    ? `:${layout}`
+                    : episodeRef.exactCinemeta === false
+                      ? ':abs'
+                      : episodeRef.exactCinemeta === true
+                        ? ':exact'
+                        : ':auto';
+            const epToken = `${id}:s${episodeRef.season || 0}e${episodeRef.episode || 0}${layoutKey}`;
+            const epHost = document.querySelector(
+                '.mystremio-ratings-bar[data-msb-host="episode"]'
+            );
+            if (
+                epHost?.isConnected &&
+                epHost.dataset.msbRendered === epToken &&
+                epHost.querySelector('.msb-item')
+            ) {
+                return Promise.resolve();
+            }
+            if (!bar.mountEpisodeRatings) {
+                bar.removeEpisodeHost?.();
+                return Promise.resolve();
+            }
+            if (paintGen !== this._episodePaintGen) return;
+            if (!this.isEpisodeDetailSurface(this.parseDetailRoute())) {
+                this.dropStaleEpisodePaint(bar);
+                return;
+            }
+            return Promise.resolve(bar.mountEpisodeRatings(id, type, episodeRef));
+        }
+
+        /**
          * Mounts multi-ratings bar (preferred) or pins Cinemeta IMDb text (GitHub fallback).
          * When the bar path is active, never write IMDb label text (avoids observer loops).
          * @param {string} imdbId
@@ -2069,16 +3571,25 @@
             const id = this.normalizeImdbId(imdbId);
             if (!id) return;
 
+            const route = this.parseDetailRoute();
+            // Title bar is always series/movie scores (old DE chip bar).
+            const token = `${id}:s0e0`;
+
             const bar = window.__mystremioRatingsBar;
             if (bar?.mountOnDetail) {
                 const host = document.querySelector('.mystremio-ratings-bar[data-msb-host="detail"]');
-                if (host?.isConnected && host.dataset.imdbId === id && host.dataset.msbRendered) {
-                    return;
-                }
+                const live =
+                    typeof bar.isLiveDetailHost === 'function'
+                        ? bar.isLiveDetailHost(host)
+                        : Boolean(
+                              host?.isConnected &&
+                                  host.previousElementSibling?.matches?.(
+                                      '[class*="imdb-button-container"]'
+                                  )
+                          );
+                const seriesDone = live && host.dataset.msbRendered === token;
                 if (!this._pinInFlight) this._pinInFlight = new Map();
-                if (this._pinInFlight.has(id)) return;
 
-                const route = this.parseDetailRoute();
                 const routeType = String(typeHint || route.type || '').toLowerCase();
                 const isSeriesFamily =
                     routeType === 'series' ||
@@ -2090,26 +3601,51 @@
                     : routeType === 'movie'
                       ? 'movie'
                       : typeHint || route.type || 'movie';
-                const episodeRef = { season: null, episode: null };
 
-                const job = Promise.resolve(bar.mountOnDetail(id, type, episodeRef))
+                const liveRoute = this.parseDetailRoute();
+                const mountEpisode = () =>
+                    this.mountEpisodeRatingsBar(id, type, this.parseDetailRoute(), bar);
+                const epKey = `ep:${this.detailKey(this.parseDetailRoute()) || token}`;
+
+                if (!seriesDone && !this._pinInFlight.has(token)) {
+                    if (typeof bar.fetchRatings === 'function') {
+                        bar.fetchRatings(id, type, null);
+                    }
+                    const seriesJob = Promise.resolve(bar.mountOnDetail(id, type))
+                        .catch(() => {})
+                        .finally(() => {
+                            this._pinInFlight?.delete(token);
+                        });
+                    this._pinInFlight.set(token, seriesJob);
+                }
+
+                if (!this.isEpisodeDetailSurface(liveRoute)) {
+                    if (this.isSeriesOverviewSurface()) {
+                        this._pendingEpisodeRef = null;
+                        this.dropStaleEpisodePaint(bar);
+                    }
+                    return this._pinInFlight.get(token);
+                }
+
+                if (this._pinInFlight.has(epKey)) {
+                    return this._pinInFlight.get(epKey);
+                }
+                const epJob = Promise.resolve(mountEpisode())
                     .catch(() => {})
                     .finally(() => {
-                        this._pinInFlight?.delete(id);
+                        this._pinInFlight?.delete(epKey);
                     });
-                this._pinInFlight.set(id, job);
-                // Fire-and-forget — do not await and never fall through to label text.
-                return;
+                this._pinInFlight.set(epKey, epJob);
+                return epJob;
             }
 
             const sessionId = this.sessionId;
-            const route = this.parseDetailRoute();
             const type = typeHint || route.type;
 
             const rating = await this.fetchCinemetaRating(id, type);
             if (sessionId !== this.sessionId || !rating) return;
 
-            const currentId = route.imdbId || this.extractImdbId();
+            const currentId = this.resolveDetailIdentity(route, this.findMetaInfoContainer()).imdbId;
             if (this.normalizeImdbId(currentId) !== id) return;
 
             const label = this.findImdbRatingLabel();
@@ -2151,24 +3687,73 @@
                 } else {
                     return null;
                 }
-                
-                // TV Series Cast needs aggregate_credits; plain credits is often only a handful of people.
-                const append =
-                    mediaType === 'tv'
-                        ? 'credits,aggregate_credits,similar,recommendations,external_ids,content_ratings,release_dates,images'
-                        : 'credits,similar,recommendations,external_ids,content_ratings,release_dates,images';
-                const detailUrl = `https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=${apiKey}&append_to_response=${append}&include_image_language=en,null`;
-                const detailResponse = await fetch(detailUrl);
-                
-                if (!detailResponse.ok) return null;
-                
-                const data = await detailResponse.json();
-                data.media_type = mediaType;
 
-                this.cache.set(imdbId, data);
+                const data = await this.fetchTMDBDataByTmdbId(tmdbId, mediaType);
+                if (data) this.cache.set(imdbId, data);
                 return data;
             } catch (error) {
                 console.error('[DataEnrichment] Fetch error:', error);
+                return null;
+            }
+        }
+
+        /**
+         * @param {number} tmdbId
+         * @param {'tv'|'movie'} mediaType
+         * @returns {Promise<object|null>}
+         */
+        async fetchTMDBDataByTmdbId(tmdbId, mediaType) {
+            const id = Number(tmdbId);
+            if (!Number.isFinite(id) || id <= 0) return null;
+            const cacheKey = `tmdb:${id}`;
+            if (this.cache.has(cacheKey)) return this.cache.get(cacheKey);
+
+            const apiKey = this.config.tmdbApiKey;
+            if (!apiKey) return null;
+
+            const type = mediaType === 'movie' ? 'movie' : 'tv';
+            const append =
+                type === 'tv'
+                    ? 'credits,aggregate_credits,similar,recommendations,external_ids,content_ratings,release_dates,images'
+                    : 'credits,similar,recommendations,external_ids,content_ratings,release_dates,images';
+            try {
+                const detailUrl = `https://api.themoviedb.org/3/${type}/${id}?api_key=${apiKey}&append_to_response=${append}&include_image_language=en,null`;
+                const detailResponse = await fetch(detailUrl);
+                if (!detailResponse.ok) return null;
+                const data = await detailResponse.json();
+                data.media_type = type;
+                this.cache.set(cacheKey, data);
+                const imdb = this.normalizeImdbId(data.external_ids?.imdb_id);
+                if (imdb) this.cache.set(imdb, data);
+                return data;
+            } catch (error) {
+                console.error('[DataEnrichment] TMDB id fetch error:', error);
+                return null;
+            }
+        }
+
+        /**
+         * Title search scoped to the open details page — never CW posters.
+         * @param {string} title
+         * @param {string|null} [typeHint]
+         * @returns {Promise<object|null>}
+         */
+        async searchTmdbByTitle(title, typeHint = null) {
+            const query = String(title || '').trim();
+            if (!query) return null;
+            const apiKey = this.config.tmdbApiKey;
+            if (!apiKey) return null;
+            const mediaType = this.tmdbMediaType(typeHint);
+            try {
+                const url = `https://api.themoviedb.org/3/search/${mediaType}?api_key=${apiKey}&query=${encodeURIComponent(query)}`;
+                const res = await fetch(url);
+                if (!res.ok) return null;
+                const json = await res.json();
+                const hit = Array.isArray(json?.results) ? json.results[0] : null;
+                if (!hit?.id) return null;
+                return this.fetchTMDBDataByTmdbId(hit.id, mediaType);
+            } catch (error) {
+                console.error('[DataEnrichment] TMDB search error:', error);
                 return null;
             }
         }
@@ -2237,6 +3822,45 @@
             }
 
             return Array.from(byId.values());
+        }
+
+        /**
+         * Injects native franchise / sequel links as DE chips.
+         * @param {Array<{ name: string, href?: string }>} links
+         * @param {HTMLElement} container
+         */
+        injectEnhancedFranchise(links, container) {
+            const list = Array.isArray(links) ? links.filter((item) => item && item.name) : [];
+            if (!list.length) return;
+
+            const icon = `<svg class="enhanced-genre-icon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>`;
+            const section = document.createElement('div');
+            section.className = 'enhanced-franchise-section enhanced-genres-section enhanced-carousel';
+            section.innerHTML = `
+                <div class="enhanced-section-header">Franchise</div>
+                <div class="enhanced-carousel-wrapper">
+                    <button type="button" class="enhanced-scroll-btn enhanced-scroll-left" aria-label="Scroll left"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 6 9 12 15 18"></polyline></svg></button>
+                    <div class="enhanced-cast-container enhanced-scroll-container enhanced-genres-container">
+                        ${list
+                            .map(
+                                (item) => `
+                            <a class="enhanced-cast-item enhanced-genre-pill" href="${escapeHtml(item.href || '#')}" data-franchise-name="${escapeHtml(item.name)}">
+                                <div class="enhanced-cast-image-container enhanced-genre-icon-circle">
+                                    ${icon}
+                                </div>
+                                <div class="enhanced-cast-info">
+                                    <div class="enhanced-cast-name">${escapeHtml(item.name)}</div>
+                                </div>
+                            </a>
+                        `
+                            )
+                            .join('')}
+                    </div>
+                    <button type="button" class="enhanced-scroll-btn enhanced-scroll-right" aria-label="Scroll right"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 6 15 12 9 18"></polyline></svg></button>
+                </div>
+            `;
+            container.appendChild(section);
+            this.setupScrollButtons(section);
         }
 
         /**
@@ -2552,39 +4176,73 @@
         }
 
         /**
+         * Href on a catalog/detail poster card.
+         * @param {HTMLElement} poster
+         * @returns {string}
+         */
+        posterHref(poster) {
+            const link =
+                poster.tagName === 'A'
+                    ? poster
+                    : poster.querySelector('a[href]');
+            return String(link?.href || poster.getAttribute('href') || '');
+        }
+
+        /**
          * Resolve a stable media id for a poster/card (IMDb or TMDB).
          * @param {HTMLElement} poster
          * @returns {{ mediaId: string, idType: string }|null}
          */
         resolvePosterMediaId(poster) {
-            let mediaId = null;
-            let idType = 'imdb';
-
             if (poster.classList.contains('enhanced-poster-item')) {
-                const rawId = poster.dataset.id;
-                idType = 'tmdb';
-                mediaId = poster.dataset.mediaType === 'tv' ? `series-${rawId}` : `movie-${rawId}`;
-            } else {
-                const linkElement = poster.tagName === 'A' ? poster : poster.querySelector('a');
-                if (!linkElement || !linkElement.href) return null;
+                const rawId = String(poster.dataset.id || '').replace(/\D/g, '');
+                if (!rawId) return null;
+                return { mediaId: rawId, idType: 'tmdb' };
+            }
 
-                const imdbMatch = linkElement.href.match(/(tt\d+)/);
-                if (imdbMatch) {
-                    mediaId = imdbMatch[1];
-                    idType = 'imdb';
-                } else {
-                    const tmdbMatch = linkElement.href.match(/tmdb[:\/](\d+)/);
-                    if (tmdbMatch) {
-                        idType = 'tmdb';
-                        mediaId = linkElement.href.includes('series')
-                            ? `series-${tmdbMatch[1]}`
-                            : `movie-${tmdbMatch[1]}`;
-                    }
+            const href = this.posterHref(poster);
+            if (!href) return null;
+
+            const imdbMatch = href.match(/tt\d{7,8}/i);
+            if (imdbMatch) {
+                return { mediaId: imdbMatch[0].toLowerCase(), idType: 'imdb' };
+            }
+
+            const tmdbPrefixed = href.match(/tmdb[:/\-](\d+)/i);
+            if (tmdbPrefixed) {
+                return { mediaId: tmdbPrefixed[1], idType: 'tmdb' };
+            }
+
+            const detail = href.match(/#?\/detail\/(movie|series|tv)\/([^/?#]+)/i);
+            if (detail) {
+                let raw = detail[2];
+                try {
+                    raw = decodeURIComponent(raw);
+                } catch (_) {}
+                const imdbInRaw = raw.match(/tt\d{7,8}/i);
+                if (imdbInRaw) {
+                    return { mediaId: imdbInRaw[0].toLowerCase(), idType: 'imdb' };
+                }
+                const tmdbInRaw = raw.match(/tmdb[:/\-]?(\d+)/i);
+                if (tmdbInRaw) {
+                    return { mediaId: tmdbInRaw[1], idType: 'tmdb' };
+                }
+                if (/^\d+$/.test(raw)) {
+                    return { mediaId: raw, idType: 'tmdb' };
                 }
             }
 
-            if (!mediaId) return null;
-            return { mediaId, idType };
+            return null;
+        }
+
+        /**
+         * @param {string} idType
+         * @param {string} mediaId
+         * @returns {string}
+         */
+        buildRpdbUrl(idType, mediaId) {
+            const key = this.config.rpdbApiKey;
+            return `https://api.ratingposterdb.com/${encodeURIComponent(key)}/${idType}/poster-default/${mediaId}.jpg?fallback=true`;
         }
 
         /**
@@ -2609,63 +4267,79 @@
             }
         }
 
+        resetAllRpdbPosters() {
+            document
+                .querySelectorAll('[data-rpdb-id], [data-rpdb-enriched]')
+                .forEach((el) => this.resetRpdbPoster(el));
+        }
+
+        /**
+         * @param {HTMLElement} poster
+         */
+        enrichRpdbPoster(poster) {
+            if (poster.closest?.('[class*="continue-watching"]')) return;
+            const resolved = this.resolvePosterMediaId(poster);
+            if (!resolved) return;
+
+            const { mediaId, idType } = resolved;
+            const imgElement = poster.querySelector('img');
+            if (!imgElement) return;
+
+            const storedId = poster.dataset.rpdbId || '';
+            const rpdbUrl = this.buildRpdbUrl(idType, mediaId);
+            const currentSrc = imgElement.getAttribute('src') || '';
+
+            if (poster.dataset.rpdbEnriched === 'true' && storedId === mediaId) {
+                if (currentSrc === rpdbUrl || currentSrc.includes('ratingposterdb.com')) {
+                    return;
+                }
+            }
+
+            if (storedId && storedId !== mediaId) {
+                this.resetRpdbPoster(poster);
+            }
+
+            const gen = String((Number(poster.dataset.rpdbGen) || 0) + 1);
+            poster.dataset.rpdbGen = gen;
+            poster.dataset.rpdbId = mediaId;
+            delete poster.dataset.rpdbEnriched;
+            if (!imgElement.dataset.rpdbOriginalSrc && !currentSrc.includes('ratingposterdb.com')) {
+                imgElement.dataset.rpdbOriginalSrc = imgElement.src;
+            }
+
+            const tempImg = new Image();
+            tempImg.onload = () => {
+                if (poster.dataset.rpdbGen !== gen || poster.dataset.rpdbId !== mediaId) return;
+                imgElement.src = rpdbUrl;
+                imgElement.removeAttribute('srcset');
+                imgElement.style.setProperty('content', `url("${rpdbUrl}")`, 'important');
+                imgElement.style.setProperty('object-fit', 'cover', 'important');
+                const bgContainer = poster.querySelector('.poster-image-container, .poster-image');
+                if (bgContainer) {
+                    bgContainer.style.setProperty('background-image', `url("${rpdbUrl}")`, 'important');
+                }
+                poster.dataset.rpdbEnriched = 'true';
+            };
+            tempImg.onerror = () => {
+                if (poster.dataset.rpdbGen !== gen) return;
+                delete poster.dataset.rpdbEnriched;
+                console.debug(`[RPDB] Failed to load poster for ${idType}:${mediaId}`);
+            };
+            tempImg.src = rpdbUrl;
+        }
+
         checkForPosters() {
-            if (!this.config.showRatingsOnPosters || !this.config.rpdbApiKey) return;
+            if (!this.config.showRatingsOnPosters || !this.config.rpdbApiKey) {
+                this.resetAllRpdbPosters();
+                return;
+            }
 
             const posters = document.querySelectorAll(
                 '.meta-item-container-Tj0Ib, [class*="meta-item-container"], .poster-container, .enhanced-poster-item'
             );
-
             posters.forEach((poster) => {
-                const resolved = this.resolvePosterMediaId(poster);
-                if (!resolved) return;
-
-                const { mediaId, idType } = resolved;
-                const storedId = poster.dataset.rpdbId || '';
-
-                // Card reused for another title ÔÇö clear stale RPDB artwork
-                if (poster.dataset.rpdbEnriched === 'true' && storedId && storedId !== mediaId) {
-                    this.resetRpdbPoster(poster);
-                }
-
-                if (poster.dataset.rpdbEnriched === 'true' && storedId === mediaId) {
-                    return;
-                }
-
-                const imgElement = poster.querySelector('img');
-                if (!imgElement) return;
-
-                const gen = String((Number(poster.dataset.rpdbGen) || 0) + 1);
-                poster.dataset.rpdbGen = gen;
-                poster.dataset.rpdbEnriched = 'true';
-                poster.dataset.rpdbId = mediaId;
-                if (!imgElement.dataset.rpdbOriginalSrc) {
-                    imgElement.dataset.rpdbOriginalSrc = imgElement.src;
-                }
-
-                const rpdbKey = this.config.rpdbApiKey;
-                const rpdbUrl = `https://api.ratingposterdb.com/${rpdbKey}/${idType}/poster-default/${mediaId}.jpg?fallback=true`;
-
-                const tempImg = new Image();
-                tempImg.onload = () => {
-                    if (poster.dataset.rpdbGen !== gen || poster.dataset.rpdbId !== mediaId) return;
-                    imgElement.src = rpdbUrl;
-                    imgElement.removeAttribute('srcset');
-
-                    imgElement.style.setProperty('content', `url("${rpdbUrl}")`, 'important');
-                    imgElement.style.setProperty('object-fit', 'cover', 'important');
-
-                    const bgContainer = poster.querySelector('.poster-image-container, .poster-image');
-                    if (bgContainer) {
-                        bgContainer.style.setProperty('background-image', `url("${rpdbUrl}")`, 'important');
-                    }
-                };
-
-                tempImg.onerror = () => {
-                    console.debug(`[RPDB] Failed to load poster for ${mediaId}`);
-                };
-
-                tempImg.src = rpdbUrl;
+                if (poster.closest?.('[class*="continue-watching"]')) return;
+                this.enrichRpdbPoster(poster);
             });
         }
 
@@ -2707,6 +4381,14 @@
                 document.removeEventListener('click', this._boundOnStreamsBack, true);
                 this._boundOnStreamsBack = null;
             }
+            if (this._boundOnEpisodeClick) {
+                document.removeEventListener('click', this._boundOnEpisodeClick, true);
+                this._boundOnEpisodeClick = null;
+            }
+            if (this._episodeRetryTimer) {
+                clearTimeout(this._episodeRetryTimer);
+                this._episodeRetryTimer = null;
+            }
             this._activeDetailKey = null;
             this.cleanup(true);
         }
@@ -2737,6 +4419,34 @@
         } catch (_) {
             window.__DataEnrichmentLoaded = false;
         }
+        try {
+            delete window.__mystremioRatingsBar;
+        } catch (_) {
+            window.__mystremioRatingsBar = null;
+        }
+        try {
+            document.getElementById('mystremio-ratings-bar-styles-v5')?.remove();
+            document.getElementById('mystremio-ratings-bar-styles-v6')?.remove();
+            document.getElementById('mystremio-ratings-bar-styles-v7')?.remove();
+            document.getElementById('mystremio-ratings-bar-styles-v8')?.remove();
+            document.querySelectorAll('.msb-detail-stack, .msb-ratings-row, .mystremio-ratings-bar').forEach((el) => {
+                el.remove();
+            });
+        } catch (_) {}
+    };
+
+    window.__stremioDataEnrichmentSuspend = function () {
+        try {
+            const instance = enrichmentInstance || window.__stremioDataEnrichmentInstance;
+            instance?.suspendBackground?.();
+        } catch (_) {}
+    };
+
+    window.__stremioDataEnrichmentResume = function () {
+        try {
+            const instance = enrichmentInstance || window.__stremioDataEnrichmentInstance;
+            instance?.resumeBackground?.();
+        } catch (_) {}
     };
 
     if (document.body) {

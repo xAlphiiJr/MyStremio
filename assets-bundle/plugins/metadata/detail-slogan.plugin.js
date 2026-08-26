@@ -147,7 +147,7 @@
   }
 
   /**
-   * Finds the meta-info container that holds logo + runtime row.
+   * Visible meta-info mount (same rules as Data Enrichment).
    * @returns {Element|null}
    */
   function findMetaInfoContainer() {
@@ -157,13 +157,65 @@
       '[class*="meta-details-container"] [class*="meta-info"]',
     ];
 
+    /** @type {Element[]} */
+    const candidates = [];
     for (const selector of selectors) {
-      const el = document.querySelector(selector);
-      if (!el) continue;
-      if (el.closest('[class*="player-container"], [class*="control-bar-layer"]')) continue;
-      return el;
+      for (const el of document.querySelectorAll(selector)) {
+        if (
+          el.closest(
+            '[class*="player-container"], [class*="control-bar-layer"], [class*="subtitles-menu-container"]'
+          )
+        ) {
+          continue;
+        }
+        if (el.closest('[class*="meta-preview-placeholder-container"]')) continue;
+        if (!el.isConnected) continue;
+        candidates.push(el);
+      }
     }
-    return null;
+    if (!candidates.length) return null;
+
+    const isVisible = (el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    const underDetails = candidates.filter(
+      (el) => el.closest('[class*="meta-details"]') && isVisible(el)
+    );
+    if (underDetails.length) return underDetails[0];
+
+    const visible = candidates.filter(isVisible);
+    if (visible.length) return visible[0];
+
+    return candidates[0];
+  }
+
+  /**
+   * IMDb id from the live details tree (series overview often has no tt in the hash).
+   * @returns {string|null}
+   */
+  function extractImdbIdFromVisibleRoot() {
+    const mount = findMetaInfoContainer();
+    const root =
+      mount?.closest('[class*="meta-details"], [class*="meta-preview"], [class*="metadetails"]') ||
+      mount;
+    if (!root) return null;
+    const hrefNodes = root.querySelectorAll('a[href], [href], [class*="imdb-button-container"]');
+    for (const el of hrefNodes) {
+      const blob = `${el.getAttribute('href') || ''} ${el.getAttribute('title') || ''}`;
+      const match = blob.match(/tt\d{7,8}/i);
+      if (match) return match[0].toLowerCase();
+    }
+    const textMatch = String(root.textContent || '').match(/tt\d{7,8}/i);
+    return textMatch ? textMatch[0].toLowerCase() : null;
+  }
+
+  /**
+   * @returns {string|null}
+   */
+  function resolveImdbId() {
+    return getImdbIdFromHash() || extractImdbIdFromVisibleRoot();
   }
 
   /**
@@ -198,6 +250,10 @@
 
     const metaInfo = findMetaInfoContainer();
     if (!metaInfo) return false;
+
+    document.querySelectorAll(`.${SLOGAN_CLASS}`).forEach((node) => {
+      if (!metaInfo.contains(node)) node.remove();
+    });
 
     const existing = metaInfo.querySelector(`.${SLOGAN_CLASS}`);
     if (existing) {
@@ -277,20 +333,21 @@
       return;
     }
 
-    const imdbId = getImdbIdFromHash();
-    if (!imdbId) {
-      removeSloganNodes();
-      return;
-    }
-
     const metaInfo = findMetaInfoContainer();
     if (!metaInfo) {
       scheduleCheck(120);
       return;
     }
 
+    const imdbId = resolveImdbId();
+    if (!imdbId) {
+      removeSloganNodes();
+      scheduleCheck(200);
+      return;
+    }
+
     const existing = metaInfo.querySelector(`.${SLOGAN_CLASS}`);
-    if (existing?.dataset.imdbId === imdbId) return;
+    if (existing?.dataset.imdbId === imdbId && metaInfo.contains(existing)) return;
 
     const apiKey = await resolveTmdbApiKey();
     if (gen !== generation) return;
@@ -330,6 +387,27 @@
     });
   }
 
+  function bindSloganObserver() {
+    if (!observer) setupObserver();
+    else {
+      observer.observe(document.body || document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+    }
+  }
+
+  window.__stremioDetailSloganSuspend = function () {
+    try {
+      observer?.disconnect();
+    } catch (_) {}
+  };
+
+  window.__stremioDetailSloganResume = function () {
+    bindSloganObserver();
+    if (isDetailRoute()) scheduleCheck(60);
+  };
+
   function init() {
     ensureStyles();
     setupObserver();
@@ -350,12 +428,12 @@
     }
 
     scheduleCheck(100);
+    if (window.stremioCustomSuspendBackground?.()) {
+      window.__stremioDetailSloganSuspend?.();
+    }
     console.log('[DetailSlogan] Plugin loaded v1.0.2 (based on Stremio-Kai / allecsc; adapted by MyStremio)');
   }
 
-  /**
-   * Hard unload for live disable.
-   */
   window.__stremioDetailSloganUnload = function () {
     generation += 1;
     if (retryTimer) {

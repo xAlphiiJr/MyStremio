@@ -174,13 +174,15 @@ pub fn resolve_mal_from_kitsu(kitsu_id: u64) -> Result<Option<u64>, String> {
 }
 
 /// Resolve a MyAnimeList ID by title search via Jikan (same approach as stremio-aniskip).
+/// Prefers an exact title match, then the same year, then the first hit.
 ///
 /// # Arguments
 /// * `title` - Anime title to search.
+/// * `year` - Optional first-air year (Naruto 2002 vs Shippuden 2007).
 ///
 /// # Errors
 /// Returns an error string for transport failures.
-pub fn resolve_mal_from_jikan(title: &str) -> Result<Option<u64>, String> {
+pub fn resolve_mal_from_jikan(title: &str, year: Option<u32>) -> Result<Option<u64>, String> {
     let trimmed = title.trim();
     if trimmed.is_empty() {
         return Ok(None);
@@ -188,7 +190,7 @@ pub fn resolve_mal_from_jikan(title: &str) -> Result<Option<u64>, String> {
 
     let client = Client::new();
     let url = format!(
-        "{JIKAN_API_BASE}/anime?q={}&limit=1",
+        "{JIKAN_API_BASE}/anime?q={}&limit=8",
         urlencoding_encode(trimmed)
     );
     let response = client
@@ -208,14 +210,72 @@ pub fn resolve_mal_from_jikan(title: &str) -> Result<Option<u64>, String> {
         .json::<Value>()
         .map_err(|error| format!("Jikan response was not valid JSON: {error}"))?;
 
-    let mal_id = payload
-        .get("data")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|entry| entry.get("mal_id"))
-        .and_then(|v| v.as_u64());
+    let Some(entries) = payload.get("data").and_then(|v| v.as_array()) else {
+        return Ok(None);
+    };
 
-    Ok(mal_id.filter(|id| *id > 0))
+    let needle = trimmed.to_lowercase();
+    let mut best: Option<(u32, u64)> = None;
+    for entry in entries {
+        let Some(mal_id) = entry.get("mal_id").and_then(|v| v.as_u64()).filter(|id| *id > 0) else {
+            continue;
+        };
+        let titles = jikan_titles(entry);
+        let exact = titles.iter().any(|t| t.eq_ignore_ascii_case(&needle));
+        let year_hit = year.is_some_and(|want| jikan_year(entry) == Some(want));
+        let score = if exact && year_hit {
+            3
+        } else if exact {
+            2
+        } else if year_hit {
+            1
+        } else {
+            0
+        };
+        if best.map(|(s, _)| score > s).unwrap_or(true) {
+            best = Some((score, mal_id));
+        }
+        if score == 3 {
+            break;
+        }
+    }
+
+    Ok(best.map(|(_, id)| id))
+}
+
+fn jikan_titles(entry: &Value) -> Vec<String> {
+    let mut titles = Vec::new();
+    for key in ["title", "title_english", "title_japanese"] {
+        if let Some(text) = entry.get(key).and_then(|v| v.as_str()) {
+            if !text.is_empty() {
+                titles.push(text.to_string());
+            }
+        }
+    }
+    if let Some(list) = entry.get("titles").and_then(|v| v.as_array()) {
+        for item in list {
+            if let Some(text) = item.get("title").and_then(|v| v.as_str()) {
+                if !text.is_empty() {
+                    titles.push(text.to_string());
+                }
+            }
+        }
+    }
+    titles
+}
+
+fn jikan_year(entry: &Value) -> Option<u32> {
+    entry
+        .get("year")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32)
+        .or_else(|| {
+            entry
+                .get("aired")
+                .and_then(|v| v.get("from"))
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.get(0..4)?.parse().ok())
+        })
 }
 
 /// Resolve a MyAnimeList ID by searching Kitsu by title, then reading mappings.

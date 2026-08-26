@@ -265,6 +265,119 @@
 		return Object.fromEntries(SEGMENT_TYPES.map((type) => [type, []]));
 	}
 
+	const FILE_SEGMENTS_LS = "mystremio-tidb-file-segments-v1";
+	const FILE_SEGMENTS_MAX = 60;
+	const FILE_SEGMENTS_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+	const INFO_HASH_RE = /^[0-9a-f]{40}$/i;
+
+	function normalizeFileName(name) {
+		return String(name || "")
+			.replace(/\\/g, "/")
+			.split("/")
+			.pop()
+			.trim()
+			.toLowerCase();
+	}
+
+	function parseInfoHashFromUrl(url) {
+		try {
+			const parsed = new URL(String(url || ""), location.href);
+			const parts = parsed.pathname.split("/").filter(Boolean);
+			if (parts[0] === "proxy") parts.shift();
+			if (!parts.length || !INFO_HASH_RE.test(parts[0])) return null;
+			const infoHash = parts[0].toLowerCase();
+			const rawIndex = parts[1];
+			const numericIndex = Number(rawIndex);
+			if (Number.isInteger(numericIndex) && numericIndex >= 0) {
+				return { infoHash, fileIndex: numericIndex, fileName: null };
+			}
+			return {
+				infoHash,
+				fileIndex: null,
+				fileName: rawIndex ? decodeURIComponent(rawIndex) : null
+			};
+		} catch (_) {
+			return null;
+		}
+	}
+
+	function streamFileCacheKey(stream, video) {
+		const fromUrl = parseInfoHashFromUrl(video && (video.currentSrc || video.src));
+		const infoHash = String((stream && stream.infoHash) || (fromUrl && fromUrl.infoHash) || "").toLowerCase();
+		const hints = stream && stream.behaviorHints ? stream.behaviorHints : {};
+		const fileName = normalizeFileName(
+			hints.filename || (stream && stream.name) || (fromUrl && fromUrl.fileName) || ""
+		);
+		const fileIdx = stream && (stream.fileIdx != null ? stream.fileIdx : stream.fileIndex);
+		const fromUrlIdx = fromUrl && fromUrl.fileIndex;
+		if (INFO_HASH_RE.test(infoHash)) {
+			if (fileName) return `ih:${infoHash}:${fileName}`;
+			if (fileIdx != null && Number.isInteger(Number(fileIdx))) return `ih:${infoHash}:${fileIdx}`;
+			if (fromUrlIdx != null) return `ih:${infoHash}:${fromUrlIdx}`;
+			return `ih:${infoHash}`;
+		}
+		if (fileName && fileName.length > 8) return `fn:${fileName}`;
+		return null;
+	}
+
+	function segmentsHaveHits(segments) {
+		if (!segments || typeof segments !== "object") return false;
+		return Object.values(segments).flat().length > 0;
+	}
+
+	function cloneSegments(segments) {
+		const cloned = emptySegments();
+		if (!segments || typeof segments !== "object") return cloned;
+		for (const type of SEGMENT_TYPES) {
+			const list = Array.isArray(segments[type]) ? segments[type] : [];
+			cloned[type] = list
+				.map((item) => ({
+					start: Number(item && item.start),
+					end: item && item.end != null && Number.isFinite(Number(item.end)) ? Number(item.end) : null
+				}))
+				.filter((item) => Number.isFinite(item.start));
+		}
+		return cloned;
+	}
+
+	function readFileSegmentCache(fileKey) {
+		if (!fileKey) return null;
+		try {
+			const raw = localStorage.getItem(FILE_SEGMENTS_LS);
+			if (!raw) return null;
+			const store = JSON.parse(raw);
+			const entry = store && store[fileKey];
+			if (!entry || !entry.at || Date.now() - Number(entry.at) > FILE_SEGMENTS_TTL_MS) return null;
+			const segments = cloneSegments(entry.segments);
+			return segmentsHaveHits(segments) ? segments : null;
+		} catch (_) {
+			return null;
+		}
+	}
+
+	function writeFileSegmentCache(fileKey, segments) {
+		if (!fileKey || !segmentsHaveHits(segments)) return;
+		try {
+			let store = {};
+			const raw = localStorage.getItem(FILE_SEGMENTS_LS);
+			if (raw) {
+				const parsed = JSON.parse(raw);
+				if (parsed && typeof parsed === "object") store = parsed;
+			}
+			store[fileKey] = { at: Date.now(), segments: cloneSegments(segments) };
+			const keys = Object.keys(store);
+			if (keys.length > FILE_SEGMENTS_MAX) {
+				keys
+					.sort((a, b) => Number(store[a] && store[a].at) - Number(store[b] && store[b].at))
+					.slice(0, keys.length - FILE_SEGMENTS_MAX)
+					.forEach((key) => {
+						delete store[key];
+					});
+			}
+			localStorage.setItem(FILE_SEGMENTS_LS, JSON.stringify(store));
+		} catch (_) {}
+	}
+
 	/**
 	 * Normalize a TheIntroDB API key (`theintrodb:user_…:…`).
 	 *
@@ -336,66 +449,35 @@
 	}
 
 	/**
-	 * Average two segment ranges when both providers returned timestamps.
+	 * Pick the first non-empty interval list for each segment type.
+	 * Priority is the order of `priorityList` (IntroDB, TheIntroDB, AniSkip).
 	 *
-	 * @param {{start: number, end: number|null}} left
-	 * @param {{start: number, end: number|null}} right
-	 * @returns {{start: number, end: number|null}}
-	 */
-	function averageSegmentRanges(left, right) {
-		const start = (left.start + right.start) / 2;
-		let end = null;
-		if (left.end != null && right.end != null) {
-			end = (left.end + right.end) / 2;
-		} else if (left.end != null) {
-			end = left.end;
-		} else if (right.end != null) {
-			end = right.end;
-		}
-		return { start, end };
-	}
-
-	/**
-	 * Merge segment lists from both providers. When both have data, use the average.
-	 *
-	 * @param {Array<{start: number, end: number|null}>} leftSegments
-	 * @param {Array<{start: number, end: number|null}>} rightSegments
-	 * @returns {Array<{start: number, end: number|null}>}
-	 */
-	function mergeSegmentLists(leftSegments, rightSegments) {
-		if (!leftSegments.length && !rightSegments.length) return [];
-		if (!leftSegments.length) return rightSegments.slice();
-		if (!rightSegments.length) return leftSegments.slice();
-		return [averageSegmentRanges(leftSegments[0], rightSegments[0])];
-	}
-
-	/**
-	 * Merge TheIntroDB and IntroDB segment maps into one player-facing map.
-	 *
-	 * @param {Record<string, Array<{start: number, end: number|null}>>} theIntroDbSegments
-	 * @param {Record<string, Array<{start: number, end: number|null}>>} introDbSegments
+	 * @param {Array<Record<string, Array<{start: number, end: number|null}>>>} priorityList
 	 * @returns {Record<string, Array<{start: number, end: number|null}>>}
 	 */
-	function mergeProviderSegments(theIntroDbSegments, introDbSegments) {
-		const merged = emptySegments();
+	function pickProviderSegments(priorityList) {
+		const picked = emptySegments();
+		const sources = Array.isArray(priorityList) ? priorityList : [];
 		for (const segmentType of SEGMENT_TYPES) {
-			merged[segmentType] = mergeSegmentLists(
-				theIntroDbSegments[segmentType] || [],
-				introDbSegments[segmentType] || []
-			);
+			for (const provider of sources) {
+				const list = (provider && provider[segmentType]) || [];
+				if (list.length > 0) {
+					picked[segmentType] = [list[0]];
+					break;
+				}
+			}
 		}
-		return merged;
+		return picked;
 	}
 
 	/**
-	 * Merge a third provider map into an already-merged segment map.
+	 * Typical anime episode length — AniSkip may scale to this; only then as a gap-filler.
 	 *
-	 * @param {Record<string, Array<{start: number, end: number|null}>>} baseSegments
-	 * @param {Record<string, Array<{start: number, end: number|null}>>} extraSegments
-	 * @returns {Record<string, Array<{start: number, end: number|null}>>}
+	 * @param {number|null|undefined} durationSecs
+	 * @returns {boolean}
 	 */
-	function mergeExtraProviderSegments(baseSegments, extraSegments) {
-		return mergeProviderSegments(baseSegments || emptySegments(), extraSegments || emptySegments());
+	function isPlausibleAniSkipLength(durationSecs) {
+		return Number.isFinite(durationSecs) && durationSecs >= 18 * 60 && durationSecs <= 30 * 60;
 	}
 
 	/**
@@ -488,6 +570,21 @@
 			throw new Error("IntroDB proxy is unavailable in this shell.");
 		}
 		return api.invoke(method, params);
+	}
+
+	async function invokeMapTvEpisodeLayout(imdbId, season, episode, tmdbLengths) {
+		const api = window.StremioCustomAPI || window.StremioEnhancedAPI;
+		if (!api || typeof api.invoke !== "function") return null;
+		try {
+			return await api.invoke("map-tv-episode-layout", {
+				imdbId,
+				season: Number(season),
+				episode: Number(episode),
+				tmdbLengths: Array.isArray(tmdbLengths) ? tmdbLengths : undefined
+			});
+		} catch (_) {
+			return null;
+		}
 	}
 
 	function parseSubmissionResponse(responseJson) {
@@ -637,6 +734,17 @@
 		const parts = String(episodeId || "").split(":");
 		if (parts.length < 3) return null;
 
+		if (parts[0].toLowerCase() === "kitsu") {
+			const episode = Number(parts[2]);
+			return {
+				idPart: `kitsu:${parts[1]}`,
+				tmdbId: null,
+				imdbId: null,
+				season: null,
+				episode: isPlausibleEpisode(episode) ? episode : null
+			};
+		}
+
 		if (parts[0].toLowerCase() === "tmdb" && parts.length >= 4) {
 			const tmdbId = readTmdbIdField(parts[1]);
 			const season = Number(parts[2]);
@@ -658,6 +766,56 @@
 			season: isPlausibleSeason(season) ? season : null,
 			episode: isPlausibleEpisode(episode) ? episode : null
 		};
+	}
+
+	/**
+	 * Prefer an episode id that already includes season/episode.
+	 * @param {string|null|undefined} primary
+	 * @param {string|null|undefined} secondary
+	 * @returns {string|null}
+	 */
+	function pickRicherEpisodeId(primary, secondary) {
+		const a = String(primary || "");
+		const b = String(secondary || "");
+		if (parseTvEpisodeId(a)) return a;
+		if (parseTvEpisodeId(b)) return b;
+		return a || b || null;
+	}
+
+	/**
+	 * Per-season episode counts from Cinemeta/TMDB video lists (season 0 ignored).
+	 * @param {object[]|null|undefined} videos
+	 * @returns {number[]}
+	 */
+	function seasonLengthsFromVideos(videos) {
+		const counts = new Map();
+		if (!Array.isArray(videos)) return [];
+		for (const video of videos) {
+			const season = Number(video && video.season);
+			if (!Number.isInteger(season) || season < 1) continue;
+			counts.set(season, (counts.get(season) || 0) + 1);
+		}
+		if (!counts.size) return [];
+		const maxSeason = Math.max(...counts.keys());
+		const lengths = [];
+		for (let season = 1; season <= maxSeason; season++) {
+			lengths.push(counts.get(season) || 0);
+		}
+		return lengths;
+	}
+
+	function absoluteFromSeasonEpisode(lengths, season, episode) {
+		let absolute = Number(episode);
+		if (!Number.isFinite(absolute) || absolute < 1) return null;
+		for (let i = 0; i < Number(season) - 1; i++) {
+			absolute += lengths[i] || 0;
+		}
+		return absolute;
+	}
+
+	function parseYearHint(value) {
+		const match = String(value || "").match(/(19|20)\d{2}/);
+		return match ? Number(match[0]) : null;
 	}
 
 	function collectTmdbFromMeta(meta, seriesInfo, state, isTv) {
@@ -713,15 +871,27 @@
 		if (!seriesInfo || seriesInfo.season == null || seriesInfo.episode == null) {
 			return null;
 		}
+		const metaId = meta && meta.id ? String(meta.id) : "";
+		const kitsuId = extractKitsuId(metaId);
 		const seriesImdbId = pickSeriesImdbId(seriesInfo, state);
 		const seriesTmdbId = collectTmdbFromMeta(meta, seriesInfo, state, true);
 		const seriesPart =
 			seriesImdbId ||
 			(seriesTmdbId ? `tmdb:${seriesTmdbId}` : null) ||
 			(meta && extractImdbId(meta.id)) ||
-			(meta && extractTmdbIdFromCatalogId(meta.id) ? `tmdb:${extractTmdbIdFromCatalogId(meta.id)}` : null);
+			(meta && extractTmdbIdFromCatalogId(meta.id) ? `tmdb:${extractTmdbIdFromCatalogId(meta.id)}` : null) ||
+			(kitsuId ? `kitsu:${kitsuId}` : null);
 		if (!seriesPart) return null;
+		if (String(seriesPart).toLowerCase().startsWith("kitsu:")) {
+			return `${seriesPart}:${seriesInfo.episode}`;
+		}
 		return `${seriesPart}:${seriesInfo.season}:${seriesInfo.episode}`;
+	}
+
+	function seriesTitleFromDisplayTitle(title) {
+		return String(title || "")
+			.replace(/\s+S\d{1,2}E\d{1,3}\s*$/i, "")
+			.trim();
 	}
 
 	function isValidTmdbId(value) {
@@ -729,8 +899,10 @@
 		return Number.isInteger(numeric) && numeric >= 1 && numeric <= 10000000;
 	}
 
-	function normalizeToggleValue(value) {
-		return value !== false;
+	function normalizeToggleValue(value, fallback = true) {
+		if (value === true || value === "true" || value === 1 || value === "1") return true;
+		if (value === false || value === "false" || value === 0 || value === "0") return false;
+		return fallback;
 	}
 
 	function getVideoDurationMs(video) {
@@ -1183,6 +1355,7 @@
 			this.video = null;
 			this.episodeId = null;
 			this.title = null;
+			this.seriesTitle = null;
 			this.segments = emptySegments();
 			this.activeSegment = null;
 			this.displayedSegmentType = null;
@@ -1600,15 +1773,15 @@
 		}
 
 		isTheIntroDbServiceEnabled() {
-			return this.useTheIntroDb !== false;
+			return this.useTheIntroDb === true;
 		}
 
 		isIntroDbServiceEnabled() {
-			return this.useIntroDb !== false;
+			return this.useIntroDb === true;
 		}
 
 		isAniSkipServiceEnabled() {
-			return this.useAniSkip !== false;
+			return this.useAniSkip === true;
 		}
 
 		canLoadFromAnyProvider() {
@@ -1735,14 +1908,15 @@
 					episodeId: urlEpisodeId,
 					title: this.extractTitleFromDocument(),
 					imdbId: (routeIds && routeIds.imdbId) || extractImdbId(urlEpisodeId) || parsedUrl?.imdbId || null,
-					season: parsedUrl?.season ?? null,
-					episode: parsedUrl?.episode ?? null
+					tmdbId: (routeIds && routeIds.tmdbId) || parsedUrl?.tmdbId || extractTmdbIdFromCatalogId(urlEpisodeId) || null,
+					season: parsedUrl?.season ?? routeIds?.season ?? null,
+					episode: parsedUrl?.episode ?? routeIds?.episode ?? null
 				}
 				: null;
 
 			const shouldRefreshState = sourceChanged || urlChanged || now - this._lastStateCheckAt > 5000 || !this._lastStateContext;
 			if (!shouldRefreshState && !urlChanged) {
-				return this._lastStateContext || urlContext;
+				return this.mergePlaybackContext(this._lastStateContext, urlContext);
 			}
 
 			if (shouldRefreshState) {
@@ -1750,7 +1924,31 @@
 				this._lastStateContext = await this.getPlaybackContextFromState();
 			}
 
-			return this._lastStateContext || urlContext;
+			return this.mergePlaybackContext(this._lastStateContext, urlContext);
+		}
+
+		/**
+		 * Core player meta wins. Hash IDs fill gaps; magnet/filename never supply IMDb.
+		 * @param {object|null} stateContext
+		 * @param {object|null} urlContext
+		 */
+		mergePlaybackContext(stateContext, urlContext) {
+			if (!stateContext && !urlContext) return null;
+			if (!stateContext) return urlContext;
+			if (!urlContext) return stateContext;
+			const stateId = String(stateContext.episodeId || "");
+			const urlId = String(urlContext.episodeId || "");
+			return {
+				...urlContext,
+				...stateContext,
+				episodeId: pickRicherEpisodeId(stateId, urlId),
+				imdbId: stateContext.imdbId || urlContext.imdbId || null,
+				tmdbId: stateContext.tmdbId || urlContext.tmdbId || null,
+				season: stateContext.season ?? urlContext.season ?? null,
+				episode: stateContext.episode ?? urlContext.episode ?? null,
+				title: stateContext.title || urlContext.title || null,
+				seriesTitle: stateContext.seriesTitle || urlContext.seriesTitle || null
+			};
 		}
 
 		isOnPlayerRoute() {
@@ -1804,11 +2002,15 @@
 				this.video = video;
 				this.episodeId = nextEpisodeId;
 				this.title = context.title || null;
+				this.seriesTitle = context.seriesTitle || seriesTitleFromDisplayTitle(context.title) || null;
 				this.mediaImdbId = context.imdbId || extractImdbId(nextEpisodeId) || null;
 				this.seriesImdbId = context.seriesImdbId || null;
 				this.playbackSeason = context.season ?? null;
 				this.playbackEpisode = context.episode ?? null;
-				this.resolvedTmdbId = context.tmdbId || null;
+				this.resolvedTmdbId =
+					(context.tmdbId && isValidTmdbId(context.tmdbId) ? Number(context.tmdbId) : null) ||
+					extractTmdbIdFromCatalogId(nextEpisodeId) ||
+					null;
 
 				if (!this.onLoadedMetadataHandler) this.onLoadedMetadataHandler = () => this.checkPlaybackChange();
 				this.video.removeEventListener("loadedmetadata", this.onLoadedMetadataHandler);
@@ -1890,18 +2092,21 @@
 		extractIdsFromPlayerRoute() {
 			const sources = [
 				window.location.hash || "",
-				decodeURIComponent(window.location.hash || ""),
-				window.location.href
+				decodeURIComponent(window.location.hash || "")
 			];
 			for (const source of sources) {
-				const tvMatch = source.match(/(tt\d{7,8})[:/](\d{1,3})[:/](\d{1,3})/i);
+				const tvMatch = source.match(/(tt\d{7,8})[:/](\d{1,3})[:/](\d{1,4})(?:\b|$)/i);
 				if (tvMatch) {
 					const imdbId = tvMatch[1].toLowerCase();
 					return {
 						episodeId: `${imdbId}:${tvMatch[2]}:${tvMatch[3]}`,
-						imdbId
+						imdbId,
+						season: Number(tvMatch[2]),
+						episode: Number(tvMatch[3])
 					};
 				}
+			}
+			for (const source of sources) {
 				const imdbMatch = source.match(/(tt\d{7,8})/i);
 				if (imdbMatch) {
 					const imdbId = imdbMatch[1].toLowerCase();
@@ -1927,28 +2132,51 @@
 			if (!meta || !meta.id) return null;
 
 			const seriesInfo = state.seriesInfo;
-			const isTv = seriesInfo && seriesInfo.season != null && seriesInfo.episode != null;
-			const episodeId = isTv
-				? buildTvEpisodeId(seriesInfo, state, meta) || String(meta.id)
-				: String(meta.id);
+			const parsedMeta = parseTvEpisodeId(meta.id);
+			const selectedVideoId =
+				(state.selected && (state.selected.videoId || state.selected.id)) || null;
+			const parsedSelected = parseTvEpisodeId(selectedVideoId);
+			const fromSeriesInfo =
+				seriesInfo &&
+				isPlausibleSeason(seriesInfo.season) &&
+				isPlausibleEpisode(seriesInfo.episode);
+			const season = fromSeriesInfo
+				? Number(seriesInfo.season)
+				: parsedMeta?.season || parsedSelected?.season || null;
+			const episode = fromSeriesInfo
+				? Number(seriesInfo.episode)
+				: parsedMeta?.episode || parsedSelected?.episode || null;
+			const isTv = isPlausibleSeason(season) && isPlausibleEpisode(episode);
+			const episodeId = pickRicherEpisodeId(
+				fromSeriesInfo ? buildTvEpisodeId(seriesInfo, state, meta) : null,
+				pickRicherEpisodeId(String(meta.id), selectedVideoId)
+			);
 
 			let title = meta.name ? String(meta.name) : null;
+			const seriesTitle = title;
 			if (title && isTv) {
-				title = `${title} S${String(seriesInfo.season).padStart(2, "0")}E${String(seriesInfo.episode).padStart(2, "0")}`;
+				title = `${title} S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
 			}
 
 			const seriesImdbId = isTv ? pickSeriesImdbId(seriesInfo, state) : null;
 			const imdbId = seriesImdbId || collectImdbFromMeta(meta, seriesInfo, state);
 			const tmdbId = collectTmdbFromMeta(meta, seriesInfo, state, isTv);
+			const stream =
+				(state && state.stream) ||
+				(state && state.selected && state.selected.stream) ||
+				null;
 
 			return {
 				episodeId,
 				title,
+				seriesTitle,
 				imdbId,
 				seriesImdbId,
 				tmdbId,
-				season: isTv ? Number(seriesInfo.season) : null,
-				episode: isTv ? Number(seriesInfo.episode) : null
+				meta,
+				stream,
+				season: isTv ? Number(season) : null,
+				episode: isTv ? Number(episode) : null
 			};
 		}
 
@@ -1959,6 +2187,7 @@
 				if (stateContext.imdbId) this.mediaImdbId = stateContext.imdbId;
 				if (stateContext.seriesImdbId) this.seriesImdbId = stateContext.seriesImdbId;
 				if (stateContext.title) this.title = stateContext.title;
+				if (stateContext.seriesTitle) this.seriesTitle = stateContext.seriesTitle;
 				if (stateContext.season != null) this.playbackSeason = stateContext.season;
 				if (stateContext.episode != null) this.playbackEpisode = stateContext.episode;
 				if (stateContext.tmdbId && isValidTmdbId(stateContext.tmdbId)) {
@@ -1984,6 +2213,9 @@
 				if (routeIds.imdbId && !this.seriesImdbId) {
 					this.mediaImdbId = routeIds.imdbId;
 					this.seriesImdbId = routeIds.imdbId;
+				}
+				if (routeIds.tmdbId && isValidTmdbId(routeIds.tmdbId) && !this.resolvedTmdbId) {
+					this.resolvedTmdbId = Number(routeIds.tmdbId);
 				}
 			}
 
@@ -2049,6 +2281,43 @@
 				}
 			} catch (_) {}
 			return null;
+		}
+
+		async getTmdbApiKey() {
+			const api = this.getSettingsApi();
+			if (api?.getApiKey) {
+				const key = await api.getApiKey("tmdb");
+				if (key) return key;
+			}
+			if (api?.getSetting) {
+				return api.getSetting(PLUGIN_ID, "tmdbApiKey");
+			}
+			return null;
+		}
+
+		/**
+		 * TMDB addon titles often lack imdb_id. IntroDB needs tt… so resolve via external_ids.
+		 * @param {number} tmdbId
+		 * @param {boolean} isTvShow
+		 * @returns {Promise<string|null>}
+		 */
+		async resolveImdbFromTmdb(tmdbId, isTvShow) {
+			if (!isValidTmdbId(tmdbId)) return null;
+			if (this.mediaImdbId) return extractImdbId(this.mediaImdbId);
+			const apiKey = await this.getTmdbApiKey();
+			if (!apiKey) return null;
+			const type = isTvShow ? "tv" : "movie";
+			try {
+				const res = await fetch(
+					`https://api.themoviedb.org/3/${type}/${tmdbId}/external_ids?api_key=${encodeURIComponent(apiKey)}`,
+					{ credentials: "omit" }
+				);
+				if (!res.ok) return null;
+				const data = await res.json();
+				return extractImdbId(data && data.imdb_id) || null;
+			} catch (_) {
+				return null;
+			}
 		}
 
 		parseTmdbIdFromMediaResponse(res) {
@@ -2156,45 +2425,62 @@
 		 * @returns {Promise<{segments: Record<string, Array<{start: number, end: number|null}>>, tmdbId: number|null}>}
 		 */
 		async fetchTheIntroDbSegments(query) {
-			const params = new URLSearchParams();
-			if (query.imdbId) {
-				params.set("imdb_id", query.imdbId);
-			} else if (query.tmdbId) {
-				params.set("tmdb_id", String(query.tmdbId));
-			} else {
-				return { segments: emptySegments(), tmdbId: null };
+			const identities = [];
+			if (query.imdbId) identities.push({ imdbId: query.imdbId, tmdbId: null });
+			if (query.tmdbId && isValidTmdbId(query.tmdbId)) {
+				identities.push({ imdbId: null, tmdbId: query.tmdbId });
 			}
-			if (query.isTvShow) {
-				params.set("season", String(query.season));
-				params.set("episode", String(query.episode));
-			}
-			if (query.durationMs != null) {
-				params.set("duration_ms", String(query.durationMs));
-			}
-
-			const res = await fetch(`${THEINTRODB_SERVER_URL}/media?${params}`, {
-				headers: this.getTidbHeaders()
-			});
-
-			if (res.status === 204 || res.status === 404 || !res.ok) {
+			if (!identities.length) {
 				return { segments: emptySegments(), tmdbId: null };
 			}
 
-			const json = await res.json();
-			const segments = emptySegments();
-			for (const segmentType of SEGMENT_TYPES) {
-				if (json[segmentType] && json[segmentType].length > 0) {
-					segments[segmentType] = json[segmentType].map((segment) => ({
-						start: segment.start_ms == null ? 0 : segment.start_ms / 1000,
-						end: segment.end_ms == null ? null : segment.end_ms / 1000
-					}));
+			const durationAttempts = query.durationMs != null ? [null, query.durationMs] : [null];
+			let lastEmpty = { segments: emptySegments(), tmdbId: null };
+			for (const identity of identities) {
+				for (const durationMs of durationAttempts) {
+					const params = new URLSearchParams();
+					if (identity.imdbId) {
+						params.set("imdb_id", identity.imdbId);
+					} else {
+						params.set("tmdb_id", String(identity.tmdbId));
+					}
+					if (query.isTvShow) {
+						params.set("season", String(query.season));
+						params.set("episode", String(query.episode));
+					}
+					if (durationMs != null) {
+						params.set("duration_ms", String(durationMs));
+					}
+
+					const res = await fetch(`${THEINTRODB_SERVER_URL}/media?${params}`, {
+						headers: this.getTidbHeaders()
+					});
+
+					if (res.status === 204 || res.status === 404 || !res.ok) {
+						lastEmpty = { segments: emptySegments(), tmdbId: null };
+						continue;
+					}
+
+					const json = await res.json();
+					const segments = emptySegments();
+					for (const segmentType of SEGMENT_TYPES) {
+						if (json[segmentType] && json[segmentType].length > 0) {
+							segments[segmentType] = json[segmentType].map((segment) => ({
+								start: segment.start_ms == null ? 0 : segment.start_ms / 1000,
+								end: segment.end_ms == null ? null : segment.end_ms / 1000
+							}));
+						}
+					}
+
+					const payload = {
+						segments,
+						tmdbId: isValidTmdbId(json.tmdb_id) ? Number(json.tmdb_id) : null
+					};
+					if (Object.values(segments).flat().length > 0) return payload;
+					lastEmpty = payload;
 				}
 			}
-
-			return {
-				segments,
-				tmdbId: isValidTmdbId(json.tmdb_id) ? Number(json.tmdb_id) : null
-			};
+			return lastEmpty;
 		}
 
 		/**
@@ -2267,11 +2553,16 @@
 				}
 			}
 
-			const title = String(options.title || (meta && meta.name) || this.title || "").trim();
+			const title = seriesTitleFromDisplayTitle(
+				options.title || (meta && meta.name) || this.seriesTitle || this.title || ""
+			);
 			if (!title) return null;
 
 			try {
-				const payload = await invokeAniSkipProxy("aniskip-resolve-mal-jikan", { title });
+				const payload = await invokeAniSkipProxy("aniskip-resolve-mal-jikan", {
+					title,
+					year: parseYearHint(meta && (meta.year || meta.releaseInfo))
+				});
 				const malId = Number(payload && payload.malId);
 				if (Number.isFinite(malId) && malId > 0) return malId;
 			} catch (error) {
@@ -2364,12 +2655,21 @@
 				console.log(`${LOG_PREFIX} Fetching segments for episode ${episodeId} (attempt ${attempt})`);
 
 				try {
-					const imdbId =
+					let imdbId =
 						extractImdbId(id) ||
 						this.seriesImdbId ||
 						this.mediaImdbId ||
-						extractImdbId(episodeId);
-					const tmdbFromId = extractTmdbIdFromCatalogId(id);
+						extractImdbId(episodeId) ||
+						null;
+					const tmdbFromId =
+						extractTmdbIdFromCatalogId(id) || parsedEpisode?.tmdbId || null;
+					if (!imdbId && tmdbFromId) {
+						imdbId = await this.resolveImdbFromTmdb(tmdbFromId, isTvShow);
+						if (imdbId) {
+							this.mediaImdbId = imdbId;
+							this.seriesImdbId = this.seriesImdbId || imdbId;
+						}
+					}
 					const durationMs = getVideoDurationMs(video);
 					this._lastFetchedDurationMs = durationMs;
 
@@ -2377,6 +2677,11 @@
 						this.isTheIntroDbServiceEnabled() && Boolean(imdbId || tmdbFromId);
 					const loadIntroDb = this.isIntroDbServiceEnabled() && isTvShow && imdbId;
 					const loadAniSkip = this.isAniSkipServiceEnabled();
+					if (this.isIntroDbServiceEnabled() && isTvShow && !imdbId && tmdbFromId) {
+						console.log(
+							`${LOG_PREFIX} IntroDB skipped: tmdb:${tmdbFromId} has no IMDb (TMDB key / resolve failed)`
+						);
+					}
 
 					if (!loadTheIntroDb && !loadIntroDb && !loadAniSkip) {
 						console.warn(
@@ -2385,71 +2690,152 @@
 						return null;
 					}
 
-					const aniSkipEpisode =
-						isPlausibleEpisode(episode)
+					const meta =
+						(this._lastStateContext && this._lastStateContext.meta) ||
+						(this._lastStateContext &&
+							this._lastStateContext.metaItem &&
+							this._lastStateContext.metaItem.content) ||
+						null;
+					const stream =
+						(this._lastStateContext && this._lastStateContext.stream) ||
+						null;
+					let streamForCache = stream;
+					if (!streamForCache) {
+						const playerState = await this.waitForPlayerState();
+						streamForCache =
+							(playerState && playerState.stream) ||
+							(playerState && playerState.selected && playerState.selected.stream) ||
+							null;
+					}
+					const fileKey = streamFileCacheKey(streamForCache, video);
+					const cachedFileSegments = readFileSegmentCache(fileKey);
+					if (cachedFileSegments) {
+						if (fetchGeneration !== this._fetchGeneration || this.episodeId !== episodeId) {
+							return null;
+						}
+						this.segments = cachedFileSegments;
+						console.log(`${LOG_PREFIX} File-cache hit for ${fileKey}`);
+						this._segmentsLoadedEpisodeId = episodeId;
+						this.waitAndHighlight();
+						this.startSegmentWatcher();
+						this.track("segments_loaded", {
+							has_intro: this.segments.intro && this.segments.intro.length > 0,
+							has_recap: this.segments.recap && this.segments.recap.length > 0,
+							has_credits: this.segments.credits && this.segments.credits.length > 0,
+							has_preview: this.segments.preview && this.segments.preview.length > 0,
+							total: Object.values(this.segments).reduce((acc, list) => acc + (list ? list.length : 0), 0),
+							source: "file-cache"
+						});
+						return null;
+					}
+
+					const sourceLengths = seasonLengthsFromVideos(meta && meta.videos);
+					let introSeason = season;
+					let introEpisode = episode;
+					let tmdbSeason = season;
+					let tmdbEpisode = episode;
+					let absEpisode = sourceLengths.length
+						? absoluteFromSeasonEpisode(sourceLengths, season, episode)
+						: episode;
+					let mapNote = "source";
+					if (imdbId && isPlausibleSeason(season) && isPlausibleEpisode(episode)) {
+						const mapped = await invokeMapTvEpisodeLayout(
+							imdbId,
+							season,
+							episode,
+							sourceLengths
+						);
+						if (mapped && mapped.cinemetaSeason && mapped.cinemetaEpisode) {
+							introSeason = Number(mapped.cinemetaSeason);
+							introEpisode = Number(mapped.cinemetaEpisode);
+							if (Number(mapped.tmdbSeason) > 0) tmdbSeason = Number(mapped.tmdbSeason);
+							if (Number(mapped.tmdbEpisode) > 0) tmdbEpisode = Number(mapped.tmdbEpisode);
+							if (Number(mapped.absolute) > 0) absEpisode = Number(mapped.absolute);
+							mapNote = "map-tv-episode-layout";
+						}
+					}
+
+					const aniSkipEpisode = isPlausibleEpisode(absEpisode)
+						? absEpisode
+						: isPlausibleEpisode(episode)
 							? episode
 							: isPlausibleEpisode(this.playbackEpisode)
 								? this.playbackEpisode
 								: null;
 
-					const [theIntroDbResult, introDbResult, aniSkipResult] = await Promise.allSettled([
-						loadTheIntroDb
-							? this.fetchTheIntroDbSegments({
+					let aniSkipMalId = null;
+					if (loadAniSkip && aniSkipEpisode) {
+						aniSkipMalId = await this.resolveMalIdForAniSkip({
+							episodeId,
+							meta,
+							title: seriesTitleFromDisplayTitle(
+								(meta && meta.name) ||
+									(this._lastStateContext && this._lastStateContext.seriesTitle) ||
+									this.seriesTitle ||
+									this.title
+							)
+						});
+						if (!aniSkipMalId) {
+							console.log(`${LOG_PREFIX} AniSkip: could not resolve MAL id`);
+						} else {
+							console.log(
+								`${LOG_PREFIX} AniSkip: fetching MAL ${aniSkipMalId} episode ${aniSkipEpisode}`
+							);
+						}
+					}
+
+					const providerJobs = [];
+					if (loadIntroDb) {
+						providerJobs.push({
+							key: "introDb",
+							promise: this.fetchIntroDbSegments(imdbId, introSeason, introEpisode)
+						});
+					}
+					if (loadTheIntroDb) {
+						providerJobs.push({
+							key: "theIntroDb",
+							promise: this.fetchTheIntroDbSegments({
 								imdbId,
 								tmdbId: tmdbFromId,
 								isTvShow,
-								season,
-								episode,
+								season: tmdbSeason,
+								episode: tmdbEpisode,
 								durationMs
 							})
-							: Promise.resolve({ segments: emptySegments(), tmdbId: null }),
-						loadIntroDb
-							? this.fetchIntroDbSegments(imdbId, season, episode)
-							: Promise.resolve(emptySegments()),
-						loadAniSkip && aniSkipEpisode
-							? (async () => {
-								const meta =
-									(this._lastStateContext &&
-										this._lastStateContext.metaItem &&
-										this._lastStateContext.metaItem.content) ||
-									null;
-								const malId = await this.resolveMalIdForAniSkip({
-									episodeId,
-									meta,
-									title: this.title
-								});
-								if (!malId) {
-									console.log(`${LOG_PREFIX} AniSkip: could not resolve MAL id`);
-									return emptySegments();
-								}
-								console.log(
-									`${LOG_PREFIX} AniSkip: fetching MAL ${malId} episode ${aniSkipEpisode}`
-								);
-								const durationSecs =
-									Number.isFinite(durationMs) && durationMs > 0
-										? durationMs / 1000
-										: null;
-								return this.fetchAniSkipSegments(
-									malId,
-									aniSkipEpisode,
-									durationSecs
-								);
-							})()
-							: Promise.resolve(emptySegments())
-					]);
+						});
+					}
+					if (loadAniSkip && aniSkipEpisode && aniSkipMalId) {
+						providerJobs.push({
+							key: "aniSkip",
+							promise: this.fetchAniSkipSegments(aniSkipMalId, aniSkipEpisode, null)
+						});
+					}
+
+					const settled = await Promise.allSettled(providerJobs.map((job) => job.promise));
+					const byKey = {};
+					providerJobs.forEach((job, index) => {
+						byKey[job.key] =
+							settled[index] && settled[index].status === "fulfilled"
+								? settled[index].value
+								: null;
+					});
 
 					if (fetchGeneration !== this._fetchGeneration || this.episodeId !== episodeId) {
 						return null;
 					}
 
 					const theIntroDbPayload =
-						theIntroDbResult.status === "fulfilled"
-							? theIntroDbResult.value
+						byKey.theIntroDb && typeof byKey.theIntroDb === "object"
+							? byKey.theIntroDb
 							: { segments: emptySegments(), tmdbId: null };
-					const introDbSegments =
-						introDbResult.status === "fulfilled" ? introDbResult.value : emptySegments();
-					const aniSkipSegments =
-						aniSkipResult.status === "fulfilled" ? aniSkipResult.value : emptySegments();
+					const introDbSegments = byKey.introDb || emptySegments();
+					const introDbHit = Object.values(introDbSegments).flat().length > 0;
+					if (loadIntroDb && imdbId) {
+						console.log(
+							`${LOG_PREFIX} IntroDB ${imdbId} S${introSeason}E${introEpisode} (abs=${absEpisode}, ${mapNote}) → ${introDbHit ? "hit" : "empty"}`
+						);
+					}
+					const aniSkipSegments = byKey.aniSkip || emptySegments();
 
 					if (theIntroDbPayload.tmdbId) {
 						this.resolvedTmdbId = theIntroDbPayload.tmdbId;
@@ -2458,21 +2844,51 @@
 						if (resolved) this.resolvedTmdbId = resolved;
 					}
 
-					this.segments = mergeExtraProviderSegments(
-						mergeProviderSegments(theIntroDbPayload.segments, introDbSegments),
-						aniSkipSegments
+					const priority = [];
+					if (loadIntroDb) priority.push(introDbSegments);
+					if (loadTheIntroDb) priority.push(theIntroDbPayload.segments || emptySegments());
+					if (loadAniSkip) priority.push(aniSkipSegments);
+					this.segments = pickProviderSegments(priority);
+
+					const durationSecs =
+						Number.isFinite(durationMs) && durationMs > 0 ? durationMs / 1000 : null;
+					const missingTypes = SEGMENT_TYPES.filter(
+						(segmentType) => !(this.segments[segmentType] || []).length
 					);
+					if (
+						loadAniSkip &&
+						aniSkipMalId &&
+						aniSkipEpisode &&
+						missingTypes.length &&
+						isPlausibleAniSkipLength(durationSecs)
+					) {
+						const scaled = await this.fetchAniSkipSegments(
+							aniSkipMalId,
+							aniSkipEpisode,
+							durationSecs
+						);
+						if (fetchGeneration !== this._fetchGeneration || this.episodeId !== episodeId) {
+							return null;
+						}
+						for (const segmentType of missingTypes) {
+							if ((scaled[segmentType] || []).length) {
+								this.segments[segmentType] = [scaled[segmentType][0]];
+							}
+						}
+					}
 
 					for (const segmentType of SEGMENT_TYPES) {
 						if (this.segments[segmentType].length > 0) {
 							console.log(
-								`${LOG_PREFIX} Loaded ${this.segments[segmentType].length} merged ${segmentType} segment(s)`
+								`${LOG_PREFIX} Loaded ${this.segments[segmentType].length} ${segmentType} segment(s)`
 							);
 						}
 					}
 
 					if (Object.values(this.segments).flat().length === 0) {
 						console.log(`${LOG_PREFIX} No segment data found for episode ${episodeId}`);
+					} else {
+						writeFileSegmentCache(fileKey, this.segments);
 					}
 
 					this._segmentsLoadedEpisodeId = episodeId;

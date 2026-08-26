@@ -113,22 +113,102 @@
   }
 
   /**
-   * Parses season/episode from a player hash like `#/player/.../tt123:1:3`.
+   * Parses season/episode from a player hash (`tt:S:E`, `tmdb:id:S:E`, `kitsu:id:ep`).
    * @returns {{season:number, episode:number}|null}
    */
   function parseEpisodeFromRoute() {
-    const match = (location.hash || location.href).match(/tt\d{7,8}:(\d+):(\d+)/i);
-    if (!match) return null;
-    const season = Number(match[1]);
-    const episode = Number(match[2]);
-    if (!Number.isInteger(season) || !Number.isInteger(episode) || season < 0 || episode < 1) {
+    const hash = location.hash || location.href || '';
+    const tmdb = hash.match(/tmdb:(\d+):(\d{1,3}):(\d{1,4})(?:\b|$)/i);
+    if (tmdb) {
+      const season = Number(tmdb[2]);
+      const episode = Number(tmdb[3]);
+      if (season >= 1 && episode >= 1) return { season, episode };
+    }
+    const kitsu = hash.match(/kitsu:(\d+):(\d{1,4})(?:\b|$)/i);
+    if (kitsu) {
+      const episode = Number(kitsu[2]);
+      if (episode >= 1) return { season: 1, episode };
+    }
+    const tt = hash.match(/tt\d{7,8}:(\d+):(\d+)/i);
+    if (!tt) return null;
+    const season = Number(tt[1]);
+    const episode = Number(tt[2]);
+    if (!Number.isInteger(season) || !Number.isInteger(episode) || season < 1 || episode < 1) {
       return null;
     }
     return { season, episode };
   }
 
   /**
-   * Maps a TMDB credits person to overlay rows, sorted by billing `order`.
+   * @param {object} tvDetail
+   * @returns {number[]}
+   */
+  function tmdbSeasonLengths(tvDetail) {
+    const seasons = Array.isArray(tvDetail?.seasons) ? tvDetail.seasons : [];
+    const counts = new Map();
+    let maxSeason = 0;
+    for (const entry of seasons) {
+      const number = Number(entry?.season_number);
+      if (!Number.isInteger(number) || number < 1) continue;
+      counts.set(number, Number(entry?.episode_count) || 0);
+      maxSeason = Math.max(maxSeason, number);
+    }
+    if (!maxSeason) return [];
+    const lengths = [];
+    for (let season = 1; season <= maxSeason; season++) {
+      lengths.push(counts.get(season) || 0);
+    }
+    return lengths;
+  }
+
+  /**
+   * @param {number[]} lengths
+   * @param {number} season
+   * @param {number} episode
+   * @returns {number}
+   */
+  function mapTmdbSeason(lengths, season, episode) {
+    if (season < 1) return season;
+    const length = lengths[season - 1] || 0;
+    if (length > 0 && episode > length) {
+      let remaining = episode;
+      for (let i = 0; i < lengths.length; i++) {
+        const count = lengths[i] || 0;
+        if (remaining <= count) return i + 1;
+        remaining -= count;
+      }
+    }
+    return season;
+  }
+
+  /**
+   * @param {Array} people
+   * @returns {Array}
+   */
+  function sortSeasonCast(people) {
+    return [...people].sort(
+      (a, b) =>
+        Number(b.total_episode_count || b.roles?.[0]?.episode_count || 0) -
+        Number(a.total_episode_count || a.roles?.[0]?.episode_count || 0)
+    );
+  }
+
+  /**
+   * @param {string} path
+   * @returns {Promise<object|null>}
+   */
+  async function fetchTmdbJson(path) {
+    const response = await fetch(path);
+    if (!response.ok) return null;
+    try {
+      return await response.json();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * Maps a TMDB credits person to overlay rows.
    * @param {Array} people
    * @returns {Array<{name:string, character:string, photo:string|null, order:number}>}
    */
@@ -153,9 +233,8 @@
   }
 
   /**
-   * Fetches cast members for an IMDb id via TMDB find + credits endpoints.
-   * Movies use /credits. Series episodes use episode credits (billing order);
-   * series without S/E keep aggregate_credits.
+   * Fetches cast via TMDB. Movies use /credits. Series use aggregate_credits;
+   * a hashed S/E maps to season aggregate_credits (same as detail Data Enrichment).
    * @param {string} imdbId
    * @param {string} apiKey
    * @returns {Promise<Array<{name:string, character:string, photo:string|null}>>}
@@ -175,7 +254,11 @@
     const findData = await findResponse.json();
     let tmdbId = null;
     let mediaType = 'movie';
-    const prefersSeries = Boolean(episode) || /tt\d{7,8}:\d+:\d+/i.test(location.hash || location.href);
+    const prefersSeries =
+      Boolean(episode) ||
+      /tt\d{7,8}:\d+:\d+/i.test(location.hash || location.href) ||
+      /tmdb:\d+:\d+:\d+/i.test(location.hash || location.href) ||
+      /kitsu:\d+:\d+/i.test(location.hash || location.href);
 
     if (prefersSeries && findData.tv_results?.[0]) {
       tmdbId = findData.tv_results[0].id;
@@ -190,34 +273,45 @@
 
     if (!tmdbId) throw new Error('No TMDB match for this title');
 
-    let creditsPath;
+    let people = [];
+    let sortByOrder = mediaType === 'movie';
     if (mediaType === 'movie') {
-      creditsPath = `https://api.themoviedb.org/3/movie/${tmdbId}/credits?api_key=${encodeURIComponent(apiKey)}`;
-    } else if (episode) {
-      creditsPath = `https://api.themoviedb.org/3/tv/${tmdbId}/season/${episode.season}/episode/${episode.episode}/credits?api_key=${encodeURIComponent(apiKey)}`;
-    } else {
-      creditsPath = `https://api.themoviedb.org/3/tv/${tmdbId}/aggregate_credits?api_key=${encodeURIComponent(apiKey)}`;
-    }
-
-    const creditsResponse = await fetch(creditsPath);
-    if (!creditsResponse.ok) throw new Error('TMDB credits request failed');
-
-    const credits = await creditsResponse.json();
-    let people = Array.isArray(credits.cast) ? [...credits.cast] : [];
-    if (mediaType === 'tv' && episode) {
-      people = people.concat(Array.isArray(credits.guest_stars) ? credits.guest_stars : []);
-    } else if (mediaType === 'tv') {
-      people.sort(
-        (a, b) =>
-          Number(b.total_episode_count || b.roles?.[0]?.episode_count || 0) -
-          Number(a.total_episode_count || a.roles?.[0]?.episode_count || 0)
+      const credits = await fetchTmdbJson(
+        `https://api.themoviedb.org/3/movie/${tmdbId}/credits?api_key=${encodeURIComponent(apiKey)}`
       );
+      if (!credits) throw new Error('TMDB credits request failed');
+      people = Array.isArray(credits.cast) ? [...credits.cast] : [];
+    } else {
+      let seasonCredits = null;
+      if (episode) {
+        const tvDetail = await fetchTmdbJson(
+          `https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${encodeURIComponent(apiKey)}`
+        );
+        const mappedSeason = mapTmdbSeason(
+          tmdbSeasonLengths(tvDetail),
+          episode.season,
+          episode.episode
+        );
+        if (mappedSeason >= 1) {
+          seasonCredits = await fetchTmdbJson(
+            `https://api.themoviedb.org/3/tv/${tmdbId}/season/${mappedSeason}/aggregate_credits?api_key=${encodeURIComponent(apiKey)}`
+          );
+        }
+      }
+      const seasonCast = Array.isArray(seasonCredits?.cast) ? seasonCredits.cast : [];
+      if (seasonCast.length) {
+        people = sortSeasonCast(seasonCast);
+      } else {
+        const seriesCredits = await fetchTmdbJson(
+          `https://api.themoviedb.org/3/tv/${tmdbId}/aggregate_credits?api_key=${encodeURIComponent(apiKey)}`
+        );
+        if (!seriesCredits) throw new Error('TMDB credits request failed');
+        people = sortSeasonCast(Array.isArray(seriesCredits.cast) ? seriesCredits.cast : []);
+      }
     }
 
     const mapped = mapTmdbCastPeople(people);
-    if (mediaType !== 'tv' || episode) {
-      mapped.sort((a, b) => a.order - b.order);
-    }
+    if (sortByOrder) mapped.sort((a, b) => a.order - b.order);
     const cast = mapped.slice(0, MAX_CAST).map(({ name, character, photo }) => ({
       name,
       character,

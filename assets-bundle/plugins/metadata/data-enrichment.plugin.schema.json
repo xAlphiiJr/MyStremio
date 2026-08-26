@@ -9,7 +9,7 @@
   },
   {
     "defaultValue": "",
-    "description": "Get your API key at ratingposterdb.com (https://ratingposterdb.com)",
+    "description": "Get your API key at ratingposterdb.com (https://ratingposterdb.com). Overlay needs a resolvable IMDb/TMDB id on the card; Cinemeta rows need an RPDB-capable addon or Default Poster Manager.",
     "key": "rpdbApiKey",
     "label": "RPDB API Key",
     "placeholder": "Enter your RPDB API key",
@@ -45,6 +45,13 @@
     "defaultValue": true,
     "key": "showRatingsOnPosters",
     "label": "Ratings on Posters",
+    "type": "toggle"
+  },
+  {
+    "defaultValue": true,
+    "description": "Second chip bar on episode pages (season/episode scores). Series scores stay in the title bar.",
+    "key": "showEpisodeRatings",
+    "label": "Episode Ratings",
     "type": "toggle"
   }
 ]

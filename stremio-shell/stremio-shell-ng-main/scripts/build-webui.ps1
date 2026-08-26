@@ -224,11 +224,27 @@ function Repair-WebUiLanguageEmbeds {
         }
     }
 
+    $metaRowKeysScript = Join-Path $ScriptRoot "fix-webui-metarow-keys.py"
+    if (Test-Path $metaRowKeysScript) {
+        Invoke-WebUiPython $metaRowKeysScript $mainJs.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "MetaRow item key patch failed with exit code $LASTEXITCODE"
+        }
+    }
+
     $addonSoftDisableWorkerScript = Join-Path $ScriptRoot "patch-webui-addon-soft-disable-worker.py"
     if (Test-Path $addonSoftDisableWorkerScript) {
         Invoke-WebUiPython $addonSoftDisableWorkerScript $WebUiDirectory
         if ($LASTEXITCODE -ne 0) {
             throw "Addon soft-disable worker patch failed with exit code $LASTEXITCODE"
+        }
+    }
+
+    $metadataMetaGateWorkerScript = Join-Path $ScriptRoot "patch-webui-metadata-meta-gate-worker.py"
+    if (Test-Path $metadataMetaGateWorkerScript) {
+        Invoke-WebUiPython $metadataMetaGateWorkerScript $WebUiDirectory
+        if ($LASTEXITCODE -ne 0) {
+            throw "Metadata meta-gate worker patch failed with exit code $LASTEXITCODE"
         }
     }
 

@@ -297,6 +297,24 @@
     },
     true
   );
+  function isPlayerRoute() {
+    return /#\/player/.test(location.hash || '');
+  }
+
+  function isEditableTarget(target) {
+    if (!(target instanceof Element)) return false;
+    if (target.isContentEditable) return true;
+    const tag = target.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  }
+
+  function isNavDigitKey(event) {
+    if (event.ctrlKey || event.altKey || event.metaKey) return false;
+    if (event.code && String(event.code).startsWith('Numpad')) return false;
+    if (event.location === 3) return false;
+    return event.key >= '1' && event.key <= '6';
+  }
+
   document.addEventListener(
     'keydown',
     (event) => {
@@ -313,6 +331,14 @@
         syncFullscreenState(false);
         requestShellFullscreen(false);
         window.setTimeout(() => ensureFullscreenUiSync(), 120);
+        return;
+      }
+      if (isPlayerRoute() && isNavDigitKey(event) && !isEditableTarget(event.target)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === 'function') {
+          event.stopImmediatePropagation();
+        }
       }
     },
     true

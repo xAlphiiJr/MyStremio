@@ -173,28 +173,45 @@
   // Extract IMDB ID from various URL formats
   function extractImdbId(url) {
     if (!url) return null;
-    const match = String(url).match(/(tt\d+)/);
-    return match ? match[1] : null;
+    const match = String(url).match(/(tt\d{7,8})/i);
+    return match ? match[1].toLowerCase() : null;
   }
 
   /**
-   * Card identity from the meta-item link (authoritative after React reuse).
-   * Prefer href over img.src because EnhancedCovers owns the image URL.
+   * @param {Element|null} el
+   * @returns {Element|null}
+   */
+  function closestCard(el) {
+    return (
+      el?.closest?.('[class*="meta-item-container"]') ||
+      el?.closest?.('[class*="meta-item"]') ||
+      null
+    );
+  }
+
+  /**
+   * Authoritative card identity after React reuse — never img.src (that is EC-owned).
+   * @param {Element|null} el
+   * @returns {string}
+   */
+  function getCardKey(el) {
+    const card = closestCard(el);
+    if (!card) return '';
+    const link =
+      card.tagName === 'A'
+        ? card
+        : card.querySelector('a[href*="/detail/"], a[href]');
+    const href = String(link?.getAttribute?.('href') || link?.href || '').trim();
+    return href;
+  }
+
+  /**
+   * IMDb from the current href only. Never from img.src (stale Outer Banks URL).
    * @param {HTMLImageElement} img
    * @returns {string|null}
    */
   function getCardImdbId(img) {
-    const card =
-      img.closest('[class*="meta-item-container"]') ||
-      img.closest('[class*="meta-item"]');
-    if (!card) return extractImdbId(img.src);
-    const link =
-      card.tagName === 'A'
-        ? card
-        : card.querySelector('a[href*="tt"], a[href*="/detail/"]');
-    const fromHref = extractImdbId(link?.getAttribute('href') || link?.href || '');
-    if (fromHref) return fromHref;
-    return extractImdbId(img.dataset.originalSrc) || extractImdbId(img.src);
+    return extractImdbId(getCardKey(img)) || null;
   }
 
   /**
@@ -204,13 +221,11 @@
   function resetEnhancedCover(img) {
     const gen = String((Number(img.dataset.enhanceGen) || 0) + 1);
     img.dataset.enhanceGen = gen;
-
-    if (img.dataset.originalSrc) {
-      img.src = img.dataset.originalSrc;
-    }
+    img.style.removeProperty('content');
     delete img.dataset.enhancedCover;
     delete img.dataset.originalSrc;
     delete img.dataset.imdbId;
+    delete img.dataset.coverKey;
 
     const posterContainer = img.closest('[class*="poster-container"]');
     if (posterContainer) {
@@ -226,15 +241,13 @@
     if (!continueWatchingRow) return;
 
     const posters = continueWatchingRow.querySelectorAll(
-      'img[class*="poster-image"][data-enhanced-cover]',
+      'img[class*="poster-image"]',
     );
 
     posters.forEach((img) => {
-      const storedImdbId = img.dataset.imdbId || '';
-      const cardImdbId = getCardImdbId(img) || '';
-
-      // Identity drifted, missing, or unknown → hard reset (React reused the node)
-      if (!storedImdbId || !cardImdbId || storedImdbId !== cardImdbId) {
+      const coverKey = getCardKey(img);
+      const storedKey = img.dataset.coverKey || '';
+      if (img.dataset.enhancedCover && storedKey !== coverKey) {
         resetEnhancedCover(img);
       }
     });
@@ -271,17 +284,21 @@
     posters.forEach((img) => {
       if (!img.src) return;
 
-      const imdbId = getCardImdbId(img);
-      if (!imdbId) return;
+      const coverKey = getCardKey(img);
+      if (!coverKey) return;
 
-      // Already enhanced for this exact title
-      if (img.dataset.enhancedCover === "true" && img.dataset.imdbId === imdbId) {
+      if (img.dataset.enhancedCover === "true" && img.dataset.coverKey === coverKey) {
         return;
       }
 
-      // Stale enhancement for a different title
-      if (img.dataset.enhancedCover === "true") {
+      if (img.dataset.enhancedCover) {
         resetEnhancedCover(img);
+      }
+
+      const imdbId = extractImdbId(coverKey);
+      if (!imdbId) {
+        // Kitsu / non-IMDb cards keep their own poster — do not steal tt from img.src.
+        return;
       }
 
       const backgroundSrc = `https://images.metahub.space/background/large/${imdbId}/img`;
@@ -290,7 +307,7 @@
       const gen = String((Number(img.dataset.enhanceGen) || 0) + 1);
       img.dataset.enhanceGen = gen;
       img.dataset.enhancedCover = "true";
-      // Always capture the live React poster for this title (never sticky across reuse).
+      img.dataset.coverKey = coverKey;
       img.dataset.originalSrc = img.src;
       img.dataset.imdbId = imdbId;
 
@@ -300,8 +317,14 @@
       }
 
       const testImg = new Image();
-      testImg.onload = function () {
-        if (img.dataset.enhanceGen !== gen || img.dataset.imdbId !== imdbId) return;
+        testImg.onload = function () {
+        if (
+          img.dataset.enhanceGen !== gen ||
+          img.dataset.imdbId !== imdbId ||
+          img.dataset.coverKey !== coverKey
+        ) {
+          return;
+        }
         img.src = backgroundSrc;
 
         if (posterContainer) {
@@ -312,7 +335,13 @@
 
           const testLogo = new Image();
           testLogo.onload = function () {
-            if (img.dataset.enhanceGen !== gen || img.dataset.imdbId !== imdbId) return;
+            if (
+              img.dataset.enhanceGen !== gen ||
+              img.dataset.imdbId !== imdbId ||
+              img.dataset.coverKey !== coverKey
+            ) {
+              return;
+            }
             logoImg.src = logoSrc;
             const playLayer = posterContainer.querySelector('[class*="play-icon-layer"]');
             if (playLayer) {
@@ -377,11 +406,11 @@
               mutation.attributeName === "src" &&
               target.matches?.('img[class*="poster-image"]')
             ) {
-              const hrefId = getCardImdbId(target);
+              const coverKey = getCardKey(target);
               const owned =
                 target.dataset?.enhancedCover === "true" &&
-                hrefId &&
-                target.dataset?.imdbId === hrefId;
+                coverKey &&
+                target.dataset?.coverKey === coverKey;
               if (!owned) shouldUpdate = true;
             }
             if (
@@ -390,6 +419,7 @@
             ) {
               shouldUpdate = true;
               hasRemovedNodes = true;
+              cleanupStaleCovers();
             }
           }
 

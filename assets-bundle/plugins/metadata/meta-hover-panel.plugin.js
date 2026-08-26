@@ -22,6 +22,9 @@
   const metaCache = new Map();
   const photoCache = new Map();
   const imdbResolveCache = new Map();
+  const ratingsCache = new Map();
+  const ratingsPending = new Map();
+  const RATINGS_CACHE_TTL_MS = 10 * 60 * 1000;
   let hoverTimer = null;
   let activePanel = null;
   let activeAnchor = null;
@@ -104,10 +107,77 @@
       min-height: 22px;
       max-width: 100%;
       margin-top: 0.15rem;
+      pointer-events: auto;
     }
 
-    .meta-hover-panel-meta .mystremio-ratings-bar {
-      margin-top: 0.1rem;
+    .meta-hover-panel-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.28rem;
+      margin: 0;
+      padding: 0.18rem 0.45rem;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(0, 0, 0, 0.42);
+      color: #fff;
+      font: inherit;
+      font-size: 0.72rem;
+      font-weight: 700;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      cursor: pointer;
+      border-radius: 999px;
+    }
+
+    .meta-hover-panel-chip:hover {
+      filter: brightness(1.08);
+      border-color: rgba(255, 255, 255, 0.24);
+    }
+
+    .meta-hover-panel-chip-brand {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 15px;
+      padding: 0 5px;
+      border-radius: 3px;
+      font-size: 0.58rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+
+    .meta-hover-panel-chip-brand[data-key="imdb"] { background: #f5c518; color: #111; }
+    .meta-hover-panel-chip-brand[data-key="tmdb"] { background: #032541; color: #01b4e4; }
+    .meta-hover-panel-chip-brand[data-key="mal"] { background: #2e51a2; color: #fff; }
+    .meta-hover-panel-chip-brand[data-key="metacritic"] { background: #ffcc33; color: #111; }
+    .meta-hover-panel-chip-brand[data-key="mcusers"] { background: #6c5ce7; color: #fff; }
+    .meta-hover-panel-chip-brand[data-key="trakt"] { background: #ed1c24; color: #fff; }
+    .meta-hover-panel-chip-brand[data-key="letterboxd"] { background: #14181c; color: #00e054; }
+    .meta-hover-panel-chip-brand[data-key="rt"] { background: #fa320a; color: #fff; }
+
+    .meta-hover-panel-chip-value { font-weight: 700; }
+    .meta-hover-panel-chip-value[data-key="imdb"] { color: #f5c518; }
+    .meta-hover-panel-chip-value[data-key="tmdb"] { color: #01b4e4; }
+    .meta-hover-panel-chip-value[data-key="mal"] { color: #2ecc71; }
+    .meta-hover-panel-chip-value[data-key="rt"] { color: #fa320a; }
+    .meta-hover-panel-chip-value[data-key="metacritic"] { color: #2ecc71; }
+    .meta-hover-panel-chip-value[data-key="trakt"] { color: #ed1c24; }
+    .meta-hover-panel-chip-value[data-key="letterboxd"] { color: #00e054; }
+
+    .meta-hover-panel-chip[data-key="fsk"] {
+      background: rgba(245, 197, 24, 0.16);
+      border-color: rgba(245, 197, 24, 0.45);
+    }
+
+    .meta-hover-panel-chip-age {
+      min-width: 1.4rem;
+      padding: 0.05rem 0.35rem;
+      border-radius: 999px;
+      background: #f5c518;
+      color: #111;
+      font-size: 0.65rem;
+      font-weight: 800;
+      text-align: center;
     }
 
     .meta-hover-panel-ratings-skeleton {
@@ -706,34 +776,69 @@
     return null;
   }
 
-  async function fetchMeta(type, id) {
-    if (!/^tt\d{7,}$/i.test(id)) return null;
+  function metaRequestUrls(type, id) {
+    const fromGate = window.StremioCustomMetadataMetaGate?.metaRequestUrls;
+    if (typeof fromGate === 'function') {
+      const urls = fromGate(type, id);
+      if (Array.isArray(urls) && urls.length) return urls;
+    }
+    const kind = String(type || 'movie').trim() || 'movie';
+    const rawId = String(id || '').trim();
+    if (!rawId) return [];
+    return [`${CONFIG.API_BASE}/${kind}/${encodeURIComponent(rawId)}.json`];
+  }
 
-    const key = `${type}:${id}`;
+  function isGatedMetaResponse(response, data) {
+    if (!response) return true;
+    if (data && data.error === 'mystremio-meta-gated') return true;
+    if (response.status === 404) return true;
+    return !response.ok;
+  }
+
+  async function fetchMeta(type, id) {
+    const rawId = String(id || '').trim();
+    if (!rawId) return null;
+    if (!/^tt\d{7,}$/i.test(rawId) && !/^tmdb:\d+$/i.test(rawId)) return null;
+
+    const key = `${type}:${rawId}`;
     if (metaCache.has(key)) return metaCache.get(key);
 
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT);
-      const response = await fetch(`${CONFIG.API_BASE}/${type}/${id}.json`, {
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      if (!response.ok) {
-        metaCache.set(key, null);
-        return null;
-      }
-
-      const data = await response.json();
-      const meta = data?.meta || null;
-      if (metaCache.size >= CONFIG.CACHE_SIZE) {
-        metaCache.delete(metaCache.keys().next().value);
-      }
-      metaCache.set(key, meta);
-      return meta;
-    } catch {
+    const urls = metaRequestUrls(type, rawId);
+    if (!urls.length) {
       metaCache.set(key, null);
+      return null;
+    }
+
+    try {
+      for (const url of urls) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT);
+        let response;
+        try {
+          response = await fetch(url, { signal: controller.signal });
+        } catch {
+          clearTimeout(timer);
+          continue;
+        }
+        clearTimeout(timer);
+
+        let data = null;
+        try {
+          data = await response.json();
+        } catch {
+          data = null;
+        }
+        if (isGatedMetaResponse(response, data)) continue;
+        const meta = data?.meta || null;
+        if (!meta) continue;
+        if (metaCache.size >= CONFIG.CACHE_SIZE) {
+          metaCache.delete(metaCache.keys().next().value);
+        }
+        metaCache.set(key, meta);
+        return meta;
+      }
+      return null;
+    } catch {
       return null;
     }
   }
@@ -744,6 +849,24 @@
     const alt = type === 'series' ? 'movie' : 'series';
     meta = await fetchMeta(alt, id);
     return meta ? { meta, type: alt } : null;
+  }
+
+  async function fetchMetaCandidates(type, ids) {
+    const unique = [];
+    const seen = new Set();
+    for (const id of ids || []) {
+      const raw = String(id || '').trim();
+      if (!raw) continue;
+      const key = raw.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(raw);
+    }
+    for (const id of unique) {
+      const result = await fetchMetaWithFallback(type, id);
+      if (result) return result;
+    }
+    return null;
   }
 
   function getGenres(meta) {
@@ -1010,17 +1133,177 @@
   }
 
   /**
-   * Starts a background ratings fetch so the hover panel can paint from cache.
+   * IMDb tt… from resolved hover identity or meta fields — never tmdb:/kitsu: catalog ids.
+   * @param {string|null|undefined} resolvedImdb
+   * @param {object|null|undefined} meta
+   * @returns {string|null}
+   */
+  function pickHoverImdbId(resolvedImdb, meta) {
+    const candidates = [
+      resolvedImdb,
+      meta && meta.imdb_id,
+      meta && meta.imdbId,
+    ];
+    if (meta && /^tt\d{7,}$/i.test(String(meta.id || ''))) {
+      candidates.push(meta.id);
+    }
+    for (const value of candidates) {
+      const match = String(value || '').match(/tt\d{7,}/i);
+      if (match) return match[0].toLowerCase();
+    }
+    return null;
+  }
+
+  function hoverRatingsApi() {
+    return window.StremioCustomAPI || window.StremioEnhancedAPI || null;
+  }
+
+  function orderHoverRatings(ratings) {
+    const order = ['fsk', 'imdb', 'mal', 'rt', 'tmdb', 'metacritic', 'trakt', 'mcusers', 'letterboxd'];
+    const by = Object.fromEntries(
+      (ratings || []).filter((item) => item?.key).map((item) => [item.key, item])
+    );
+    return order.filter((key) => by[key]).map((key) => by[key]);
+  }
+
+  function hoverMediaType(typeHint) {
+    const hint = String(typeHint || '').toLowerCase();
+    if (hint === 'series' || hint === 'tv' || hint === 'show' || hint === 'anime') return 'series';
+    if (hint === 'movie' || hint === 'film') return 'movie';
+    return 'movie';
+  }
+
+  /**
    * @param {string} imdbId
    * @param {string} [typeHint]
+   * @param {'fast'|'full'} [mode]
+   * @returns {Promise<object[]>}
    */
+  async function fetchHoverRatings(imdbId, typeHint, mode = 'full') {
+    const id = pickHoverImdbId(imdbId, null);
+    if (!id) return [];
+    const cacheKey = `${id}:${mode}`;
+    if (mode === 'full') {
+      const cached = ratingsCache.get(id);
+      if (cached && Date.now() - cached.at < RATINGS_CACHE_TTL_MS) return cached.ratings.slice();
+    }
+    if (ratingsPending.has(cacheKey)) return ratingsPending.get(cacheKey);
+
+    const job = (async () => {
+      const client = hoverRatingsApi();
+      if (!client?.invoke) return [];
+      const types = [hoverMediaType(typeHint)];
+      if (types[0] === 'movie') types.push('series');
+      else types.push('movie');
+      let ratings = [];
+      for (const type of types) {
+        try {
+          const result = await client.invoke('get-title-ratings', {
+            imdbId: id,
+            type,
+            mode,
+          });
+          if (Array.isArray(result?.ratings) && result.ratings.length) {
+            ratings = result.ratings;
+            break;
+          }
+        } catch (_) {
+          /* try next */
+        }
+      }
+      const ordered = orderHoverRatings(ratings);
+      const hasImdb = ordered.some((item) => String(item?.key || '').toLowerCase() === 'imdb');
+      if (mode === 'full' && ordered.length && hasImdb) {
+        ratingsCache.set(id, { at: Date.now(), ratings: ordered });
+      }
+      return ordered.slice();
+    })().finally(() => ratingsPending.delete(cacheKey));
+
+    ratingsPending.set(cacheKey, job);
+    return job;
+  }
+
   function prefetchHoverRatings(imdbId, typeHint) {
-    const bar = window.__mystremioRatingsBar;
-    if (!bar?.fetchRatings || !imdbId) return;
-    try {
-      bar.fetchRatings(imdbId, typeHint);
-    } catch (_) {
-      /* ignore */
+    const id = pickHoverImdbId(imdbId, null);
+    if (!id) return;
+    fetchHoverRatings(id, typeHint, 'fast').catch(() => {});
+    fetchHoverRatings(id, typeHint, 'full').catch(() => {});
+  }
+
+  function peekHoverRatings(imdbId) {
+    const id = pickHoverImdbId(imdbId, null);
+    if (!id) return null;
+    const cached = ratingsCache.get(id);
+    if (cached && Date.now() - cached.at < RATINGS_CACHE_TTL_MS) return cached.ratings.slice();
+    return null;
+  }
+
+  function chipLabel(rating) {
+    const key = String(rating?.key || '').toLowerCase();
+    if (key === 'imdb') return 'IMDb';
+    if (key === 'tmdb') return 'TMDb';
+    if (key === 'mal') return 'MAL';
+    if (key === 'metacritic') return 'MC';
+    if (key === 'mcusers') return 'MC U';
+    if (key === 'trakt') return 'Trakt';
+    if (key === 'letterboxd') return 'LB';
+    if (key === 'rt') return 'RT';
+    if (key === 'fsk') return 'FSK';
+    return String(rating?.label || key || '?');
+  }
+
+  function openHoverRatingUrl(url) {
+    if (!url) return;
+    const client = hoverRatingsApi();
+    if (client?.openExternalUrl) {
+      Promise.resolve(client.openExternalUrl(url)).catch(() => {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      });
+      return;
+    }
+    if (client?.invoke) {
+      Promise.resolve(client.invoke('open-external-url', { url })).catch(() => {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      });
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  function paintHoverRatings(host, ratings) {
+    if (!host || !ratings?.length) return;
+    host.replaceChildren();
+    for (const rating of ratings) {
+      const key = String(rating.key || '').toLowerCase();
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'meta-hover-panel-chip';
+      chip.dataset.key = key;
+      chip.title = rating.label || chipLabel(rating);
+      if (rating.url) {
+        chip.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openHoverRatingUrl(rating.url);
+        });
+      }
+      if (rating.kind === 'age' || key === 'fsk') {
+        const age = document.createElement('span');
+        age.className = 'meta-hover-panel-chip-age';
+        age.textContent = rating.value;
+        chip.appendChild(age);
+      } else {
+        const brand = document.createElement('span');
+        brand.className = 'meta-hover-panel-chip-brand';
+        brand.dataset.key = key;
+        brand.textContent = chipLabel(rating);
+        const value = document.createElement('span');
+        value.className = 'meta-hover-panel-chip-value';
+        value.dataset.key = key;
+        value.textContent = rating.value;
+        chip.append(brand, value);
+      }
+      host.appendChild(chip);
     }
   }
 
@@ -1054,46 +1337,22 @@
 
   /**
    * @param {Element} host
-   * @param {object} bar
-   * @param {object[]} ratings
    * @param {object} meta
    * @param {string} type
-   * @param {string} imdbId
-   */
-  function paintHoverRatings(host, bar, ratings, meta, type, imdbId) {
-    // Do not require isConnected — renderPanel paints before the panel is mounted.
-    if (!host || !ratings?.length) return;
-    bar.ensureStyles?.();
-    host.replaceChildren();
-    const wrap = document.createElement('div');
-    bar.renderInto(wrap, ratings, {
-      compact: true,
-      imdbId,
-      title: meta?.name || '',
-      type: type || 'movie',
-    });
-    const inner = wrap.firstElementChild;
-    if (inner) host.appendChild(inner);
-    else host.appendChild(wrap);
-  }
-
-  /**
-   * Replaces the ratings host with the shared multi-ratings bar when scores load.
-   * Prefers cache/skeleton over an IMDb→bar pop-in.
-   * @param {Element} host
-   * @param {object} meta
-   * @param {string} type
+   * @param {string|null} resolvedImdb
    * @returns {Promise<void>}
    */
-  async function fillHoverRatings(host, meta, type) {
-    const bar = window.__mystremioRatingsBar;
-    if (!host || !bar?.fetchRatings || !bar?.renderInto) return;
-    const imdbId = bar.normalizeImdbId?.(meta?.id || meta?.imdb_id || '');
-    if (!imdbId) return;
+  async function fillHoverRatings(host, meta, type, resolvedImdb) {
+    if (!host) return;
+    const imdbId = pickHoverImdbId(resolvedImdb, meta);
+    if (!imdbId) {
+      renderImdbFallback(host, meta);
+      return;
+    }
 
-    const cached = bar.peekCachedRatings?.(imdbId);
+    const cached = peekHoverRatings(imdbId);
     if (cached?.length) {
-      paintHoverRatings(host, bar, cached, meta, type, imdbId);
+      paintHoverRatings(host, cached);
       return;
     }
 
@@ -1102,19 +1361,22 @@
     }
 
     try {
-      const ratings = await bar.fetchRatings(imdbId, type);
+      const fast = await fetchHoverRatings(imdbId, type, 'fast');
       if (!host.isConnected) return;
-      if (!ratings?.length) {
-        renderImdbFallback(host, meta);
+      if (fast.length) paintHoverRatings(host, fast);
+      const full = await fetchHoverRatings(imdbId, type, 'full');
+      if (!host.isConnected) return;
+      if (full.length) {
+        paintHoverRatings(host, orderHoverRatings([...(fast || []), ...(full || [])]));
         return;
       }
-      paintHoverRatings(host, bar, ratings, meta, type, imdbId);
+      if (!fast.length) renderImdbFallback(host, meta);
     } catch (_) {
-      renderImdbFallback(host, meta);
+      if (host.isConnected) renderImdbFallback(host, meta);
     }
   }
 
-  function renderPanel(meta, type) {
+  function renderPanel(meta, type, resolvedImdb) {
     const panel = document.createElement('div');
     panel.className = 'meta-hover-panel';
     panel.id = 'meta-hover-panel-active';
@@ -1136,18 +1398,17 @@
     }
     const ratingsHost = document.createElement('span');
     ratingsHost.className = 'meta-hover-panel-ratings-host';
-    const bar = window.__mystremioRatingsBar;
-    const imdbId = bar?.normalizeImdbId?.(meta?.id || meta?.imdb_id || '');
-    const cached = imdbId ? bar.peekCachedRatings?.(imdbId) : null;
-    if (cached?.length && bar?.renderInto) {
-      paintHoverRatings(ratingsHost, bar, cached, meta, type, imdbId);
-    } else if (bar?.fetchRatings && imdbId) {
+    const imdbId = pickHoverImdbId(resolvedImdb, meta);
+    const cached = imdbId ? peekHoverRatings(imdbId) : null;
+    if (cached?.length) {
+      paintHoverRatings(ratingsHost, cached);
+    } else if (imdbId) {
       showRatingsSkeleton(ratingsHost);
     } else if (meta.imdbRating) {
       renderImdbFallback(ratingsHost, meta);
     }
     metaLine.appendChild(ratingsHost);
-    fillHoverRatings(ratingsHost, meta, type);
+    fillHoverRatings(ratingsHost, meta, type, imdbId);
 
     header.append(title, metaLine);
     panel.appendChild(header);
@@ -1345,15 +1606,20 @@
     activePanel = loading;
 
     const imdbId = await resolveImdbId(media);
-    if (!imdbId || !stillValid()) {
+    const tmdbId =
+      media.tmdbId || String(media.id || '').match(/^tmdb:(\d+)$/i)?.[1] || null;
+    const candidateIds = [];
+    if (imdbId) candidateIds.push(imdbId);
+    if (tmdbId) candidateIds.push(`tmdb:${tmdbId}`);
+    if (!candidateIds.length || !stillValid()) {
       removePanel();
       return;
     }
 
     // Overlap network with meta/cast so the bar is warm when the panel paints.
-    prefetchHoverRatings(imdbId, media.type);
+    if (imdbId) prefetchHoverRatings(imdbId, media.type);
 
-    const result = await fetchMetaWithFallback(media.type, imdbId);
+    const result = await fetchMetaCandidates(media.type, candidateIds);
     if (!result || !stillValid()) {
       removePanel();
       return;
@@ -1375,7 +1641,7 @@
       return;
     }
 
-    const panel = renderPanel(meta, resolvedType);
+    const panel = renderPanel(meta, resolvedType, imdbId);
     panel.classList.add('visible');
     document.body.appendChild(panel);
     loading.remove();

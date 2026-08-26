@@ -56,7 +56,7 @@
   let leaveTeardownGen = 0;
   let leaveStopPending = false;
   /** Grace before hard stop so next-episode loadfile is not killed mid-transition. */
-  const LEAVE_STOP_GRACE_MS = 280;
+  const LEAVE_STOP_GRACE_MS = 0;
   const STARTUP_RECOVERY_MAX = 5;
   const STARTUP_RECOVERY_WINDOW_MS = 45000;
   const shimmedVideos = new WeakSet();
@@ -93,7 +93,6 @@
     setSeekingClass(false);
     if (wasSeeking && Number.isFinite(shimState.currentTime)) {
       flushHeavyTimePos(shimState.currentTime, true);
-      applyPreloadSettings();
     }
   }
 
@@ -532,6 +531,16 @@
         }
         return;
       }
+      const startupAge = streamStartedAt > 0 ? Date.now() - streamStartedAt : 0;
+      if (
+        startupAge > 0 &&
+        startupAge < 4000 &&
+        Number.isFinite(shimState.currentTime) &&
+        shimState.currentTime > 0.4 &&
+        seconds + 0.35 < shimState.currentTime
+      ) {
+        return;
+      }
       flushHeavyTimePos(seconds, false);
       return;
     }
@@ -644,10 +653,7 @@
 
   function nudgePlaybackAtCurrentTime() {
     if (isAutoPlaySuppressed()) return false;
-    let resumeAt = shimState.currentTime || readTimeFromDom() || 0;
-    if (resumeAt < 0.05) resumeAt = 0.01;
     playShellPlayback();
-    sendMpvSetProp('time-pos', resumeAt);
     return true;
   }
 
@@ -722,9 +728,8 @@
   }
 
   /**
-   * Industry-standard leave: pause immediately, then stop after a short grace
-   * (ShellVideo unload → mpv stop). Grace protects next-episode transitions.
-   * After stop, clear MPV pause so the next loadfile is not stuck on frame 0.
+   * Leave player: pause + stop immediately. Next-episode stays on `#/player`
+   * so `isPlayerRoute()` skips the stop.
    */
   function teardownPlaybackOnLeave() {
     if (window.__stremioCustomPipMode) return;
@@ -744,20 +749,25 @@
     leaveStopPending = true;
     const gen = ++leaveTeardownGen;
 
-    window.setTimeout(() => {
+    const finish = () => {
       leaveStopPending = false;
       if (gen !== leaveTeardownGen) return;
       if (isPlayerRoute()) return;
       if (window.__stremioCustomPipMode) return;
 
       sendMpvCommand(['stop']);
-      // MPV pause often survives stop; clear it for the next idle→loadfile cycle.
       sendMpvSetProp('pause', false);
       mpvPause = false;
       resetPlaybackState();
       document.dispatchEvent(new CustomEvent('stremio-custom-playback-stopped'));
       window.__stremioCustomPlayerTransparencyEnsure?.();
-    }, LEAVE_STOP_GRACE_MS);
+    };
+
+    if (LEAVE_STOP_GRACE_MS <= 0) {
+      finish();
+      return;
+    }
+    window.setTimeout(finish, LEAVE_STOP_GRACE_MS);
   }
 
   function onPlayerSessionEnd() {
@@ -971,6 +981,7 @@
     sendMpvSetProp('cache-secs', secs);
     sendMpvSetProp('demuxer-readahead-secs', secs);
     sendMpvSetProp('back-buffer', secs);
+    sendMpvSetProp('demuxer-seekable-cache', 'yes');
     if (isFull) {
       sendMpvSetProp('demuxer-max-bytes', '8GiB');
     } else if (secs >= 240) {
@@ -1140,6 +1151,34 @@
     seekTo: (seconds) => {
       const video = ensureShellVideo();
       if (video) video.currentTime = Number(seconds);
+    },
+    seekRelative: (deltaSec) => {
+      const delta = Number(deltaSec);
+      if (!Number.isFinite(delta) || delta === 0) return;
+      let current = resolveCurrentTime();
+      if (
+        lastSeekTarget != null &&
+        Date.now() - lastSeekAt < 2000 &&
+        Number.isFinite(lastSeekTarget)
+      ) {
+        current = lastSeekTarget;
+      }
+      let target = current + delta;
+      const duration = resolveDuration();
+      if (Number.isFinite(duration) && duration > 0) {
+        target = Math.min(duration, Math.max(0, target));
+      } else {
+        target = Math.max(0, target);
+      }
+      const applied = target - current;
+      if (!Number.isFinite(applied) || applied === 0) return;
+      if (playbackAdvanced) {
+        beginUserSeek(target);
+        updateCurrentTime(target, 'user-seek');
+      } else {
+        updateCurrentTime(target, 'resume');
+      }
+      sendMpvCommand(['seek', String(applied), 'exact']);
     },
     isShellPlayback: () => Boolean(window.chrome?.webview?.postMessage),
   };

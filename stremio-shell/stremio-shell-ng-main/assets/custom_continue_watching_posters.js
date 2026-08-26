@@ -67,12 +67,7 @@
       card.getAttribute('href') ||
       card.querySelector?.('a[href]')?.getAttribute('href') ||
       '';
-    return (
-      extractImdbId(href) ||
-      extractImdbId(card.getAttribute('data-imdb-id') || '') ||
-      extractImdbId(img.getAttribute('src') || '') ||
-      extractImdbId(img.getAttribute('alt') || '')
-    );
+    return extractImdbId(href) || extractImdbId(card.getAttribute('data-imdb-id') || '');
   }
 
   /**
@@ -103,8 +98,16 @@
     if (isEnhancedCoversActive()) return;
 
     const currentSrc = img.currentSrc || img.src || '';
-    // Already a portrait Metahub poster — do not swap or restyle.
-    if (!currentSrc || /images\.metahub\.space\/poster\//i.test(currentSrc)) {
+    const hrefImdb = resolveImdbIdForImage(img);
+    // Already a portrait Metahub poster — only keep it when it matches this card.
+    if (/images\.metahub\.space\/poster\//i.test(currentSrc)) {
+      const srcImdb = extractImdbId(currentSrc);
+      if (hrefImdb && srcImdb && srcImdb === hrefImdb) {
+        img.setAttribute(ATTR_GEN, String(gen));
+        return;
+      }
+    }
+    if (!currentSrc) {
       img.setAttribute(ATTR_GEN, String(gen));
       return;
     }
@@ -330,10 +333,23 @@
   window.addEventListener('hashchange', onRouteOrBoot);
   document.addEventListener('stremio-custom-bootstrap-ready', onRouteOrBoot);
 
+  window.__stremioContinueWatchingPostersSuspend = function () {
+    try {
+      observer.disconnect();
+      observedRoot = null;
+    } catch (_) {}
+  };
+  window.__stremioContinueWatchingPostersResume = function () {
+    onRouteOrBoot();
+  };
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', onRouteOrBoot, { once: true });
   } else {
     onRouteOrBoot();
+  }
+  if (window.stremioCustomSuspendBackground?.()) {
+    window.__stremioContinueWatchingPostersSuspend();
   }
 
 })();

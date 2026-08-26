@@ -469,13 +469,45 @@
     }
   }
 
-  function setMetadataAddon(value) {
-    const next = String(value || '');
+  function parseMetadataAddonList(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return [];
+    if (text.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .map((item) => String(item ?? '').trim())
+            .filter((item, index, list) => list.indexOf(item) === index);
+        }
+      } catch (_) {}
+    }
+    return [text];
+  }
+
+  function getMetadataAddons() {
+    return parseMetadataAddonList(getMetadataAddon());
+  }
+
+  function setMetadataAddons(values) {
+    const next = Array.isArray(values)
+      ? values
+          .map((item) => String(item || '').trim())
+          .filter((item, index, list) => list.indexOf(item) === index)
+      : [];
+    const raw = next.length ? JSON.stringify(next) : '';
     try {
-      localStorage.setItem(METADATA_ADDON_KEY, next);
+      localStorage.setItem(METADATA_ADDON_KEY, raw);
     } catch (_) {}
     persistUserPreferences();
-    document.dispatchEvent(new CustomEvent('stremio-custom-metadata-addon-changed', { detail: { value: next } }));
+    document.dispatchEvent(
+      new CustomEvent('stremio-custom-metadata-addon-changed', { detail: { value: raw, values: next } })
+    );
+  }
+
+  function setMetadataAddon(value) {
+    const text = String(value || '').trim();
+    setMetadataAddons(text ? [text] : []);
   }
 
   function normalizeDisabledAddonBase(url) {
@@ -1365,11 +1397,7 @@
     HORIZONTAL_NAV_PLUGIN,
   ]);
 
-  const IDLE_DURING_PLAYBACK_PREFIXES = [
-    'interface/',
-    'metadata/',
-    'addons/',
-  ];
+  const IDLE_DURING_PLAYBACK_PREFIXES = [];
 
   function normalizePluginRef(pluginRef) {
     return String(pluginRef || '').replace(/\\/g, '/');
@@ -1379,7 +1407,14 @@
     return normalizePluginRef(pluginRef).split('/').pop() || '';
   }
 
+  /**
+   * Board/detail plugins stay injected during playback so leave does not wait
+   * on read-plugin. DE already no-ops on `#/player`.
+   * @param {string} pluginRef
+   * @returns {boolean}
+   */
   function isIdleDuringPlayback(pluginRef) {
+    if (!IDLE_DURING_PLAYBACK_PREFIXES.length) return false;
     const normalized = normalizePluginRef(pluginRef);
     if (PLAYBACK_KEEP_PLUGINS.has(normalized)) return false;
     if ([...PLAYBACK_KEEP_PLUGINS].some((ref) => pluginBaseName(ref) === pluginBaseName(normalized))) {
@@ -1737,6 +1772,43 @@
   /** @type {Promise<void>|null} */
   let routeSyncInFlight = null;
 
+  function callWindowHooks(names) {
+    for (const name of names) {
+      try {
+        const fn = window[name];
+        if (typeof fn === 'function') fn();
+      } catch (error) {
+        console.warn('[StremioCustom] hook failed:', name, error);
+      }
+    }
+  }
+
+  /**
+   * Disconnect board/detail observers while the player is open.
+   * Scripts stay injected so leave does not wait on read-plugin.
+   */
+  function suspendNonPlayerBackground() {
+    callWindowHooks([
+      '__stremioDataEnrichmentSuspend',
+      '__stremioEnhancedTitlebarSuspend',
+      '__stremioSearchSuggestionsSuspend',
+      '__stremioContinueWatchingPostersSuspend',
+      '__stremioDetailSloganSuspend',
+      '__stremioLiquidGlassNavSuspend',
+    ]);
+  }
+
+  function resumeNonPlayerBackground() {
+    callWindowHooks([
+      '__stremioDataEnrichmentResume',
+      '__stremioEnhancedTitlebarResume',
+      '__stremioSearchSuggestionsResume',
+      '__stremioContinueWatchingPostersResume',
+      '__stremioDetailSloganResume',
+      '__stremioLiquidGlassNavResume',
+    ]);
+  }
+
   /**
    * Stops player-only plugin timers/observers/locks while off the player route.
    * Do NOT include StreamUI / Meta-Hover here — those must stay alive on detail/board.
@@ -1786,11 +1858,17 @@
         // Re-read after await — hash may have flipped during cold-start redirect.
         const activeNow = effectivePlaybackActive();
         if (activeNow) {
-          for (const pluginRef of enabled) {
-            if (gen !== routeSyncGen) return;
-            if (isIdleDuringPlayback(pluginRef)) await unloadPluginResolved(pluginRef);
-          }
+          suspendNonPlayerBackground();
+          const toUnload = enabled.filter((pluginRef) => isIdleDuringPlayback(pluginRef));
+          await Promise.all(
+            toUnload.map((pluginRef) =>
+              unloadPluginResolved(pluginRef).catch((error) => {
+                console.warn('[StremioCustom] unload failed:', pluginRef, error);
+              })
+            )
+          );
         } else {
+          resumeNonPlayerBackground();
           suspendPlayerPluginRuntime();
           if (gen !== routeSyncGen) return;
           await ensurePluginsLoadedForRoute();
@@ -2058,7 +2136,9 @@
       refreshAutoskipToggles,
       ensureAutoskipReady,
       getMetadataAddon,
+      getMetadataAddons,
       setMetadataAddon,
+      setMetadataAddons,
       getDisabledAddonUrls,
       applyDisabledAddonUrls,
       getLibraryPreferences,

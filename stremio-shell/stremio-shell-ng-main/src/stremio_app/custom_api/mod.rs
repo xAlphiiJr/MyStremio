@@ -24,6 +24,22 @@ static REGISTERED_SCHEMAS: OnceLock<Mutex<storage::RegisteredSchemas>> = OnceLoc
 static PIP_RESPONSE_TX: OnceLock<Mutex<Option<flume::Sender<bool>>>> = OnceLock::new();
 static UI_SCALE_APPLY_TX: OnceLock<Mutex<Option<flume::Sender<()>>>> = OnceLock::new();
 
+fn json_u64(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|n| if n >= 0 { Some(n as u64) } else { None }))
+        .or_else(|| {
+            value.as_f64().and_then(|n| {
+                if n >= 0.0 && n.fract() == 0.0 {
+                    Some(n as u64)
+                } else {
+                    None
+                }
+            })
+        })
+        .or_else(|| value.as_str()?.parse().ok())
+}
+
 pub fn register_pip_response_sender(sender: flume::Sender<bool>) {
     let _ = PIP_RESPONSE_TX.set(Mutex::new(Some(sender)));
 }
@@ -299,8 +315,8 @@ pub fn handle_request(message: &Value) -> Option<String> {
         }
         "introdb-get-segments" => {
             let imdb_id = params.get("imdbId").and_then(|v| v.as_str()).unwrap_or("");
-            let season = params.get("season").and_then(|v| v.as_u64()).unwrap_or(0);
-            let episode = params.get("episode").and_then(|v| v.as_u64()).unwrap_or(0);
+            let season = params.get("season").and_then(json_u64).unwrap_or(0);
+            let episode = params.get("episode").and_then(json_u64).unwrap_or(0);
             match introdb_proxy::get_segments(imdb_id, season, episode) {
                 Ok(payload) => json!(payload),
                 Err(error) => return Some(error_response(id, &error)),
@@ -335,7 +351,8 @@ pub fn handle_request(message: &Value) -> Option<String> {
         }
         "aniskip-resolve-mal-jikan" => {
             let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("");
-            match aniskip_proxy::resolve_mal_from_jikan(title) {
+            let year = params.get("year").and_then(json_u64).map(|n| n as u32);
+            match aniskip_proxy::resolve_mal_from_jikan(title, year) {
                 Ok(mal_id) => json!({ "malId": mal_id }),
                 Err(error) => return Some(error_response(id, &error)),
             }
@@ -358,7 +375,46 @@ pub fn handle_request(message: &Value) -> Option<String> {
                 .get("episode")
                 .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()))
                 .map(|n| n as u32);
-            match ratings_proxy::get_title_ratings(imdb_id, media_type, season, episode) {
+            let mode = params.get("mode").and_then(|v| v.as_str()).unwrap_or("full");
+            let exact_cinemeta = params.get("exactCinemeta").and_then(|v| v.as_bool());
+            let episode_layout = params.get("episodeLayout").and_then(|v| v.as_str());
+            match ratings_proxy::get_title_ratings(
+                imdb_id,
+                media_type,
+                season,
+                episode,
+                mode,
+                exact_cinemeta,
+                episode_layout,
+            ) {
+                Ok(payload) => json!(payload),
+                Err(error) => return Some(error_response(id, &error)),
+            }
+        }
+        "map-tv-episode-layout" => {
+            let imdb_id = params.get("imdbId").and_then(|v| v.as_str()).unwrap_or("");
+            let season = params
+                .get("season")
+                .and_then(json_u64)
+                .unwrap_or(0) as u32;
+            let episode = params
+                .get("episode")
+                .and_then(json_u64)
+                .unwrap_or(0) as u32;
+            let tmdb_lengths: Option<Vec<u32>> = params.get("tmdbLengths").and_then(|value| {
+                value.as_array().map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| json_u64(item).map(|n| n as u32))
+                        .collect()
+                })
+            });
+            match ratings_proxy::map_tv_episode_layout(
+                imdb_id,
+                season,
+                episode,
+                tmdb_lengths.as_deref(),
+            ) {
                 Ok(payload) => json!(payload),
                 Err(error) => return Some(error_response(id, &error)),
             }

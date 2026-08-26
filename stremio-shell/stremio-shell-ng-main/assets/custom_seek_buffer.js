@@ -18,6 +18,8 @@
   let lastCurrentTime = 0;
   let estimatedAheadSec = 0;
   let lastAdvanceAt = 0;
+  let heldCacheEnd = null;
+  let heldCacheEndAt = 0;
   let coreDurationPollGen = 0;
   let chromeWatcher = null;
 
@@ -346,7 +348,7 @@
 
     updateEstimatedAhead(current);
 
-    const ahead = Math.max(
+    const rawAhead = Math.max(
       cacheAheadSec || 0,
       api?.getCacheAheadSec?.() || 0,
       estimatedAheadSec || 0
@@ -356,8 +358,23 @@
       Number.isFinite(streamRatio) && streamRatio > 0 && Number.isFinite(duration) && duration > 0
         ? Math.max(0, streamRatio * duration - current)
         : 0;
-
-    return { current, duration, ahead: Math.max(ahead, ratioAhead) };
+    let ahead = Math.max(rawAhead, ratioAhead);
+    const cacheEnd = Number.isFinite(current) ? current + ahead : null;
+    const now = Date.now();
+    if (heldCacheEnd != null && now - heldCacheEndAt < 4000) {
+      if (cacheEnd != null && cacheEnd + 0.4 < heldCacheEnd) {
+        ahead = Math.max(0, heldCacheEnd - current);
+      } else if (cacheEnd != null) {
+        heldCacheEnd = cacheEnd;
+        heldCacheEndAt = now;
+      }
+    } else if (cacheEnd != null && ahead > 0.25) {
+      heldCacheEnd = cacheEnd;
+      heldCacheEndAt = now;
+    }
+    const configuredMax = getConfiguredPreloadMax();
+    ahead = Math.min(ahead, configuredMax);
+    return { current, duration, ahead };
   }
 
   function updateBufferBar() {
@@ -386,6 +403,8 @@
     loopIntervalMs = 0;
     cacheAheadSec = 0;
     estimatedAheadSec = 0;
+    heldCacheEnd = null;
+    heldCacheEndAt = 0;
   }
 
   /**
@@ -461,8 +480,12 @@
   document.addEventListener('stremio-custom-cache-cleared', () => {
     cacheAheadSec = 0;
     estimatedAheadSec = 0;
+    heldCacheEnd = null;
+    heldCacheEndAt = 0;
   });
   document.addEventListener('stremio-custom-stream-started', () => {
+    heldCacheEnd = null;
+    heldCacheEndAt = 0;
     restoreStoredDurationHint();
     scheduleCoreDurationPoll();
     if (isOnPlayerPage()) start();

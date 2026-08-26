@@ -117,6 +117,18 @@ function injectStyles() {
   document.head.appendChild(style);
 }
 
+function metaRequestUrls(type, id) {
+  const fromGate = window.StremioCustomMetadataMetaGate?.metaRequestUrls;
+  if (typeof fromGate === "function") {
+    const urls = fromGate(type, id);
+    if (Array.isArray(urls) && urls.length) return urls;
+  }
+  const kind = String(type || "movie").trim() || "movie";
+  const rawId = String(id || "").trim();
+  if (!rawId) return [];
+  return [`${CONFIG.apiBase}/${kind}/${encodeURIComponent(rawId)}.json`];
+}
+
 async function getMetadata(id, type) {
   const cacheKey = `${type}-${id}`;
 
@@ -124,40 +136,51 @@ async function getMetadata(id, type) {
     return metadataCache.get(cacheKey);
   }
 
+  const urls = metaRequestUrls(type, id);
+  if (!urls.length) return null;
+
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), CONFIG.timeout);
+    for (const url of urls) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), CONFIG.timeout);
+      let response;
+      try {
+        response = await fetch(url, { signal: controller.signal });
+      } catch (error) {
+        clearTimeout(timeoutId);
+        console.log(`Failed to fetch ${id}:`, error);
+        continue;
+      }
+      clearTimeout(timeoutId);
 
-    const response = await fetch(`${CONFIG.apiBase}/${type}/${id}.json`, {
-      signal: controller.signal,
-    });
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (_) {
+        data = null;
+      }
+      if (!response.ok || data?.error === "mystremio-meta-gated" || !data?.meta) {
+        continue;
+      }
 
-    clearTimeout(timeoutId);
+      const meta = data.meta;
+      const metadata = {
+        title: meta.name || meta.title,
+        year: meta.year ? meta.year.toString() : null,
+        rating: meta.imdbRating ? meta.imdbRating.toString() : null,
+        genres: Array.isArray(meta.genre)
+          ? meta.genre
+          : Array.isArray(meta.genres)
+            ? meta.genres
+            : [],
+        runtime: meta.runtime || null,
+        type: meta.type || type,
+      };
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      metadataCache.set(cacheKey, metadata);
+      return metadata;
     }
-
-    const data = await response.json();
-    const meta = data.meta;
-
-    if (!meta) return null;
-
-    const metadata = {
-      title: meta.name || meta.title,
-      year: meta.year ? meta.year.toString() : null,
-      rating: meta.imdbRating ? meta.imdbRating.toString() : null,
-      genres: Array.isArray(meta.genre)
-        ? meta.genre
-        : Array.isArray(meta.genres)
-          ? meta.genres
-          : [],
-      runtime: meta.runtime || null,
-      type: meta.type || type,
-    };
-
-    metadataCache.set(cacheKey, metadata);
-    return metadata;
+    return null;
   } catch (error) {
     console.log(`Failed to fetch ${id}:`, error);
     return null;
@@ -305,6 +328,12 @@ function extractImdbIdFromPoster(posterImg) {
   return null;
 }
 
+function matchTmdbCatalogId(value) {
+  if (!value || typeof value !== "string") return null;
+  const match = value.match(/tmdb:(\d+)/i);
+  return match ? `tmdb:${match[1]}` : null;
+}
+
 function extractImdbIdFromDetailLink(detailLink) {
   if (!detailLink) return null;
   const sources = [
@@ -314,6 +343,10 @@ function extractImdbIdFromDetailLink(detailLink) {
   ];
   for (let i = 0; i < sources.length; i++) {
     const id = matchImdbId(sources[i]);
+    if (id) return id;
+  }
+  for (let i = 0; i < sources.length; i++) {
+    const id = matchTmdbCatalogId(sources[i]);
     if (id) return id;
   }
   return null;
@@ -873,7 +906,6 @@ function init() {
   } else {
     observeTitlebarTargets();
     enhanceMediaContainers();
-    // Late-enable settle: IO + board mount often land after first pass.
     [100, 600].forEach((ms) => {
       setTimeout(() => {
         if (!shouldEnhancePage()) return;
@@ -883,17 +915,21 @@ function init() {
     });
   }
 
-  if (mutationObserver) {
-    mutationObserver.disconnect();
-  }
-  if (typeof MutationObserver !== "undefined") {
+  bindMutationObserver();
+
+  document.addEventListener("click", onTitlebarLibraryClick, true);
+  document.addEventListener("stremio-custom-route-change", onTitlebarRouteChange);
+}
+
+function bindMutationObserver() {
+  if (typeof MutationObserver === "undefined") return;
+  if (!mutationObserver) {
     mutationObserver = new MutationObserver((mutations) => {
       let shouldObserve = false;
       let queued = false;
       for (let i = 0; i < mutations.length; i++) {
         const mutation = mutations[i];
         if (mutation.type === "attributes") {
-          // Never react to cover-owned src / data-imdb-id (Enhanced Covers).
           if (mutation.attributeName !== "href") continue;
           const item = mutation.target?.closest?.(
             '[class*="meta-item-container"]',
@@ -916,7 +952,6 @@ function init() {
           ) {
             continue;
           }
-          // Ignore poster-image churn from Enhanced Covers.
           if (
             node.matches?.('img[class*="poster-image"]') ||
             node.closest?.('[class*="poster-image-layer"]')
@@ -938,24 +973,19 @@ function init() {
       if (shouldObserve) observeTitlebarTargets();
       if (queued) scheduleEnhancement();
     });
-
-    const moRoot = document.querySelector("#app") || document.body;
-    if (moRoot) {
-      try {
-        mutationObserver.observe(moRoot, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeFilter: ["href"],
-        });
-      } catch (_) {
-        /* ignore */
-      }
-    }
   }
-
-  document.addEventListener("click", onTitlebarLibraryClick, true);
-  document.addEventListener("stremio-custom-route-change", onTitlebarRouteChange);
+  const moRoot = document.querySelector("#app") || document.body;
+  if (!moRoot) return;
+  try {
+    mutationObserver.observe(moRoot, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["href"],
+    });
+  } catch (_) {
+    /* ignore */
+  }
 }
 
 /**
@@ -1044,10 +1074,33 @@ window.__stremioEnhancedTitlebarUnload = function () {
   }
 };
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init, { once: true });
-} else {
+window.__stremioEnhancedTitlebarSuspend = function () {
+  try {
+    mutationObserver?.disconnect();
+    intersectionObserver?.disconnect();
+  } catch (_) {}
+};
+
+window.__stremioEnhancedTitlebarResume = function () {
+  try {
+    bindMutationObserver();
+    if (typeof window.__stremioEnhancedTitlebarForceRefresh === "function") {
+      window.__stremioEnhancedTitlebarForceRefresh();
+    }
+  } catch (_) {}
+};
+
+function bootEnhancedTitlebar() {
   init();
+  if (window.stremioCustomSuspendBackground?.()) {
+    window.__stremioEnhancedTitlebarSuspend?.();
+  }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootEnhancedTitlebar, { once: true });
+} else {
+  bootEnhancedTitlebar();
 }
 
 })();

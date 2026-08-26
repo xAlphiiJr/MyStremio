@@ -114,6 +114,8 @@ fn create_shareable_mpv(window_handle: HWND) -> Arc<Mpv> {
         #[cfg(not(debug_assertions))]
         set_property!("msg-level", "all=no");
         set_property!("quiet", "yes");
+        let _ = initializer.set_property("osd-bar", "no");
+        let _ = initializer.set_property("osd-level", 0i64);
         set_property!("hwdec", "auto");
         #[cfg(windows)]
         set_property!("gpu-api", "d3d11");

@@ -11,7 +11,7 @@
   if (window.__mystremioSearchSuggestionsReady) return;
   window.__mystremioSearchSuggestionsReady = true;
 
-  const STYLE_ID = 'mystremio-search-suggestions-styles';
+  const STYLE_ID = 'mystremio-search-suggestions-styles-v3';
   const ROOT_ID = 'mystremio-search-suggestions';
   const CINEMETA_CATALOG = 'https://v3-cinemeta.strem.io/catalog';
   const RECENT_KEY = 'mystremio_search_recent_v1';
@@ -31,6 +31,10 @@
   /** @type {WeakSet<HTMLInputElement>} */
   const boundInputs = new WeakSet();
   let positionRaf = null;
+  let suppressUntilUserInput = false;
+  let collapseRaf = 0;
+  const SEARCH_INPUT_SEL =
+    '.search-bar-container-asfq1 input, .search-input-IQ0ZW, input[class*="search-input"], [class*="search-input"]';
 
   /**
    * @param {string} text
@@ -54,10 +58,11 @@
         max-height:min(50vh,380px);overflow:auto;
         overscroll-behavior:contain;
         border-radius:12px;padding:6px;
-        background:rgba(18,18,22,.97);
+        background:rgba(30,30,30,.92);
         border:1px solid rgba(255,255,255,.12);
-        box-shadow:0 -12px 40px rgba(0,0,0,.5);
-        backdrop-filter:blur(14px) saturate(140%);
+        box-shadow:0 8px 32px rgba(0,0,0,.5),0 4px 16px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.1);
+        backdrop-filter:blur(20px) saturate(180%);
+        -webkit-backdrop-filter:blur(20px) saturate(180%);
         display:none;
       }
       #${ROOT_ID}.open{display:block}
@@ -68,7 +73,7 @@
       }
       #${ROOT_ID} .mss-item:hover,
       #${ROOT_ID} .mss-item:focus,
-      #${ROOT_ID} .mss-item.active{background:rgba(255,255,255,.08);outline:none}
+      #${ROOT_ID} .mss-item.active{background:rgba(255,255,255,.12);outline:none}
       #${ROOT_ID} .mss-poster{
         width:36px;height:54px;border-radius:6px;object-fit:cover;
         background:rgba(255,255,255,.06);flex:none;
@@ -83,6 +88,65 @@
       #${ROOT_ID} .mss-section{
         padding:6px 10px 4px;font-size:10px;font-weight:700;letter-spacing:.04em;
         text-transform:uppercase;color:rgba(255,255,255,.35);
+      }
+      html.mystremio-search-unfocused .search-bar-container-asfq1,
+      html.mystremio-search-unfocused .search-bar-container-asfq1:focus-within,
+      html.mystremio-search-unfocused .search-bar-container-asfq1.expanded,
+      html.mystremio-search-unfocused .search-bar-container-asfq1.active,
+      html.mystremio-search-unfocused .search-bar-h60ja,
+      html.mystremio-search-unfocused .search-bar-h60ja:focus-within,
+      html.mystremio-search-unfocused .search-bar-h60ja.expanded,
+      html.mystremio-search-unfocused .search-bar-h60ja.active,
+      .search-bar-container-asfq1[data-mystremio-search-collapsed="1"],
+      .search-bar-container-asfq1[data-mystremio-search-collapsed="1"]:focus-within,
+      .search-bar-container-asfq1[data-mystremio-search-collapsed="1"].expanded,
+      .search-bar-container-asfq1[data-mystremio-search-collapsed="1"].active,
+      .search-bar-h60ja[data-mystremio-search-collapsed="1"],
+      .search-bar-h60ja[data-mystremio-search-collapsed="1"]:focus-within,
+      .search-bar-h60ja[data-mystremio-search-collapsed="1"].expanded,
+      .search-bar-h60ja[data-mystremio-search-collapsed="1"].active{
+        width:50px!important;justify-content:center!important;
+      }
+      html.mystremio-search-unfocused .search-bar-container-asfq1:hover,
+      .search-bar-container-asfq1[data-mystremio-search-collapsed="1"]:hover{
+        width:30%!important;justify-content:space-between!important;
+      }
+      html.mystremio-search-unfocused .search-bar-h60ja:hover,
+      .search-bar-h60ja[data-mystremio-search-collapsed="1"]:hover{
+        width:300px!important;justify-content:space-between!important;
+      }
+      html.mystremio-search-unfocused .search-bar-container-asfq1 .search-input-IQ0ZW,
+      html.mystremio-search-unfocused .search-bar-container-asfq1:focus-within .search-input-IQ0ZW,
+      html.mystremio-search-unfocused .search-bar-container-asfq1.expanded .search-input-IQ0ZW,
+      html.mystremio-search-unfocused .search-bar-h60ja .search-input-IQ0ZW,
+      html.mystremio-search-unfocused .search-bar-h60ja:focus-within .search-input-IQ0ZW,
+      html.mystremio-search-unfocused .search-bar-h60ja.expanded .search-input-IQ0ZW,
+      .search-bar-container-asfq1[data-mystremio-search-collapsed="1"] .search-input-IQ0ZW,
+      .search-bar-container-asfq1[data-mystremio-search-collapsed="1"]:focus-within .search-input-IQ0ZW,
+      .search-bar-container-asfq1[data-mystremio-search-collapsed="1"].expanded .search-input-IQ0ZW,
+      .search-bar-h60ja[data-mystremio-search-collapsed="1"] .search-input-IQ0ZW,
+      .search-bar-h60ja[data-mystremio-search-collapsed="1"]:focus-within .search-input-IQ0ZW,
+      .search-bar-h60ja[data-mystremio-search-collapsed="1"].expanded .search-input-IQ0ZW{
+        opacity:0!important;width:0!important;padding:0!important;flex:none!important;
+      }
+      html.mystremio-search-unfocused .search-bar-container-asfq1:hover .search-input-IQ0ZW,
+      .search-bar-container-asfq1[data-mystremio-search-collapsed="1"]:hover .search-input-IQ0ZW{
+        opacity:1!important;width:100%!important;padding:0 .5rem!important;flex:1!important;
+      }
+      html.mystremio-search-unfocused .search-bar-h60ja:hover .search-input-IQ0ZW,
+      .search-bar-h60ja[data-mystremio-search-collapsed="1"]:hover .search-input-IQ0ZW{
+        opacity:1!important;width:100%!important;padding:8px 16px!important;flex:1!important;
+      }
+      html.mystremio-search-unfocused [class*="search-bar"] [class*="menu-container"],
+      html.mystremio-search-unfocused [class*="search-bar-container"] [class*="menu-container"],
+      [data-mystremio-search-collapsed="1"] [class*="menu-container"]{
+        display:none!important;visibility:hidden!important;pointer-events:none!important;
+      }
+      html.mystremio-search-unfocused .search-bar-container-asfq1 .submit-button-container-MImNa,
+      html.mystremio-search-unfocused .search-bar-h60ja .submit-button-container-MImNa,
+      .search-bar-container-asfq1[data-mystremio-search-collapsed="1"] .submit-button-container-MImNa,
+      .search-bar-h60ja[data-mystremio-search-collapsed="1"] .submit-button-container-MImNa{
+        display:flex!important;opacity:1!important;flex:none!important;
       }
     `;
     document.documentElement.appendChild(style);
@@ -129,6 +193,186 @@
     root.innerHTML = '';
     activeIndex = -1;
     currentMetas = [];
+  }
+
+  /**
+   * @param {EventTarget|null} el
+   * @returns {boolean}
+   */
+  function isSearchInput(el) {
+    if (!(el instanceof HTMLInputElement)) return false;
+    try {
+      if (el.matches(SEARCH_INPUT_SEL)) return true;
+    } catch (_) {}
+    return Boolean(el.closest('[class*="search-bar-container"], [class*="search-bar"]'));
+  }
+
+  /**
+   * @param {EventTarget|null} el
+   * @returns {boolean}
+   */
+  function isSearchCloseButton(el) {
+    if (!(el instanceof Element)) return false;
+    return Boolean(
+      el.closest('[class*="submit-button-container"], [class*="submit-button"], [class*="close-button"]')
+    );
+  }
+
+  /**
+   * @param {EventTarget|null} el
+   * @returns {boolean}
+   */
+  function isSearchBarTarget(el) {
+    if (!(el instanceof Element)) return false;
+    if (isSearchInput(el)) return true;
+    return Boolean(el.closest('[class*="search-bar-container"], [class*="search-bar"]'));
+  }
+
+  function blurSearchInputs() {
+    document.querySelectorAll(SEARCH_INPUT_SEL).forEach((el) => {
+      if (el instanceof HTMLInputElement && document.activeElement === el) {
+        el.blur();
+      }
+    });
+  }
+
+  function isSearchRoute(hash = location.hash) {
+    return /#\/search(?:\/|$|\?|#)/i.test(hash || '');
+  }
+
+  function isDetailRoute(hash = location.hash) {
+    const h = hash || '';
+    if (/#\/player\b/i.test(h)) return false;
+    return /#\/(?:detail|metadetails)(?:\/|$|\?|#)/i.test(h);
+  }
+
+  function nativeSearchBars() {
+    return document.querySelectorAll(
+      '.search-bar-container-asfq1, .search-bar-h60ja.search-bar-container-asfq1, .search-bar-h60ja'
+    );
+  }
+
+  function hideNativeSearchMenus() {
+    document.querySelectorAll(
+      '[class*="search-bar"] [class*="menu-container"], [class*="search-bar-container"] [class*="menu-container"]'
+    ).forEach((el) => {
+      el.style.setProperty('display', 'none', 'important');
+      el.style.setProperty('visibility', 'hidden', 'important');
+      el.style.setProperty('pointer-events', 'none', 'important');
+    });
+  }
+
+  function applyCollapsedBarStyles(bar) {
+    bar.setAttribute('data-mystremio-search-collapsed', '1');
+    bar.style.setProperty('width', '50px', 'important');
+    bar.style.setProperty('max-width', '50px', 'important');
+    bar.style.setProperty('justify-content', 'center', 'important');
+    bar.classList.remove('expanded', 'active');
+    const input = bar.querySelector('input');
+    if (input instanceof HTMLInputElement) {
+      input.style.setProperty('width', '0', 'important');
+      input.style.setProperty('opacity', '0', 'important');
+      input.style.setProperty('flex', 'none', 'important');
+      input.style.setProperty('padding', '0', 'important');
+      if (document.activeElement === input) input.blur();
+    }
+  }
+
+  function releaseCollapsedBarInlineStyles(bar) {
+    bar.style.removeProperty('width');
+    bar.style.removeProperty('max-width');
+    bar.style.removeProperty('justify-content');
+    const input = bar.querySelector('input');
+    if (input instanceof HTMLInputElement) {
+      input.style.removeProperty('width');
+      input.style.removeProperty('opacity');
+      input.style.removeProperty('flex');
+      input.style.removeProperty('padding');
+    }
+  }
+
+  function collapseNativeSearchBars() {
+    nativeSearchBars().forEach((bar) => {
+      if (bar.closest('[class*="addons"]')) return;
+      applyCollapsedBarStyles(bar);
+    });
+    hideNativeSearchMenus();
+  }
+
+  function restoreNativeSearchBars() {
+    nativeSearchBars().forEach((bar) => {
+      bar.removeAttribute('data-mystremio-search-collapsed');
+      bar.style.removeProperty('width');
+      bar.style.removeProperty('max-width');
+      bar.style.removeProperty('justify-content');
+      const input = bar.querySelector('input');
+      if (input instanceof HTMLInputElement) {
+        input.style.removeProperty('width');
+        input.style.removeProperty('opacity');
+        input.style.removeProperty('flex');
+        input.style.removeProperty('padding');
+      }
+    });
+    document.querySelectorAll(
+      '[class*="search-bar"] [class*="menu-container"], [class*="search-bar-container"] [class*="menu-container"]'
+    ).forEach((el) => {
+      el.style.removeProperty('display');
+      el.style.removeProperty('visibility');
+      el.style.removeProperty('pointer-events');
+    });
+  }
+
+  function keepSearchClosed() {
+    if (!suppressUntilUserInput) return;
+    hide();
+    hideNativeSearchMenus();
+    document.documentElement.classList.add('mystremio-search-unfocused');
+    nativeSearchBars().forEach((bar) => {
+      if (bar.closest('[class*="addons"]')) return;
+      bar.setAttribute('data-mystremio-search-collapsed', '1');
+      let hovered = false;
+      try {
+        hovered = bar.matches(':hover');
+      } catch (_) {
+        hovered = false;
+      }
+      if (hovered) {
+        releaseCollapsedBarInlineStyles(bar);
+        return;
+      }
+      applyCollapsedBarStyles(bar);
+    });
+  }
+
+  function stopCollapseLoop() {
+    if (collapseRaf) {
+      cancelAnimationFrame(collapseRaf);
+      collapseRaf = 0;
+    }
+  }
+
+  function startCollapseLoop() {
+    if (collapseRaf) return;
+    const tick = () => {
+      collapseRaf = 0;
+      if (!suppressUntilUserInput) return;
+      if (isSearchRoute()) keepSearchClosed();
+      collapseRaf = requestAnimationFrame(tick);
+    };
+    collapseRaf = requestAnimationFrame(tick);
+  }
+
+  function suppressSuggestionsOnce() {
+    suppressUntilUserInput = true;
+    keepSearchClosed();
+    startCollapseLoop();
+  }
+
+  function allowSuggestionsFromUser() {
+    suppressUntilUserInput = false;
+    stopCollapseLoop();
+    document.documentElement.classList.remove('mystremio-search-unfocused');
+    restoreNativeSearchBars();
   }
 
   /**
@@ -653,6 +897,10 @@
    * @param {{ recent?: boolean }} [opts]
    */
   function render(input, metas, opts) {
+    if (suppressUntilUserInput) {
+      hide();
+      return;
+    }
     const root = ensureRoot();
     positionRoot(input);
     currentMetas = metas;
@@ -697,6 +945,14 @@
           year: currentMetas[i]?.releaseInfo || currentMetas[i]?.year,
         });
       });
+      const thumb = btn.querySelector('img.mss-poster');
+      if (thumb) {
+        thumb.addEventListener('error', () => {
+          const placeholder = document.createElement('div');
+          placeholder.className = 'mss-poster';
+          thumb.replaceWith(placeholder);
+        });
+      }
     });
   }
 
@@ -704,6 +960,10 @@
    * @param {HTMLInputElement} input
    */
   async function onQuery(input) {
+    if (suppressUntilUserInput) {
+      hide();
+      return;
+    }
     const query = String(input.value || '').trim();
     activeInput = input;
     if (query.length < MIN_QUERY) {
@@ -747,12 +1007,6 @@
       setActiveIndex(activeIndex < 0 ? items.length - 1 : activeIndex - 1, {
         scroll: true,
       });
-      return;
-    }
-    if (event.key === 'Enter' && activeIndex >= 0 && currentMetas[activeIndex]) {
-      event.preventDefault();
-      event.stopPropagation();
-      openMeta(currentMetas[activeIndex]);
     }
   }
 
@@ -762,17 +1016,42 @@
   function bindInput(input) {
     if (!input || boundInputs.has(input)) return;
     boundInputs.add(input);
+    input.addEventListener('pointerdown', (event) => {
+      if (!event.isTrusted) return;
+      allowSuggestionsFromUser();
+    });
     input.addEventListener('input', () => {
+      if (suppressUntilUserInput) {
+        hide();
+        return;
+      }
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => onQuery(input), DEBOUNCE_MS);
     });
-    input.addEventListener('keydown', (event) => onKeyDown(input, event));
+    input.addEventListener('keydown', (event) => {
+      if (
+        suppressUntilUserInput &&
+        event.isTrusted &&
+        event.key &&
+        event.key.length === 1 &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        allowSuggestionsFromUser();
+      }
+      onKeyDown(input, event);
+    });
     input.addEventListener('blur', () => {
       setTimeout(() => {
         if (!document.getElementById(ROOT_ID)?.contains(document.activeElement)) hide();
       }, 160);
     });
     input.addEventListener('focus', () => {
+      if (suppressUntilUserInput) {
+        hide();
+        return;
+      }
       const q = String(input.value || '').trim();
       if (q.length >= MIN_QUERY) onQuery(input);
       else {
@@ -783,13 +1062,13 @@
   }
 
   function scan() {
-    document
-      .querySelectorAll(
-        '.search-bar-container-asfq1 input, .search-input-IQ0ZW, input[class*="search-input"], [class*="search-input"]'
-      )
-      .forEach((el) => {
-        if (el instanceof HTMLInputElement) bindInput(el);
-      });
+    document.querySelectorAll(SEARCH_INPUT_SEL).forEach((el) => {
+      if (el instanceof HTMLInputElement) bindInput(el);
+    });
+    if (suppressUntilUserInput) {
+      if (isSearchRoute()) keepSearchClosed();
+      startCollapseLoop();
+    }
   }
 
   /**
@@ -811,6 +1090,69 @@
       if (activeInput) positionRoot(activeInput);
     });
   }
+
+  document.addEventListener('stremio-custom-suppress-search-suggestions', suppressSuggestionsOnce);
+
+  let lastRouteHash = location.hash || '';
+
+  function onSearchRouteTransition(prev, next) {
+    if (isDetailRoute(prev) && isSearchRoute(next)) {
+      suppressSuggestionsOnce();
+      return;
+    }
+    if (suppressUntilUserInput && isSearchRoute(next)) {
+      keepSearchClosed();
+      startCollapseLoop();
+    }
+  }
+
+  document.addEventListener(
+    'stremio-custom-route-change',
+    (event) => {
+      const next = event?.detail?.next ?? location.hash ?? '';
+      const prev = event?.detail?.prev ?? lastRouteHash;
+      lastRouteHash = next;
+      onSearchRouteTransition(prev, next);
+    },
+    true
+  );
+
+  window.addEventListener('hashchange', () => {
+    const next = location.hash || '';
+    const prev = lastRouteHash;
+    lastRouteHash = next;
+    onSearchRouteTransition(prev, next);
+  });
+
+  window.addEventListener('popstate', () => {
+    const next = location.hash || '';
+    const prev = lastRouteHash;
+    lastRouteHash = next;
+    onSearchRouteTransition(prev, next);
+  });
+
+  document.addEventListener(
+    'focusin',
+    (event) => {
+      if (!suppressUntilUserInput) return;
+      if (!isSearchInput(event.target)) return;
+      hide();
+      if (event.target instanceof HTMLInputElement) event.target.blur();
+    },
+    true
+  );
+
+  document.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (!suppressUntilUserInput) return;
+      if (!event.isTrusted) return;
+      if (isSearchCloseButton(event.target) || isSearchInput(event.target) || isSearchBarTarget(event.target)) {
+        allowSuggestionsFromUser();
+      }
+    },
+    true
+  );
 
   document.addEventListener(
     'pointerdown',
@@ -834,5 +1176,18 @@
     observer.observe(document.documentElement, { childList: true, subtree: true });
     scan();
   }
+
+  window.__stremioSearchSuggestionsSuspend = function () {
+    try {
+      observer.disconnect();
+    } catch (_) {}
+  };
+  window.__stremioSearchSuggestionsResume = function () {
+    start();
+  };
+
   start();
+  if (window.stremioCustomSuspendBackground?.()) {
+    window.__stremioSearchSuggestionsSuspend();
+  }
 })();

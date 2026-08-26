@@ -340,6 +340,27 @@
 
   window.__stremioCustomLiquidGlassNavStart = start;
   window.__stremioCustomLiquidGlassNavStop = stop;
+  window.__stremioLiquidGlassNavSuspend = function () {
+    try {
+      observer?.disconnect();
+    } catch (_) {}
+  };
+  window.__stremioLiquidGlassNavResume = function () {
+    if (!observer) {
+      const theme = window.StremioCustom?.helpers?.getCurrentTheme?.() || '';
+      if (theme === 'liquid-glass.theme.css') start();
+      return;
+    }
+    const root = findNavObserveRoot();
+    if (root) {
+      observer.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'style'],
+      });
+    }
+  };
 
   document.addEventListener('stremio-custom-bootstrap-ready', () => {
     const theme = window.StremioCustom?.helpers?.getCurrentTheme?.() || '';

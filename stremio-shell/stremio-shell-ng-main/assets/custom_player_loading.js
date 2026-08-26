@@ -15,9 +15,10 @@
   const STYLE_ID = 'stremio-custom-player-session-style';
   const SESSION_CLASS = 'mystremio-player-session';
   const MPV_VISIBLE_CLASS = 'mystremio-mpv-visible';
+  const PUNCHED_CLASS = 'mystremio-mpv-punched';
   const APP_LOADING_MASK_ID = 'stremio-custom-app-loading-mask';
   const APP_LOADING_STYLE_ID = 'stremio-custom-app-loading-style';
-  const TOP_SEAM_FIX_STYLE_ID = 'stremio-custom-top-seam-fix';
+  const LOADING_COVER_ID = 'mystremio-player-loading-cover';
 
   const Phase = { IDLE: 'idle', LOADING: 'loading', VIDEO: 'video' };
 
@@ -33,6 +34,8 @@
   let pollTimer = null;
   let lastViewportMaintainAt = 0;
   let brandObserver = null;
+  let layerObserver = null;
+  let layerPunchTimer = null;
   let shellBorderlessMsgId = 1;
   let shellBorderlessEnabled = false;
 
@@ -142,12 +145,16 @@
       html.${SESSION_CLASS}.${MPV_VISIBLE_CLASS} [class*="player-container"] [class*="video-container"],
       html.${SESSION_CLASS}.${MPV_VISIBLE_CLASS} [class*="player-container"] [class*="rendering"],
       html.${SESSION_CLASS}.${MPV_VISIBLE_CLASS} [class*="player-container"] [class*="shell-video"],
-      html.${SESSION_CLASS}.${MPV_VISIBLE_CLASS} [class*="player-container"] > [class*="layer-"]:not([class*="background"]):not([class*="buffering"]):not([class*="control"]):not([class*="nav-bar"]):not([class*="menu"]):not([class*="info"]):not([class*="side-drawer"]) {
+      html.${SESSION_CLASS}.${MPV_VISIBLE_CLASS} [class*="player-container"] > [class*="layer-"]:not([class*="background"]):not([class*="buffering"]):not([class*="control"]):not([class*="nav-bar"]):not([class*="menu"]):not([class*="info"]):not([class*="side-drawer"]):not([class*="indicator"]) {
         background: transparent !important;
         background-color: transparent !important;
       }
-      html.${SESSION_CLASS}.${MPV_VISIBLE_CLASS} [class*="player-container"] [class*="background-layer"],
-      html.${SESSION_CLASS}.${MPV_VISIBLE_CLASS} [class*="player-container"] [class*="buffering-layer"] {
+      html.${SESSION_CLASS} [class*="player-container"] [class*="background-layer"],
+      html.${SESSION_CLASS} [class*="player-container"] [class*="buffering-layer"] {
+        pointer-events: none !important;
+      }
+      html.${SESSION_CLASS}.${PUNCHED_CLASS} [class*="player-container"] [class*="background-layer"],
+      html.${SESSION_CLASS}.${PUNCHED_CLASS} [class*="player-container"] [class*="buffering-layer"] {
         display: none !important;
         visibility: hidden !important;
         pointer-events: none !important;
@@ -163,6 +170,23 @@
       }
       html.${SESSION_CLASS}:not(.${MPV_VISIBLE_CLASS}) [class*="player-container"] [class*="background-layer"] [class*="image"] {
         object-fit: cover !important;
+      }
+      #${LOADING_COVER_ID} {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+        overflow: hidden;
+        background: rgb(20, 20, 20);
+      }
+      #${LOADING_COVER_ID} img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      html.${PUNCHED_CLASS} #${LOADING_COVER_ID} {
+        display: none !important;
       }
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -256,6 +280,34 @@
     return !root.querySelector('[class*="background-layer"]');
   }
 
+  function removeLoadingCover() {
+    document.getElementById(LOADING_COVER_ID)?.remove();
+  }
+
+  function ensureLoadingCover() {
+    if (phase !== Phase.LOADING || !isPlayerRoute()) {
+      if (phase !== Phase.LOADING) removeLoadingCover();
+      return;
+    }
+    const root = playerRoot();
+    if (!root) return;
+    if (root.querySelector('[class*="background-layer"]')) return;
+    const bgUrl = resolveBackgroundUrl();
+    if (!isUsableImageSrc(bgUrl)) return;
+    let cover = document.getElementById(LOADING_COVER_ID);
+    if (!cover) {
+      cover = document.createElement('div');
+      cover.id = LOADING_COVER_ID;
+      cover.setAttribute('aria-hidden', 'true');
+      const img = document.createElement('img');
+      img.alt = '';
+      cover.appendChild(img);
+      root.appendChild(cover);
+    }
+    const img = cover.querySelector('img');
+    if (img && img.getAttribute('src') !== bgUrl) img.setAttribute('src', bgUrl);
+  }
+
   function applySeriesBranding() {
     if (phase !== Phase.LOADING || !isPlayerRoute()) return;
     const root = playerRoot();
@@ -277,6 +329,7 @@
         }
       }
     }
+    ensureLoadingCover();
   }
 
   function mergeArtwork(patch) {
@@ -339,9 +392,19 @@
     } catch (_) {}
   }
 
+  function setPunched(on) {
+    try {
+      document.documentElement.classList.toggle(PUNCHED_CLASS, Boolean(on));
+    } catch (_) {}
+  }
+
   function punchMpvViewport() {
-    if (phase !== Phase.VIDEO || !hasLiveStream()) {
+    if (phase !== Phase.VIDEO) {
+      setPunched(false);
       ensureOpaqueReconcile();
+      return;
+    }
+    if (!mpvReadyForVideo()) {
       return;
     }
 
@@ -363,10 +426,13 @@
         el.style.backgroundColor = 'transparent';
       }
     }
+    startLayerObserver();
+    setPunched(true);
+    removeLoadingCover();
   }
 
   function maintainMpvViewport() {
-    if (phase !== Phase.VIDEO || !hasLiveStream()) return;
+    if (phase !== Phase.VIDEO || !mpvReadyForVideo()) return;
     const now = Date.now();
     if (now - lastViewportMaintainAt < VIEWPORT_MAINTAIN_MS) return;
     lastViewportMaintainAt = now;
@@ -374,9 +440,12 @@
   }
 
   function scheduleViewportPunch() {
-    if (phase !== Phase.VIDEO || !hasLiveStream()) {
+    if (phase !== Phase.VIDEO) {
       clearViewportTimers();
       ensureOpaqueReconcile();
+      return;
+    }
+    if (!mpvReadyForVideo()) {
       return;
     }
     clearViewportTimers();
@@ -393,19 +462,25 @@
 
     if (next === Phase.VIDEO) {
       stopBrandObserver();
+      startLayerObserver();
       scheduleViewportPunch();
     } else if (next === Phase.LOADING) {
       // Stay opaque while loading — punching here exposes white HWND/WebView edges
       // especially when the user enters fullscreen during the poster phase.
+      setPunched(false);
+      stopLayerObserver();
       setWebViewBackgroundTransparent(false);
       html.classList.remove(MPV_VISIBLE_CLASS);
       applySeriesBranding();
       startBrandObserver();
     } else {
+      setPunched(false);
+      stopLayerObserver();
       setWebViewBackgroundTransparent(false);
       html.classList.remove(MPV_VISIBLE_CLASS);
       stopBrandObserver();
       clearViewportTimers();
+      removeLoadingCover();
     }
   }
 
@@ -460,6 +535,31 @@
     brandObserver = null;
   }
 
+  function startLayerObserver() {
+    if (layerObserver) return;
+    const root = playerRoot();
+    if (!root) return;
+    layerObserver = new MutationObserver(() => {
+      if (phase !== Phase.VIDEO) return;
+      if (layerPunchTimer) return;
+      layerPunchTimer = window.setTimeout(() => {
+        layerPunchTimer = null;
+        if (phase === Phase.VIDEO) punchMpvViewport();
+      }, 100);
+    });
+    layerObserver.observe(root, { childList: true, subtree: false });
+  }
+
+  function stopLayerObserver() {
+    if (layerPunchTimer) {
+      window.clearTimeout(layerPunchTimer);
+      layerPunchTimer = null;
+    }
+    if (!layerObserver) return;
+    layerObserver.disconnect();
+    layerObserver = null;
+  }
+
   function clearMaxTimer() {
     if (maxTimer) {
       window.clearTimeout(maxTimer);
@@ -476,12 +576,6 @@
     pendingSession = false;
 
     if (phase === Phase.VIDEO) {
-      if (!hasLiveStream()) {
-        setPhase(Phase.IDLE);
-        setShellBorderless(false);
-        ensureOpaqueReconcile();
-        return;
-      }
       setShellBorderless(false);
       scheduleViewportPunch();
       return;
