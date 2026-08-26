@@ -229,6 +229,7 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 ### Known Issues
 
 - **Cast Search Addon:** The Cast Search Addon is not compatible with the StreamUI plugin as the cast members load the same way as video streams which messes with correct grouping.
+- **Episode Ratings:** For some shows, episode ratings are currently not working, the issue mainly occurs for anime because of different episode numbering across metadata providers and rating sites.
 
 ---
 
