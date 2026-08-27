@@ -20,12 +20,13 @@
     (function installRatingsBar() {
         if (window.__mystremioRatingsBar) return;
 
-        const STYLE_ID = 'mystremio-ratings-bar-styles-v8';
+        const STYLE_ID = 'mystremio-ratings-bar-styles-v9';
         const BAR_CLASS = 'mystremio-ratings-bar';
         const ROW_CLASS = 'msb-ratings-row';
         const HIDDEN_IMDB_ATTR = 'data-mystremio-imdb-hidden';
         const CACHE_TTL_MS = 10 * 60 * 1000;
-        /** @type {Map<string, { at: number, ratings: object[] }>} */
+        const INCOMPLETE_TTL_MS = 5 * 1000;
+        /** @type {Map<string, { at: number, ratings: object[], complete: boolean }>} */
         const cache = new Map();
         /** @type {Map<string, Promise<object[]>>} */
         const pending = new Map();
@@ -44,6 +45,8 @@
             trakt: '#ed1c24',
             mcusers: '#b19cd9',
             letterboxd: '#00e054',
+            tvmaze: '#3c948b',
+            tvdb: '#6cd591',
         };
 
         /**
@@ -100,28 +103,56 @@
             const id = normalizeImdbId(imdbId);
             if (!id) return null;
             const cached = cache.get(id);
-            if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-                return cached.ratings.slice();
-            }
+            if (cached && isCacheFresh(cached)) return cached.ratings.slice();
             return null;
         }
 
+        /**
+         * A result whose sources all answered is worth 10 minutes; one with an
+         * unreachable source is only held long enough to dedupe a request burst.
+         * @param {{ at: number, complete?: boolean }} entry
+         */
+        function isCacheFresh(entry) {
+            if (!entry) return false;
+            const ttl = entry.complete === false ? INCOMPLETE_TTL_MS : CACHE_TTL_MS;
+            return Date.now() - entry.at < ttl;
+        }
+
+        // Strict whitelist: a key missing here is silently dropped and never rendered.
         function orderRatings(ratings) {
-            const order = ['fsk', 'imdb', 'mal', 'rt', 'tmdb', 'metacritic', 'trakt', 'mcusers', 'letterboxd'];
+            const order = [
+                'fsk',
+                'imdb',
+                'mal',
+                'rt',
+                'tmdb',
+                'metacritic',
+                'trakt',
+                'mcusers',
+                'tvmaze',
+                'tvdb',
+                'letterboxd',
+            ];
             const by = Object.fromEntries(
                 (ratings || []).filter((r) => r?.key).map((r) => [r.key, r])
             );
             return order.filter((k) => by[k]).map((k) => by[k]);
         }
 
+        /**
+         * An unknown type yields both candidates instead of silently assuming 'movie':
+         * Cinemeta answers its `movie` endpoint for a series id too (with an unrelated
+         * title), so a wrong guess returns a thin-but-non-empty result rather than a
+         * miss, and the lookup must be able to escape it.
+         */
         function hintedMediaTypes(typeHint, isEpisode) {
             const hint = String(typeHint || '').toLowerCase();
-            if (isEpisode) return { types: ['series'], typeKnown: true };
+            if (isEpisode) return ['series'];
             if (hint === 'series' || hint === 'tv' || hint === 'show' || hint === 'anime') {
-                return { types: ['series'], typeKnown: true };
+                return ['series'];
             }
-            if (hint === 'movie') return { types: ['movie'], typeKnown: true };
-            return { types: ['movie'], typeKnown: false };
+            if (hint === 'movie') return ['movie'];
+            return ['movie', 'series'];
         }
 
         /**
@@ -130,12 +161,17 @@
          */
         function episodeCacheSuffix(episodeRef) {
             const layout = String(episodeRef?.episodeLayout || '').toLowerCase();
+            let suffix = ':auto';
             if (layout === 'tmdb' || layout === 'cinemeta' || layout === 'absolute') {
-                return `:${layout}`;
+                suffix = `:${layout}`;
+            } else if (episodeRef?.exactCinemeta === false) {
+                suffix = ':abs';
+            } else if (episodeRef?.exactCinemeta === true) {
+                suffix = ':exact';
             }
-            if (episodeRef?.exactCinemeta === false) return ':abs';
-            if (episodeRef?.exactCinemeta === true) return ':exact';
-            return ':auto';
+            const kitsuId = Number(episodeRef?.kitsuId) || 0;
+            if (kitsuId > 0) suffix += `:k${kitsuId}`;
+            return suffix;
         }
 
         /**
@@ -159,15 +195,16 @@
             const pendingKey = `${cacheKey}:${mode}`;
             if (mode === 'full') {
                 const cached = cache.get(cacheKey);
-                if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.ratings.slice();
+                if (cached && isCacheFresh(cached)) return cached.ratings.slice();
             }
             if (pending.has(pendingKey)) return pending.get(pendingKey);
 
-            const { types, typeKnown } = hintedMediaTypes(typeHint, isEpisode);
+            const types = hintedMediaTypes(typeHint, isEpisode);
 
             const job = (async () => {
                 const client = apiClient();
                 let ratings = [];
+                let complete = true;
                 if (client?.invoke) {
                     const tryTypes = types.slice();
                     for (const type of tryTypes) {
@@ -189,36 +226,32 @@
                                 ) {
                                     payload.episodeLayout = episodeLayout;
                                 }
+                                const kitsuId = Number(episodeRef?.kitsuId) || 0;
+                                if (kitsuId > 0) payload.kitsuId = kitsuId;
                             }
                             const result = await client.invoke('get-title-ratings', payload);
                             if (Array.isArray(result?.ratings) && result.ratings.length) {
-                                ratings = result.ratings;
-                                break;
+                                const answeredComplete = result.complete !== false;
+                                // Keep the richer answer.
+                                if (!ratings.length || result.ratings.length > ratings.length) {
+                                    ratings = result.ratings;
+                                    complete = answeredComplete;
+                                }
+                                // Only an unproven type justifies asking again. Retrying
+                                // on an incomplete answer instead meant one slow source
+                                // doubled the whole fan-out.
+                                if (result.typeVerified === true || answeredComplete) break;
                             }
                         } catch (_) {
-                            /* try next */
+                            complete = false;
                         }
                     }
-                    if (!ratings.length && !typeKnown && !isEpisode && mode === 'full') {
-                        const fallback = types[0] === 'movie' ? 'series' : 'movie';
-                        try {
-                            const result = await client.invoke('get-title-ratings', {
-                                imdbId: id,
-                                type: fallback,
-                                mode: 'full',
-                            });
-                            if (Array.isArray(result?.ratings) && result.ratings.length) {
-                                ratings = result.ratings;
-                            }
-                        } catch (_) {}
-                    }
+                } else {
+                    complete = false;
                 }
                 const ordered = orderRatings(ratings);
-                const ageOnly = new Set(['fsk', 'mpaa', 'age']);
-                const hasScore = ordered.some((item) => !ageOnly.has(String(item?.key || '').toLowerCase()));
-                if (isEpisode && !hasScore) return [];
-                if (mode === 'full' && ordered.length && hasScore) {
-                    cache.set(cacheKey, { at: Date.now(), ratings: ordered });
+                if (mode === 'full' && ordered.length) {
+                    cache.set(cacheKey, { at: Date.now(), ratings: ordered, complete });
                 }
                 return ordered.slice();
             })().finally(() => pending.delete(pendingKey));
@@ -227,53 +260,22 @@
             return job;
         }
 
-        /**
-         * @param {string} imdbId
-         * @param {string|null} typeHint
-         * @param {{ season?: number|null, episode?: number|null }|null} episodeRef
-         * @param {(ratings: object[]) => void} [onPartial]
-         * @returns {Promise<object[]>}
-         */
-        async function fetchRatingsProgressive(imdbId, typeHint, episodeRef, onPartial) {
-            const fastPromise = fetchRatings(imdbId, typeHint, episodeRef, { mode: 'fast' });
-            const fullPromise = fetchRatings(imdbId, typeHint, episodeRef, { mode: 'full' });
-            let fast = [];
-            try {
-                fast = await fastPromise;
-                if (fast.length) onPartial?.(fast);
-            } catch (_) {}
-            try {
-                const full = await fullPromise;
-                if (full.length) {
-                    const merged = orderRatings([...(fast || []), ...(full || [])]);
-                    const id = normalizeImdbId(imdbId);
-                    const season = Number(episodeRef?.season) || 0;
-                    const episode = Number(episodeRef?.episode) || 0;
-                    const hasScore = merged.some((item) => {
-                        const key = String(item?.key || '').toLowerCase();
-                        return key && key !== 'fsk' && key !== 'mpaa' && key !== 'age';
-                    });
-                    if (id && hasScore) {
-                        const layoutKey = episodeCacheSuffix(episodeRef);
-                        const cacheKey =
-                            season > 0 && episode > 0 ? `${id}:s${season}e${episode}${layoutKey}` : id;
-                        cache.set(cacheKey, { at: Date.now(), ratings: merged });
-                    }
-                    return merged;
-                }
-            } catch (_) {}
-            return fast;
-        }
-
         function ensureStyles() {
             if (document.getElementById(STYLE_ID)) return;
             const style = document.createElement('style');
             style.id = STYLE_ID;
             style.textContent = `
-              .${ROW_CLASS}{
-                display:inline-flex;flex-direction:row;flex-wrap:nowrap;
-                align-items:center;gap:8px;vertical-align:middle;max-width:100%;
-              }
+              /* No box of its own: both bars become flex items of Stremio's own
+                 runtime/year row, which already wraps. As one indivisible block they
+                 could only fit beside the year as a whole, so a few missing pixels sent
+                 the title chips down with them. */
+              .${ROW_CLASS}{display:contents}
+              /* Last resort only, for when a single block is wider than a whole line:
+                 wrap inside instead of overflowing sideways. */
+              .${ROW_CLASS} > .${BAR_CLASS}{flex-wrap:wrap;margin-right:8px}
+              /* Applies between wrapped lines only, so the single-line case keeps
+                 Stremio's own spacing untouched. */
+              [class*="runtime-release-info"]{row-gap:8px}
               .${BAR_CLASS}{
                 display:inline-flex;flex-wrap:nowrap;align-items:center;gap:8px;
                 vertical-align:middle;flex:0 1 auto;
@@ -309,6 +311,8 @@
               .${BAR_CLASS} .msb-brand-mcu{background:#6c5ce7;color:#fff;min-width:36px;border-radius:4px}
               .${BAR_CLASS} .msb-brand-trakt{background:#ed1c24;color:#fff;min-width:36px;border-radius:4px}
               .${BAR_CLASS} .msb-brand-lb{background:#14181c;color:#00e054;min-width:28px}
+              .${BAR_CLASS} .msb-brand-tvmaze{background:#3c948b;color:#fff;min-width:44px;border-radius:4px}
+              .${BAR_CLASS} .msb-brand-tvdb{background:#6cd591;color:#111;min-width:34px;border-radius:4px}
               .${BAR_CLASS} .msb-icon{width:15px;height:15px;display:inline-flex;align-items:center;flex-shrink:0}
               .${BAR_CLASS} .msb-icon svg{width:15px;height:15px;display:block}
               .${BAR_CLASS} .msb-value{font-weight:700}
@@ -351,6 +355,10 @@
                     return `<span class="msb-brand msb-brand-trakt">Trakt</span>`;
                 case 'letterboxd':
                     return `<span class="msb-brand msb-brand-lb">LB</span>`;
+                case 'tvmaze':
+                    return `<span class="msb-brand msb-brand-tvmaze">TVmaze</span>`;
+                case 'tvdb':
+                    return `<span class="msb-brand msb-brand-tvdb">TVDB</span>`;
                 case 'rt':
                     return `<span class="msb-icon">${RATING_ICONS.rt}</span>`;
                 default:
@@ -385,17 +393,6 @@
             const color = VALUE_COLORS[rating.key] || '#fff';
             const valueHtml = `<span class="msb-value" style="color:${color}">${esc(rating.value)}</span>`;
             return `<button type="button" class="msb-item" data-msb-rating-key="${key}"${urlAttr} title="${title}">${brandHtml(rating)}${valueHtml}</button>`;
-        }
-
-        /**
-         * @param {object[]} ratings
-         * @param {{ compact?: boolean }} [opts]
-         * @returns {string}
-         */
-        function buildBarHtml(ratings, opts = {}) {
-            if (!ratings?.length) return '';
-            const compact = opts.compact ? ' msb-compact' : '';
-            return `<div class="${BAR_CLASS}${compact}">${ratings.map(itemHtml).join('')}</div>`;
         }
 
         /**
@@ -526,31 +523,6 @@
                 },
                 true
             );
-        }
-
-        /**
-         * @param {Element} el
-         * @param {object[]} ratings
-         * @param {{ compact?: boolean, imdbId?: string, title?: string, type?: string }} [opts]
-         */
-        function renderInto(el, ratings, opts = {}) {
-            if (!el) return;
-            ensureStyles();
-            if (!ratings?.length) {
-                el.innerHTML = '';
-                el.hidden = true;
-                return;
-            }
-            el.hidden = false;
-            if (opts.imdbId) el.dataset.imdbId = opts.imdbId;
-            if (opts.title) el.dataset.title = opts.title;
-            if (opts.type) el.dataset.mediaType = opts.type;
-            el.innerHTML = buildBarHtml(ratings, opts);
-            const inner = el.querySelector(`.${BAR_CLASS}`) || el;
-            if (opts.imdbId) inner.dataset.imdbId = opts.imdbId;
-            if (opts.title) inner.dataset.title = opts.title;
-            if (opts.type) inner.dataset.mediaType = opts.type;
-            wireClicks(inner);
         }
 
         function hideNativeImdbButtons() {
@@ -850,11 +822,7 @@
                 paintDetailHost(isLiveDetailHost(host) ? host : ensureDetailHost() || host, cached, ctx);
             }
 
-            const ratings = await fetchRatingsProgressive(id, typeHint, null, (partial) => {
-                const live = isLiveDetailHost(host) ? host : ensureDetailHost();
-                if (!live?.isConnected || !partial.length) return;
-                paintDetailHost(live, partial, ctx);
-            });
+            const ratings = await fetchRatings(id, typeHint, null);
             const liveHost = isLiveDetailHost(host) ? host : ensureDetailHost();
             if (!liveHost?.isConnected) {
                 if (!ratings.length) restoreNativeImdbButtons();
@@ -892,10 +860,9 @@
             }
             let host = ensureEpisodeHost();
             if (!host) return;
+            const hint = String(typeHint || '').toLowerCase();
             const mediaType =
-                String(typeHint || '').toLowerCase() === 'series' ||
-                String(typeHint || '').toLowerCase() === 'tv' ||
-                String(typeHint || '').toLowerCase() === 'anime'
+                hint === 'series' || hint === 'tv' || hint === 'show' || hint === 'anime'
                     ? 'series'
                     : 'movie';
             const title = extractPageTitle();
@@ -913,28 +880,15 @@
                 delete host.dataset.msbRendered;
                 delete host.dataset.msbSignature;
             }
-            const ratings = await fetchRatingsProgressive(id, typeHint, episodeRef, (partial) => {
-                if (!host?.isConnected || !partial.length) return;
-                const live = ensureEpisodeHost();
-                if (live) host = live;
-                ensureStyles();
-                host.className = BAR_CLASS;
-                host.dataset.msbHost = 'episode';
-                host.hidden = false;
-                const signature = `ep|${ratingsSignature(partial)}`;
-                if (host.dataset.msbSignature !== signature) {
-                    host.innerHTML = `<span class="msb-ep-label">Episode</span>${partial.map(itemHtml).join('')}`;
-                    host.dataset.msbSignature = signature;
-                    wireClicks(host);
-                }
-                host.dataset.msbRendered = mountToken;
-            });
+            const ratings = await fetchRatings(id, typeHint, episodeRef);
             if (!host.isConnected) {
                 host = ensureEpisodeHost();
                 if (!host) return;
             }
             if (!ratings.length) {
-                hideEpisodeHost(host);
+                host.hidden = true;
+                host.innerHTML = '';
+                delete host.dataset.msbSignature;
                 return;
             }
             const liveTitle = extractPageTitle() || title;
@@ -960,8 +914,6 @@
         window.__mystremioRatingsBar = {
             fetchRatings,
             peekCachedRatings,
-            buildBarHtml,
-            renderInto,
             ensureStyles,
             hideNativeImdbButtons,
             restoreNativeImdbButtons,
@@ -1691,23 +1643,33 @@
         episodeLayoutFromIds(videoId, metaId = null) {
             const ids = [this.decodeRouteId(videoId), this.decodeRouteId(metaId)].filter(Boolean);
             for (const id of ids) {
-                if (/^kitsu:/i.test(id)) return 'absolute';
+                if (/^kitsu:\d+:\d+/i.test(id)) return 'absolute';
+                if (/^kitsu:/i.test(id)) continue;
                 if (/^tt\d+:\d+:\d+/i.test(id)) return 'cinemeta';
                 if (/^tmdb:(?:tv|show|movie):/i.test(id) || /^tmdb:/i.test(id)) return 'tmdb';
                 if (/^\d+:\d+:\d+(?:\b|$)/.test(id)) return 'tmdb';
             }
             const meta = this.decodeRouteId(metaId);
             const video = this.decodeRouteId(videoId);
-            if (/^kitsu:/i.test(meta) && /^\d+:\d+$/.test(video)) return 'absolute';
+            const kitsuMeta = meta.match(/^kitsu:(\d+)/i);
+            if (kitsuMeta && /^\d+:\d+$/.test(video)) {
+                const left = video.split(':')[0];
+                if (left === kitsuMeta[1]) return 'absolute';
+                if (Number(left) > 50) return 'absolute';
+                return 'tmdb';
+            }
+            if (kitsuMeta && /^\d{1,4}$/.test(video) && video !== kitsuMeta[1]) return 'absolute';
+            if (kitsuMeta) return 'tmdb';
             if (/^tt\d+:\d+$/i.test(video) && !/:\d+:\d+/.test(video)) return 'absolute';
             return null;
         }
 
         /**
          * Season/episode from the detail videoId (episode page only).
-         * Accepts tmdb:tv|show:id:s:e, tmdb:id:s:e, bare id:s:e, tt…:s:e, and kitsu:id:ordinal.
+         * Accepts tmdb:tv|show:id:s:e, tmdb:id:s:e, bare id:s:e, tt…:s:e, kitsu:id:ordinal,
+         * a bare ordinal on a Kitsu title, and another Kitsu anime id + local episode.
          * @param {{ videoId?: string|null, metaId?: string|null }} route
-         * @returns {{ season: number|null, episode: number|null, exactCinemeta?: boolean, absolute?: boolean, episodeLayout?: string }}
+         * @returns {{ season: number|null, episode: number|null, exactCinemeta?: boolean, absolute?: boolean, episodeLayout?: string, kitsuId?: number }}
          */
         parseEpisodeRef(route) {
             const videoId = this.decodeRouteId(route?.videoId);
@@ -1716,7 +1678,10 @@
             const tail = videoId.split('/').pop();
             if (tail && tail !== videoId) candidates.push(tail);
 
-            const metaIsKitsu = /^kitsu:/i.test(this.decodeRouteId(route?.metaId || ''));
+            const metaId = this.decodeRouteId(route?.metaId || '');
+            const metaIsKitsu = /^kitsu:/i.test(metaId);
+            const kitsuMetaId = (metaId.match(/^kitsu:(\d+)/i) || [])[1];
+            const metaKitsuId = kitsuMetaId ? Number(kitsuMetaId) : null;
 
             for (const id of candidates) {
                 const kitsu = id.match(/^kitsu:(\d+):(\d{1,4})(?:\b|$)/i);
@@ -1727,18 +1692,54 @@
                         absolute: true,
                         exactCinemeta: false,
                         episodeLayout: 'absolute',
+                        kitsuId: Number(kitsu[1]),
                     };
                 }
                 if (metaIsKitsu) {
                     const kitsuBare = id.match(/^(\d+):(\d{1,4})$/);
                     if (kitsuBare) {
+                        const left = kitsuBare[1];
+                        const right = Number(kitsuBare[2]);
+                        if (kitsuMetaId && left === kitsuMetaId) {
+                            return {
+                                season: 1,
+                                episode: right,
+                                absolute: true,
+                                exactCinemeta: false,
+                                episodeLayout: 'absolute',
+                                kitsuId: metaKitsuId,
+                            };
+                        }
+                        if (Number(left) > 50) {
+                            return {
+                                season: 1,
+                                episode: right,
+                                absolute: true,
+                                exactCinemeta: false,
+                                episodeLayout: 'absolute',
+                                kitsuId: Number(left),
+                            };
+                        }
                         return {
-                            season: 1,
-                            episode: Number(kitsuBare[2]),
-                            absolute: true,
-                            exactCinemeta: false,
-                            episodeLayout: 'absolute',
+                            season: Number(left),
+                            episode: right,
+                            episodeLayout: 'tmdb',
+                            kitsuId: metaKitsuId || undefined,
                         };
+                    }
+                    const bareOrdinal = id.match(/^(\d{1,4})$/);
+                    if (bareOrdinal) {
+                        const n = Number(bareOrdinal[1]);
+                        if (!kitsuMetaId || String(n) !== kitsuMetaId) {
+                            return {
+                                season: 1,
+                                episode: n,
+                                absolute: true,
+                                exactCinemeta: false,
+                                episodeLayout: 'absolute',
+                                kitsuId: metaKitsuId || undefined,
+                            };
+                        }
                     }
                 }
                 const tt = id.match(/^(tt\d{7,8}):(\d{1,3}):(\d{1,4})(?:\b|$)/i);
@@ -1747,7 +1748,7 @@
                         season: Number(tt[2]),
                         episode: Number(tt[3]),
                         episodeLayout: 'cinemeta',
-                        exactCinemeta: true,
+                        kitsuId: metaKitsuId || undefined,
                     };
                 }
                 const ttAbsolute = id.match(/^(tt\d{7,8}):(\d{1,4})$/i);
@@ -1758,6 +1759,7 @@
                         absolute: true,
                         exactCinemeta: false,
                         episodeLayout: 'absolute',
+                        kitsuId: metaKitsuId || undefined,
                     };
                 }
                 const tmdbTyped = id.match(
@@ -1768,6 +1770,7 @@
                         season: Number(tmdbTyped[2]),
                         episode: Number(tmdbTyped[3]),
                         episodeLayout: 'tmdb',
+                        kitsuId: metaKitsuId || undefined,
                     };
                 }
                 const tmdbOrBare = id.match(/^(?:tmdb:)?(\d+):(\d{1,3}):(\d{1,4})(?:\b|$)/i);
@@ -1776,6 +1779,7 @@
                         season: Number(tmdbOrBare[2]),
                         episode: Number(tmdbOrBare[3]),
                         episodeLayout: 'tmdb',
+                        kitsuId: metaKitsuId || undefined,
                     };
                 }
                 const tmdbTrailing = id.match(/^tmdb:.+:(\d{1,3}):(\d{1,4})$/i);
@@ -1784,10 +1788,11 @@
                         season: Number(tmdbTrailing[1]),
                         episode: Number(tmdbTrailing[2]),
                         episodeLayout: 'tmdb',
+                        kitsuId: metaKitsuId || undefined,
                     };
                 }
             }
-            return { season: null, episode: null };
+            return { season: null, episode: null, kitsuId: metaKitsuId || undefined };
         }
 
         /**
@@ -1829,9 +1834,10 @@
             const hash = this.decodeRouteId(window.location.hash || '');
             const match =
                 hash.match(/tmdb:(?:tv|show|movie):\d+:\d{1,3}:\d{1,4}/i) ||
-                hash.match(/tmdb:\d+:\d{1,3}:\d{1,4}/i) ||
+                hash.match(/tmdb:\d+:\d{1,4}:\d{1,4}/i) ||
                 hash.match(/kitsu:\d+:\d{1,4}/i) ||
-                hash.match(/tt\d{7,8}:\d{1,3}:\d{1,4}/i);
+                hash.match(/tt\d{7,8}:\d{1,3}:\d{1,4}/i) ||
+                hash.match(/tt\d{7,8}:\d{1,4}(?:\b|$)/i);
             return match ? match[0] : '';
         }
 
@@ -2028,21 +2034,47 @@
             return sa === sb || a.endsWith(`:${sb}`) || b.endsWith(`:${sa}`);
         }
 
-        episodeRefFromVideo(video) {
+        episodeRefFromVideo(video, metaId = null) {
             if (!video) return null;
+            const videoId = video.id || video.episode_id;
             const parsed = this.parseEpisodeRef({
-                videoId: video.id || video.episode_id,
-                metaId: video.id,
+                videoId,
+                metaId: metaId || video.id,
             });
+            const kitsuId =
+                parsed.kitsuId ||
+                this.parseKitsuId(videoId) ||
+                this.parseKitsuId(metaId);
             const layout =
                 parsed.episodeLayout ||
-                this.episodeLayoutFromIds(video.id || video.episode_id, video.id);
+                this.episodeLayoutFromIds(videoId, metaId || video.id);
+            const idHasSeasonEpisode =
+                /(?:tt\d{7,8}|tmdb:(?:tv|show|movie):\d+|tmdb:\d+):\d+:\d+/i.test(
+                    String(videoId || '')
+                ) || /^\d+:\d+:\d+/.test(String(videoId || ''));
+            const coreEpisode = Number(video.episode);
+            if (
+                kitsuId &&
+                Number.isInteger(coreEpisode) &&
+                coreEpisode > 0 &&
+                !idHasSeasonEpisode
+            ) {
+                return {
+                    season: 1,
+                    episode: coreEpisode,
+                    exactCinemeta: false,
+                    episodeLayout: 'absolute',
+                    kitsuId,
+                    fromVideos: true,
+                };
+            }
             if (parsed.absolute && parsed.episode) {
                 return {
                     season: parsed.season || 1,
                     episode: parsed.episode,
                     exactCinemeta: false,
                     episodeLayout: 'absolute',
+                    kitsuId: kitsuId || undefined,
                     fromVideos: true,
                 };
             }
@@ -2056,7 +2088,8 @@
                 episode,
                 fromVideos: true,
                 episodeLayout: layout || undefined,
-                exactCinemeta: layout === 'cinemeta' ? true : parsed.exactCinemeta,
+                exactCinemeta: parsed.exactCinemeta,
+                kitsuId: kitsuId || undefined,
             };
         }
 
@@ -2117,7 +2150,7 @@
                         }
                         return true;
                     });
-                    const fromVideo = this.episodeRefFromVideo(match);
+                    const fromVideo = this.episodeRefFromVideo(match, this.parseDetailRoute()?.metaId);
                     if (fromVideo) this._pendingEpisodeRef = fromVideo;
                 })
                 .catch(() => {});
@@ -2134,7 +2167,7 @@
          * Hash / video id first, then Core videos on the episode surface only.
          * Never uses leftover Core selected or the season-list UI (series overview).
          * @param {{ videoId?: string|null, metaId?: string|null }} route
-         * @returns {Promise<{ season: number|null, episode: number|null, exactCinemeta?: boolean, episodeLayout?: string }>}
+         * @returns {Promise<{ season: number|null, episode: number|null, exactCinemeta?: boolean, episodeLayout?: string, kitsuId?: number }>}
          */
         async resolveEpisodeRef(route) {
             if (!this.isEpisodeDetailSurface(route)) {
@@ -2151,14 +2184,18 @@
                 }
             }
             if (parsed.absolute && parsed.episode) {
-                return {
-                    season: parsed.season || 1,
-                    episode: parsed.episode,
-                    exactCinemeta: false,
-                    episodeLayout: 'absolute',
-                };
+                return this.withKitsuId(
+                    {
+                        season: parsed.season || 1,
+                        episode: parsed.episode,
+                        exactCinemeta: false,
+                        episodeLayout: 'absolute',
+                        kitsuId: parsed.kitsuId,
+                    },
+                    route
+                );
             }
-            if (parsed.season && parsed.episode) return parsed;
+            if (parsed.season && parsed.episode) return this.withKitsuId(parsed, route);
 
             let state = await this.loadDetailState(true);
             let selected = this.selectedFromMetaState(state);
@@ -2181,8 +2218,8 @@
                         this.videoIdsMatch(video?.id, videoId) ||
                         this.videoIdsMatch(video?.episode_id, videoId)
                 );
-                const fromVideo = this.episodeRefFromVideo(match);
-                if (fromVideo) return fromVideo;
+                const fromVideo = this.episodeRefFromVideo(match, route?.metaId);
+                if (fromVideo) return this.withKitsuId(fromVideo, route);
             }
 
             if (videoId) {
@@ -2191,33 +2228,43 @@
                     metaId: route?.metaId,
                 });
                 if (fromPath.absolute && fromPath.episode) {
-                    return {
-                        season: fromPath.season || 1,
-                        episode: fromPath.episode,
-                        exactCinemeta: false,
-                        episodeLayout: 'absolute',
-                    };
+                    return this.withKitsuId(
+                        {
+                            season: fromPath.season || 1,
+                            episode: fromPath.episode,
+                            exactCinemeta: false,
+                            episodeLayout: 'absolute',
+                            kitsuId: fromPath.kitsuId,
+                        },
+                        route
+                    );
                 }
-                if (fromPath.season && fromPath.episode) return fromPath;
+                if (fromPath.season && fromPath.episode) return this.withKitsuId(fromPath, route);
             }
 
             const layoutHint = this.episodeLayoutFromIds(videoId || route?.videoId, route?.metaId);
 
             if (selected?.season && selected?.episode) {
-                return {
-                    season: selected.season,
-                    episode: selected.episode,
-                    fromSelection: true,
-                    episodeLayout: layoutHint || undefined,
-                };
+                return this.withKitsuId(
+                    {
+                        season: selected.season,
+                        episode: selected.episode,
+                        fromSelection: true,
+                        episodeLayout: layoutHint || undefined,
+                    },
+                    route
+                );
             }
 
             if (this._pendingEpisodeRef?.episode) {
-                return {
-                    ...this._pendingEpisodeRef,
-                    episodeLayout:
-                        this._pendingEpisodeRef.episodeLayout || layoutHint || undefined,
-                };
+                return this.withKitsuId(
+                    {
+                        ...this._pendingEpisodeRef,
+                        episodeLayout:
+                            this._pendingEpisodeRef.episodeLayout || layoutHint || undefined,
+                    },
+                    route
+                );
             }
 
             const header = document.querySelector(
@@ -2228,14 +2275,17 @@
                 headerText.match(/S(?:eason)?\s*(\d+)\s*[:.\-x×]?\s*E(?:p(?:isode)?)?\s*(\d+)/i) ||
                 headerText.match(/\b(\d{1,2})\s*[x×]\s*(\d{1,3})\b/);
             if (headerSe) {
-                return {
-                    season: Number(headerSe[1]),
-                    episode: Number(headerSe[2]),
-                    episodeLayout: layoutHint || undefined,
-                };
+                return this.withKitsuId(
+                    {
+                        season: Number(headerSe[1]),
+                        episode: Number(headerSe[2]),
+                        episodeLayout: layoutHint || undefined,
+                    },
+                    route
+                );
             }
 
-            return parsed;
+            return this.withKitsuId(parsed, route);
         }
 
         tmdbSeasonLengths(data) {
@@ -2518,6 +2568,20 @@
             if (!match) return null;
             const id = Number(match[1]);
             return Number.isFinite(id) && id > 0 ? id : null;
+        }
+
+        /**
+         * @param {{ kitsuId?: number }|null} ref
+         * @param {{ videoId?: string|null, metaId?: string|null }|null} [route]
+         * @returns {object|null}
+         */
+        withKitsuId(ref, route = null) {
+            if (!ref || typeof ref !== 'object') return ref;
+            if (Number(ref.kitsuId) > 0) return ref;
+            const kitsuId =
+                this.parseKitsuId(route?.metaId) || this.parseKitsuId(route?.videoId);
+            if (kitsuId) ref.kitsuId = kitsuId;
+            return ref;
         }
 
         /**
@@ -3507,7 +3571,7 @@
                 return;
             }
             const paintGen = this._episodePaintGen;
-            const episodeRef = await this.resolveEpisodeRef(route);
+            const episodeRef = this.withKitsuId(await this.resolveEpisodeRef(route), route);
             if (paintGen !== this._episodePaintGen) return;
             if (!this.isEpisodeDetailSurface(this.parseDetailRoute())) {
                 if (this.isSeriesOverviewSurface()) this.dropStaleEpisodePaint(bar);
@@ -3537,7 +3601,8 @@
                       : episodeRef.exactCinemeta === true
                         ? ':exact'
                         : ':auto';
-            const epToken = `${id}:s${episodeRef.season || 0}e${episodeRef.episode || 0}${layoutKey}`;
+            const kitsuKey = Number(episodeRef.kitsuId) > 0 ? `:k${Number(episodeRef.kitsuId)}` : '';
+            const epToken = `${id}:s${episodeRef.season || 0}e${episodeRef.episode || 0}${layoutKey}${kitsuKey}`;
             const epHost = document.querySelector(
                 '.mystremio-ratings-bar[data-msb-host="episode"]'
             );
@@ -3557,6 +3622,8 @@
                 this.dropStaleEpisodePaint(bar);
                 return;
             }
+            // One paint, no retry: the native side answers once with everything it
+            // could reach, and holds an incomplete answer for only a few seconds.
             return Promise.resolve(bar.mountEpisodeRatings(id, type, episodeRef));
         }
 
@@ -4429,6 +4496,7 @@
             document.getElementById('mystremio-ratings-bar-styles-v6')?.remove();
             document.getElementById('mystremio-ratings-bar-styles-v7')?.remove();
             document.getElementById('mystremio-ratings-bar-styles-v8')?.remove();
+            document.getElementById('mystremio-ratings-bar-styles-v9')?.remove();
             document.querySelectorAll('.msb-detail-stack, .msb-ratings-row, .mystremio-ratings-bar').forEach((el) => {
                 el.remove();
             });

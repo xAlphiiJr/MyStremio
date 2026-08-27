@@ -1375,19 +1375,6 @@
     return unloadPlugin(resolved);
   }
 
-  const PLAYBACK_KEEP_PLUGINS = new Set([
-    'interface/context-menu-fix.plugin.js',
-    'interface/enhanced-titlebar.plugin.js',
-    'interface/stream-ui.plugin.js',
-    HORIZONTAL_NAV_PLUGIN,
-    'player/tidb.plugin.js',
-    'player/seek-buttons.plugin.js',
-    'player/hover-timestamps.plugin.js',
-    'player/picture.plugin.js',
-    'player/cast-overlay.plugin.js',
-    'player/anime4k.plugin.js',
-  ]);
-
   /** Board chrome visible on first paint — load before splash/UI ready.
    *  Titlebar + meta-hover deferred to idle after reveal (less layout thrash). */
   const BOARD_FIRST_PAINT_PLUGINS = new Set([
@@ -1397,32 +1384,12 @@
     HORIZONTAL_NAV_PLUGIN,
   ]);
 
-  const IDLE_DURING_PLAYBACK_PREFIXES = [];
-
   function normalizePluginRef(pluginRef) {
     return String(pluginRef || '').replace(/\\/g, '/');
   }
 
   function pluginBaseName(pluginRef) {
     return normalizePluginRef(pluginRef).split('/').pop() || '';
-  }
-
-  /**
-   * Board/detail plugins stay injected during playback so leave does not wait
-   * on read-plugin. DE already no-ops on `#/player`.
-   * @param {string} pluginRef
-   * @returns {boolean}
-   */
-  function isIdleDuringPlayback(pluginRef) {
-    if (!IDLE_DURING_PLAYBACK_PREFIXES.length) return false;
-    const normalized = normalizePluginRef(pluginRef);
-    if (PLAYBACK_KEEP_PLUGINS.has(normalized)) return false;
-    if ([...PLAYBACK_KEEP_PLUGINS].some((ref) => pluginBaseName(ref) === pluginBaseName(normalized))) {
-      return false;
-    }
-    return IDLE_DURING_PLAYBACK_PREFIXES.some(
-      (prefix) => normalized === prefix || normalized.startsWith(prefix)
-    );
   }
 
   function isBoardFirstPaintPlugin(pluginRef) {
@@ -1439,9 +1406,6 @@
    * @returns {string[]}
    */
   function filterPluginsForPhase(enabled, mode) {
-    if (mode === 'playback') {
-      return enabled.filter((pluginRef) => !isIdleDuringPlayback(pluginRef));
-    }
     if (mode === 'firstPaint') {
       return enabled.filter((pluginRef) => isBoardFirstPaintPlugin(pluginRef));
     }
@@ -1483,21 +1447,7 @@
     const targetPlugins = filterPluginsForPhase(enabled, resolvedMode);
 
     // firstPaint: only load critical board plugins — never unload deferred ones.
-    // playback: unload board/detail idle plugins.
-    // fullBoard: load all enabled (no unload of enabled set).
-    if (resolvedMode === 'playback') {
-      const toUnload = enabled.filter(
-        (pluginRef) => !targetPlugins.includes(pluginRef) && isIdleDuringPlayback(pluginRef)
-      );
-      await Promise.all(
-        toUnload.map((pluginRef) =>
-          unloadPluginResolved(pluginRef).catch((error) => {
-            console.warn('[StremioCustom] unload failed:', pluginRef, error);
-          })
-        )
-      );
-    }
-
+    // playback / fullBoard: load all enabled (no unload of the enabled set).
     await Promise.all(targetPlugins.map((pluginRef) => loadPlugin(pluginRef)));
   }
 
@@ -1705,7 +1655,32 @@
     notifyShellUiReady();
     window.__stremioCustomScheduleShellAppReadyFallback?.();
     nudgeBoardCatalogLoadRange(reason || 'ui-ready');
+    retryBrokenBoardPosters();
+    setTimeout(retryBrokenBoardPosters, 750);
     console.info('[StremioCustom] UI ready:', reason || 'ok');
+  }
+
+  /**
+   * After post-update cache repair, WebView can leave Board <img> in a failed
+   * paint (complete + naturalWidth 0). Bounce src once so the first cold start
+   * shows posters without Ctrl+R.
+   */
+  function retryBrokenBoardPosters() {
+    try {
+      const images = document.querySelectorAll(
+        '[class*="board-container"] img[class*="poster-image"], [class*="meta-item"] img[class*="poster-image"]'
+      );
+      images.forEach((img) => {
+        if (!(img instanceof HTMLImageElement)) return;
+        if (!img.complete || img.naturalWidth > 0) return;
+        const src = img.currentSrc || img.src;
+        if (!src) return;
+        img.src = '';
+        img.src = src;
+      });
+    } catch (_) {
+      /* ignore */
+    }
   }
 
   /**
@@ -1852,21 +1827,13 @@
     const gen = ++routeSyncGen;
     const run = (async () => {
       try {
-        const enabled = await migrateEnabledPlugins();
+        await migrateEnabledPlugins();
         if (gen !== routeSyncGen) return;
 
         // Re-read after await — hash may have flipped during cold-start redirect.
         const activeNow = effectivePlaybackActive();
         if (activeNow) {
           suspendNonPlayerBackground();
-          const toUnload = enabled.filter((pluginRef) => isIdleDuringPlayback(pluginRef));
-          await Promise.all(
-            toUnload.map((pluginRef) =>
-              unloadPluginResolved(pluginRef).catch((error) => {
-                console.warn('[StremioCustom] unload failed:', pluginRef, error);
-              })
-            )
-          );
         } else {
           resumeNonPlayerBackground();
           suspendPlayerPluginRuntime();

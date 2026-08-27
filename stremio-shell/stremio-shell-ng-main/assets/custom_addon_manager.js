@@ -616,11 +616,96 @@
       keys.add(`${name} ${addonName}`);
       keys.add(`${addonName} · ${name}`);
     }
+    if (id === 'top' || name === 'popular') {
+      keys.add('popular');
+      keys.add('top');
+    }
     return [...keys].filter(Boolean);
   }
 
   function isDiscoverTypeText(text) {
     return DISCOVER_TYPE_LABELS.has(String(text || '').trim().toLowerCase());
+  }
+
+  function isDiscoverSearchText(text) {
+    const value = String(text || '').trim().toLowerCase();
+    return value === 'search' || value === 'suche' || value === 'buscar';
+  }
+
+  function isDiscoverExtraText(text) {
+    const value = String(text || '').trim().toLowerCase();
+    return (
+      value === 'genre' ||
+      value === 'year' ||
+      value === 'jahr' ||
+      value === 'select' ||
+      value === 'auswahl' ||
+      value === 'none' ||
+      value === 'keine'
+    );
+  }
+
+  function isNonCatalogDiscoverControl(text) {
+    return isDiscoverTypeText(text) || isDiscoverSearchText(text) || isDiscoverExtraText(text);
+  }
+
+  function discoverHashUsesCinemeta() {
+    return /cinemeta/i.test(String(location.hash || ''));
+  }
+
+  function cinemetaDiscoverIsOff(addon) {
+    if (!addon) return true;
+    return isSoftDisabled(addon) || cinemetaCatalogsRemoved(addon);
+  }
+
+  function pushHiddenDiscoverEntry(entries, addon, catalog) {
+    entries.push({
+      keys: catalogMatchKeys(addon, catalog),
+      reason: catalogKind(catalog) === 'search' ? 'search' : 'marked',
+    });
+  }
+
+  function hiddenDiscoverEntries() {
+    const entries = [];
+    const addons = liveAddons || workingAddons() || [];
+    for (const addon of addons) {
+      if (isCinemeta(addon)) {
+        const hideAll = cinemetaDiscoverIsOff(addon);
+        const live = getCatalogs(addon);
+        const storedBackup = readJson(CINEMETA_CATALOG_BACKUP_KEY, []);
+        const backup = Array.isArray(storedBackup) && storedBackup.length
+          ? storedBackup
+          : Array.isArray(originalCinemeta?.catalogs)
+            ? originalCinemeta.catalogs
+            : [];
+        const catalogs = hideAll ? [...live, ...backup] : live.length ? live : backup;
+        for (const catalog of catalogs) {
+          if (!hideAll && !isCatalogDiscoverHidden(addon, catalog)) continue;
+          pushHiddenDiscoverEntry(entries, addon, catalog);
+        }
+        continue;
+      }
+      for (const catalog of getCatalogs(addon)) {
+        if (!isCatalogDiscoverHidden(addon, catalog)) continue;
+        pushHiddenDiscoverEntry(entries, addon, catalog);
+      }
+    }
+    if (discoverHashUsesCinemeta()) {
+      const cinemeta = findCinemeta(addons);
+      if (cinemetaDiscoverIsOff(cinemeta)) {
+        const backup =
+          (cinemeta && cinemetaCatalogSource(cinemeta)) ||
+          readJson(CINEMETA_CATALOG_BACKUP_KEY, []) ||
+          originalCinemeta?.catalogs ||
+          [];
+        if (Array.isArray(backup)) {
+          const stub = cinemeta || { manifest: { name: 'Cinemeta' } };
+          for (const catalog of backup) pushHiddenDiscoverEntry(entries, stub, catalog);
+        }
+        entries.push({ keys: ['popular', 'top', 'cinemeta'], reason: 'marked' });
+      }
+    }
+    return entries;
   }
 
   function textMatchesKeys(text, keys) {
@@ -633,20 +718,6 @@
       if (value.startsWith(`${key} (`)) return true;
       return value.includes(` ${key}`) && value.length - key.length < 28;
     });
-  }
-
-  function hiddenDiscoverEntries() {
-    const entries = [];
-    for (const addon of liveAddons || workingAddons() || []) {
-      for (const catalog of getCatalogs(addon)) {
-        if (!isCatalogDiscoverHidden(addon, catalog)) continue;
-        entries.push({
-          keys: catalogMatchKeys(addon, catalog),
-          reason: catalogKind(catalog) === 'search' ? 'search' : 'marked',
-        });
-      }
-    }
-    return entries;
   }
 
   function isDummyExtraText(text) {
@@ -681,6 +752,9 @@
   function applyDiscoverCatalogFilter() {
     if (!isDiscoverRoute() || discoverSwitching) return;
     const entries = hiddenDiscoverEntries();
+    const forceLeaveCinemeta =
+      discoverHashUsesCinemeta() &&
+      cinemetaDiscoverIsOff(findCinemeta(liveAddons || workingAddons() || []));
     const scope =
       document.querySelector('[class*="discover-container"]') ||
       document.querySelector('[class*="discover-"]') ||
@@ -699,13 +773,21 @@
     for (const input of inputs) {
       const label = input.querySelector('[class*="label"]');
       const labelText = String(label?.textContent || '');
-      if (!optionMatchesHidden(labelText, entries)) {
+      if (isDiscoverTypeText(labelText) || isDiscoverSearchText(labelText)) {
         delete input.dataset.msDiscoverOpenAttempt;
         continue;
       }
-      const visible = [...input.querySelectorAll('[class*="option"]')].find(
-        (option) => option.dataset.msDiscoverHide !== '1' && option.style.display !== 'none'
-      );
+      const labelHidden = optionMatchesHidden(labelText, entries);
+      if (!labelHidden && !(forceLeaveCinemeta && !isNonCatalogDiscoverControl(labelText))) {
+        delete input.dataset.msDiscoverOpenAttempt;
+        continue;
+      }
+      const visible = [...input.querySelectorAll('[class*="option"]')].find((option) => {
+        const text = String(option.textContent || '');
+        if (option.dataset.msDiscoverHide === '1' || option.style.display === 'none') return false;
+        if (isDiscoverTypeText(text) || isDiscoverSearchText(text)) return false;
+        return true;
+      });
       if (visible) {
         discoverSwitching = true;
         delete input.dataset.msDiscoverOpenAttempt;

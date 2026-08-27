@@ -345,12 +345,7 @@ impl MainWindow {
                     if value.get("method").and_then(|method| method.as_str())
                         == Some("get-title-ratings")
                     {
-                        let tx = web_tx_web.clone();
-                        thread::spawn(move || {
-                            if let Some(response) = custom_api::handle_request(&value) {
-                                tx.send(response).ok();
-                            }
-                        });
+                        custom_api::enqueue_title_ratings(value, web_tx_web.clone());
                         continue;
                     }
                     if let Some(response) = custom_api::handle_request(&value) {

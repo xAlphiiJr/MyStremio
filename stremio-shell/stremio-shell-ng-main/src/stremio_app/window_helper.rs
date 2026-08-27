@@ -175,11 +175,6 @@ impl WindowStyle {
         self.show_window_at(hwnd, HWND_NOTOPMOST);
     }
 
-    pub fn restore_window_placement(&mut self, hwnd: HWND, placement: WINDOWPLACEMENT) {
-        let show_cmd = self.restore_window_placement_hidden(hwnd, placement);
-        self.show_window_after_splash(hwnd, show_cmd);
-    }
-
     /**
      * Apply saved geometry without showing the window (Zaarrg-style: never present
      * a white client before the native splash has painted).

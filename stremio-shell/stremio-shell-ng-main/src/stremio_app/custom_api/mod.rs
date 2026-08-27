@@ -18,11 +18,83 @@ use storage::{
     read_plugin_source, read_theme_css, read_autoskip_settings, read_player_volume,
     read_ui_scale_percent, read_user_preferences, register_plugin_schema, save_autoskip_settings,
     save_player_volume, save_plugin_setting, save_ui_scale_percent, save_user_preferences,
+    mark_ui_scale_user_bind,
 };
 
 static REGISTERED_SCHEMAS: OnceLock<Mutex<storage::RegisteredSchemas>> = OnceLock::new();
 static PIP_RESPONSE_TX: OnceLock<Mutex<Option<flume::Sender<bool>>>> = OnceLock::new();
 static UI_SCALE_APPLY_TX: OnceLock<Mutex<Option<flume::Sender<()>>>> = OnceLock::new();
+const RATINGS_WORKERS: usize = 8;
+
+struct RatingsJob {
+    message: Value,
+    tx: flume::Sender<String>,
+}
+
+struct RatingsQueues {
+    interactive: flume::Sender<RatingsJob>,
+    background: flume::Sender<RatingsJob>,
+}
+
+fn dispatch_ratings_job(job: RatingsJob) {
+    if let Some(response) = handle_request(&job.message) {
+        job.tx.send(response).ok();
+    }
+}
+
+fn ratings_queues() -> &'static RatingsQueues {
+    static QUEUES: OnceLock<RatingsQueues> = OnceLock::new();
+    QUEUES.get_or_init(|| {
+        let (interactive_tx, interactive_rx) = flume::unbounded::<RatingsJob>();
+        let (background_tx, background_rx) = flume::unbounded::<RatingsJob>();
+        for _ in 0..RATINGS_WORKERS {
+            let interactive_rx = interactive_rx.clone();
+            let background_rx = background_rx.clone();
+            std::thread::spawn(move || loop {
+                if let Ok(job) = interactive_rx.try_recv() {
+                    dispatch_ratings_job(job);
+                    continue;
+                }
+                if let Ok(job) = background_rx.try_recv() {
+                    dispatch_ratings_job(job);
+                    continue;
+                }
+                match interactive_rx.recv_timeout(std::time::Duration::from_millis(40)) {
+                    Ok(job) => dispatch_ratings_job(job),
+                    Err(flume::RecvTimeoutError::Disconnected) => return,
+                    Err(flume::RecvTimeoutError::Timeout) => {
+                        if let Ok(job) = background_rx.try_recv() {
+                            dispatch_ratings_job(job);
+                        }
+                    }
+                }
+            });
+        }
+        RatingsQueues {
+            interactive: interactive_tx,
+            background: background_tx,
+        }
+    })
+}
+
+fn ratings_is_background(message: &Value) -> bool {
+    message
+        .get("params")
+        .and_then(|params| params.get("background"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+pub fn enqueue_title_ratings(message: Value, tx: flume::Sender<String>) {
+    let background = ratings_is_background(&message);
+    let job = RatingsJob { message, tx };
+    let queues = ratings_queues();
+    if background {
+        let _ = queues.background.send(job);
+    } else {
+        let _ = queues.interactive.send(job);
+    }
+}
 
 fn json_u64(value: &Value) -> Option<u64> {
     value
@@ -62,7 +134,7 @@ pub fn read_ui_scale() -> u32 {
     read_ui_scale_percent()
 }
 
-pub use storage::adapt_ui_scale_for_new_monitor;
+pub use storage::{resolve_ui_scale_for_monitor, take_ui_scale_user_bind};
 
 pub fn complete_pip_toggle(active: bool) {
     if let Some(lock) = PIP_RESPONSE_TX.get() {
@@ -79,9 +151,8 @@ fn schemas() -> &'static Mutex<storage::RegisteredSchemas> {
 }
 
 /**
- * Lightweight startup init. WebView user-data must be ready before navigation;
- * plugin/theme sync and litter migration run in the background so they do not
- * freeze the UI thread after the splash is shown.
+ * Lightweight startup init. WebView user-data is prepared in WebView `build_partial`
+ * before EnvironmentBuilder; this only syncs plugins/themes off the UI thread.
  */
 pub fn init() {
     ensure_webview_user_data_dir();
@@ -93,6 +164,10 @@ pub fn init() {
 
 pub fn webview_user_data_dir() -> std::path::PathBuf {
     paths::webview_user_data_dir()
+}
+
+pub fn prepare_webview_user_data_before_environment() {
+    paths::prepare_webview_user_data_before_environment();
 }
 
 pub fn build_early_storage_restore_script() -> String {
@@ -208,6 +283,7 @@ pub fn handle_request(message: &Value) -> Option<String> {
             let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
             let value = params.get("value").cloned().unwrap_or(Value::Null);
             let config = if let Some(saved) = api_keys::save_shared_plugin_setting(key, &value) {
+                ratings_proxy::clear_ratings_cache();
                 // Keep plugin JSON free of secrets; return overlayed config for listeners.
                 let mut config = get_plugin_config(plugin);
                 if let Some(obj) = config.as_object_mut() {
@@ -238,6 +314,7 @@ pub fn handle_request(message: &Value) -> Option<String> {
             let service_id = params.get("serviceId").and_then(|v| v.as_str()).unwrap_or("");
             let value = params.get("value").and_then(|v| v.as_str()).unwrap_or("");
             let saved = api_keys::set_api_key(service_id, value);
+            ratings_proxy::clear_ratings_cache();
             // Collect plugin bases that use this service so the UI can refresh listeners.
             let mut plugin_bases = Vec::new();
             if let Ok(guard) = schemas().lock() {
@@ -378,6 +455,7 @@ pub fn handle_request(message: &Value) -> Option<String> {
             let mode = params.get("mode").and_then(|v| v.as_str()).unwrap_or("full");
             let exact_cinemeta = params.get("exactCinemeta").and_then(|v| v.as_bool());
             let episode_layout = params.get("episodeLayout").and_then(|v| v.as_str());
+            let kitsu_id = params.get("kitsuId").and_then(json_u64);
             match ratings_proxy::get_title_ratings(
                 imdb_id,
                 media_type,
@@ -386,6 +464,7 @@ pub fn handle_request(message: &Value) -> Option<String> {
                 mode,
                 exact_cinemeta,
                 episode_layout,
+                kitsu_id,
             ) {
                 Ok(payload) => json!(payload),
                 Err(error) => return Some(error_response(id, &error)),
@@ -434,6 +513,7 @@ pub fn handle_request(message: &Value) -> Option<String> {
                 })
                 .unwrap_or(100) as u32;
             let normalized = save_ui_scale_percent(percent);
+            mark_ui_scale_user_bind(normalized);
             request_ui_scale_apply();
             json!(normalized)
         }

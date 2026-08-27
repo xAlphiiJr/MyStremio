@@ -1,7 +1,6 @@
 use chrono::{Datelike, Local};
 use std::{env, fs, io::Cursor, path::PathBuf};
 
-extern crate winres;
 fn main() {
     let now = Local::now();
     let copyright = format!("Copyright © {} Smart Code OOD", now.year());

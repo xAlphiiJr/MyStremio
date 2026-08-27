@@ -1,6 +1,7 @@
 use crate::stremio_app::constants::SERVER_IPC_KEY;
 use crate::stremio_app::custom_api::{
-    build_early_storage_restore_script, build_enabled_plugins_refresh_script, webview_user_data_dir,
+    build_early_storage_restore_script, build_enabled_plugins_refresh_script,
+    prepare_webview_user_data_before_environment, webview_user_data_dir,
 };
 use crate::stremio_app::ipc;
 use native_windows_gui::{self as nwg, PartialUi};
@@ -17,7 +18,9 @@ use url::Url;
 use urlencoding::decode;
 use webview2::Controller;
 use winapi::shared::windef::HWND;
-use winapi::um::winuser::{GetClientRect, VK_F7, WM_APPCOMMAND, WM_SETFOCUS};
+use winapi::um::winuser::{
+    GetClientRect, VK_F7, WM_APPCOMMAND, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_SETFOCUS,
+};
 
 const APPCOMMAND_MEDIA_NEXTTRACK: u32 = 11;
 const APPCOMMAND_MEDIA_PREVIOUSTRACK: u32 = 12;
@@ -133,6 +136,7 @@ impl PartialUi for WebView {
             "--enable-features=OverlayScrollbar ",
             "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection"
         );
+        prepare_webview_user_data_before_environment();
         let user_data_folder = webview_user_data_dir();
         let result = webview2::EnvironmentBuilder::new()
             .with_additional_browser_arguments(webview_flags)
@@ -412,13 +416,17 @@ impl PartialUi for WebView {
         // handler ids equal or smaller than 0xFFFF are reserved by NWG
         let handler_id = 0x10000;
         let controller_clone = data.controller.clone();
-        nwg::bind_raw_event_handler(&parent, handler_id, move |_hwnd, msg, _w, l| {
+        nwg::bind_raw_event_handler(&parent, handler_id, move |hwnd, msg, _w, l| {
             if msg == WM_SETFOCUS {
                 controller_clone.get().and_then(|controller| {
                     controller
                         .move_focus(webview2::MoveFocusReason::Programmatic)
                         .ok()
                 });
+            } else if msg == WM_DPICHANGED || msg == WM_DISPLAYCHANGE {
+                if let Some(controller) = controller_clone.get() {
+                    apply_ui_scale(controller, hwnd);
+                }
             } else if msg == WM_APPCOMMAND {
                 let cmd = ((l >> 16) & 0xFFF) as u32;
                 let action = match cmd {

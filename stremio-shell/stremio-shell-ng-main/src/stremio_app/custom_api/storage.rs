@@ -1,9 +1,10 @@
 use super::paths::{plugins_dir, resolve_asset_path, themes_dir, walk_files};
 use serde_json::{json, Map, Value};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 const PLUGIN_CONFIG_EXT: &str = ".plugin.json";
@@ -97,14 +98,18 @@ pub fn read_user_preferences() -> Value {
 }
 
 pub fn save_user_preferences(preferences: &Value) {
-    // Many JS callers (persistUserPreferences) omit apiKeys / uiScaleAdaptedMonitors.
-    // Preserve those from disk whenever the key is absent so vaults and monitor adapt
-    // state are not wiped (wiping adapted monitors makes UI scale snap back to DPI %).
+    // Many JS callers (persistUserPreferences) omit apiKeys / uiScaleByMonitor /
+    // uiScaleAdaptedMonitors. Preserve those from disk whenever the key is absent.
     let mut merged = preferences.clone();
     if let Some(obj) = merged.as_object_mut() {
         if obj.get("apiKeys").is_none() {
             if let Some(existing_keys) = read_api_keys_from_disk_raw() {
                 obj.insert("apiKeys".to_string(), existing_keys);
+            }
+        }
+        if obj.get("uiScaleByMonitor").is_none() {
+            if let Some(existing) = read_ui_scale_by_monitor_from_disk_raw() {
+                obj.insert("uiScaleByMonitor".to_string(), existing);
             }
         }
         if obj.get("uiScaleAdaptedMonitors").is_none() {
@@ -132,6 +137,18 @@ fn read_api_keys_from_disk_raw() -> Option<Value> {
         .ok()
         .and_then(|content| serde_json::from_str::<Value>(&content).ok())
         .and_then(|value| value.get("apiKeys").cloned())
+}
+
+/// Reads `uiScaleByMonitor` from disk without full normalize (no recursion).
+fn read_ui_scale_by_monitor_from_disk_raw() -> Option<Value> {
+    let path = preferences_path();
+    if !path.exists() {
+        return None;
+    }
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+        .and_then(|value| value.get("uiScaleByMonitor").cloned())
 }
 
 /// Reads `uiScaleAdaptedMonitors` from disk without full normalize (no recursion).
@@ -465,6 +482,7 @@ fn default_preferences() -> Value {
             "defaultsApplied": false
         },
         "uiScale": 100,
+        "uiScaleByMonitor": {},
         "uiScaleAdaptedMonitors": [],
         "apiKeys": {}
     })
@@ -638,6 +656,9 @@ fn normalize_preferences(value: Value) -> Value {
         .map(str::to_string)
         .unwrap_or_default();
     let ui_scale = normalize_ui_scale_percent(value.get("uiScale"));
+    let ui_scale_by_monitor = ui_scale_by_monitor_json(&normalize_ui_scale_by_monitor(
+        value.get("uiScaleByMonitor"),
+    ));
     let ui_scale_adapted_monitors = normalize_ui_scale_adapted_monitors(value.get("uiScaleAdaptedMonitors"));
     let api_keys = super::api_keys::normalize_api_keys(value.get("apiKeys"));
 
@@ -655,6 +676,7 @@ fn normalize_preferences(value: Value) -> Value {
         "onboarding": onboarding,
         "authProfile": auth_profile,
         "uiScale": ui_scale,
+        "uiScaleByMonitor": ui_scale_by_monitor,
         "uiScaleAdaptedMonitors": ui_scale_adapted_monitors,
         "apiKeys": api_keys
     })
@@ -934,6 +956,83 @@ pub fn save_ui_scale_percent(percent: u32) -> u32 {
     normalized
 }
 
+fn normalize_ui_scale_by_monitor(value: Option<&Value>) -> BTreeMap<String, u32> {
+    let mut out = BTreeMap::new();
+    let Some(obj) = value.and_then(|v| v.as_object()) else {
+        return out;
+    };
+    for (key, raw) in obj {
+        let trimmed = key.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        out.insert(trimmed.to_string(), normalize_ui_scale_percent(Some(raw)));
+    }
+    out
+}
+
+fn ui_scale_by_monitor_json(map: &BTreeMap<String, u32>) -> Value {
+    let mut obj = Map::new();
+    for (key, percent) in map {
+        obj.insert(key.clone(), json!(*percent));
+    }
+    Value::Object(obj)
+}
+
+static UI_SCALE_USER_BIND: Mutex<Option<u32>> = Mutex::new(None);
+
+/// Next `apply_ui_scale` should write this slider value onto the window's monitor.
+pub fn mark_ui_scale_user_bind(percent: u32) {
+    if let Ok(mut pending) = UI_SCALE_USER_BIND.lock() {
+        *pending = Some(normalize_ui_scale_percent(Some(&json!(percent))));
+    }
+}
+
+pub fn take_ui_scale_user_bind() -> Option<u32> {
+    UI_SCALE_USER_BIND.lock().ok().and_then(|mut pending| pending.take())
+}
+
+/// Resolve UI scale for the monitor hosting the window.
+///
+/// - Slider bind: store current `uiScale` for `monitor_key` only.
+/// - Known monitor: restore map entry.
+/// - Empty map (first launch after upgrade): bind current global `uiScale` to this monitor.
+/// - Unknown monitor: seed from Windows DPI %, never copy another monitor's value.
+pub fn resolve_ui_scale_for_monitor(
+    monitor_key: &str,
+    windows_percent: u32,
+    pending_user: Option<u32>,
+) -> u32 {
+    let key = monitor_key.trim();
+    if key.is_empty() {
+        return read_ui_scale_percent();
+    }
+
+    let mut prefs = read_user_preferences();
+    let mut map = normalize_ui_scale_by_monitor(prefs.get("uiScaleByMonitor"));
+    let current = read_ui_scale_percent_from_value(&prefs);
+
+    let percent = if let Some(user) = pending_user {
+        user
+    } else if let Some(&stored) = map.get(key) {
+        stored
+    } else if map.is_empty() {
+        current
+    } else {
+        normalize_ui_scale_percent(Some(&json!(windows_percent)))
+    };
+
+    map.insert(key.to_string(), percent);
+
+    if let Some(obj) = prefs.as_object_mut() {
+        obj.insert("uiScale".to_string(), json!(percent));
+        obj.insert("uiScaleByMonitor".to_string(), ui_scale_by_monitor_json(&map));
+        save_user_preferences(&prefs);
+    }
+
+    percent
+}
+
 /// Normalizes the list of monitor device keys that already received one-shot UI scale adapt.
 fn normalize_ui_scale_adapted_monitors(value: Option<&Value>) -> Vec<String> {
     let Some(arr) = value.and_then(|v| v.as_array()) else {
@@ -953,41 +1052,6 @@ fn normalize_ui_scale_adapted_monitors(value: Option<&Value>) -> Vec<String> {
         }
     }
     out
-}
-
-/// One-shot: set `uiScale` to `windows_percent` and mark `monitor_key` as adapted.
-///
-/// Returns `Some(normalized)` when this monitor had not been adapted yet; `None` if already known.
-///
-/// # Arguments
-/// * `monitor_key` - Device name from `MONITORINFOEX` (e.g. `\\.\DISPLAY1`).
-/// * `windows_percent` - Windows DPI percent for that monitor (will be snapped to 75–200).
-pub fn adapt_ui_scale_for_new_monitor(monitor_key: &str, windows_percent: u32) -> Option<u32> {
-    let key = monitor_key.trim();
-    if key.is_empty() {
-        return None;
-    }
-
-    let mut prefs = read_user_preferences();
-    let adapted = normalize_ui_scale_adapted_monitors(prefs.get("uiScaleAdaptedMonitors"));
-    if adapted.iter().any(|existing| existing == key) {
-        return None;
-    }
-
-    let normalized = normalize_ui_scale_percent(Some(&json!(windows_percent)));
-    let mut next_adapted = adapted;
-    next_adapted.push(key.to_string());
-
-    if let Some(obj) = prefs.as_object_mut() {
-        obj.insert("uiScale".to_string(), json!(normalized));
-        obj.insert(
-            "uiScaleAdaptedMonitors".to_string(),
-            json!(next_adapted),
-        );
-        save_user_preferences(&prefs);
-    }
-
-    Some(normalized)
 }
 
 /// Moves loose plugins-root `*.plugin.json` / orphan schemas into category folders

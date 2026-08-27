@@ -270,6 +270,9 @@
     sendMpvSetProp('gamma', 0);
     sendMpvSetProp('saturation', 0);
     sendMpvSetProp('vf', '');
+    // MPV no longer matches `state`; drop the cached signature so the next
+    // ensureAll() re-applies instead of short-circuiting on re-entry.
+    lastAppliedSig = '';
   }
 
   function isDismissGuardActive() {

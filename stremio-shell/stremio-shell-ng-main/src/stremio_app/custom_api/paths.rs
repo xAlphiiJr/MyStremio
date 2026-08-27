@@ -5,7 +5,6 @@ use std::{
     fs,
     io,
     path::{Path, PathBuf},
-    thread,
 };
 
 const PLUGIN_EXT: &str = ".plugin.js";
@@ -40,12 +39,13 @@ pub fn ensure_webview_user_data_dir() {
     let target = webview_user_data_dir();
     migrate_legacy_webview_user_data(&target);
     let _ = fs::create_dir_all(&target);
-    // Cache clear can walk large trees — never block the UI/init thread.
-    // In-use files may fail to delete; runtime state is only written after the
-    // attempt so a partial clear retries on the next launch.
-    thread::spawn(|| {
-        clear_webview_cache_if_stale();
-    });
+}
+
+/// Create the WebView2 profile folder and finish any pending cache repair **before**
+/// `EnvironmentBuilder` binds that folder. Must not run against a live WebView.
+pub fn prepare_webview_user_data_before_environment() {
+    ensure_webview_user_data_dir();
+    clear_webview_cache_if_stale();
 }
 
 fn runtime_state_path() -> PathBuf {
@@ -123,7 +123,7 @@ fn write_runtime_state(shell_version: &str, webui_fingerprint: &str) {
     }
 }
 
-fn clear_webview_browsing_cache() {
+fn clear_webview_browsing_cache() -> bool {
     const CACHE_SUBDIRS: &[&str] = &[
         "EBWebView/Default/Cache",
         "EBWebView/Default/Code Cache",
@@ -142,6 +142,7 @@ fn clear_webview_browsing_cache() {
         "BrowserMetrics",
     ];
 
+    let mut ok = true;
     let base = webview_user_data_dir();
     for subdir in CACHE_SUBDIRS {
         let path = base.join(subdir);
@@ -153,8 +154,10 @@ fn clear_webview_browsing_cache() {
                 "Failed to clear WebView2 browsing cache at {}: {error}",
                 path.display()
             );
+            ok = false;
         }
     }
+    ok
 }
 
 /// Refresh only volatile WebView2 caches when the shell or bundled web UI changes.
@@ -174,10 +177,16 @@ fn clear_webview_cache_if_stale() {
     let repair_pending = stored_cache_repair < CACHE_REPAIR_GENERATION;
 
     if version_changed || webui_changed || repair_pending {
-        clear_webview_browsing_cache();
+        let cleared = clear_webview_browsing_cache();
         println!(
-            "WebView2 browsing cache refresh (version_changed={version_changed}, webui_changed={webui_changed}, repair_pending={repair_pending})"
+            "WebView2 browsing cache refresh (version_changed={version_changed}, webui_changed={webui_changed}, repair_pending={repair_pending}, cleared={cleared})"
         );
+        if !cleared {
+            eprintln!(
+                "WebView2 cache repair incomplete — will retry on the next launch before WebView starts"
+            );
+            return;
+        }
     }
 
     write_runtime_state(current_version, &current_fingerprint);
@@ -188,17 +197,32 @@ fn remove_dir_all(path: &Path) -> io::Result<()> {
         return Ok(());
     }
 
+    let mut first_err: Option<io::Error> = None;
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let entry_path = entry.path();
-        if entry_path.is_dir() {
-            remove_dir_all(&entry_path)?;
+        let result = if entry_path.is_dir() {
+            remove_dir_all(&entry_path)
         } else {
-            let _ = fs::remove_file(&entry_path);
+            fs::remove_file(&entry_path)
+        };
+        if let Err(error) = result {
+            if first_err.is_none() {
+                first_err = Some(error);
+            }
         }
     }
 
-    fs::remove_dir(path)
+    if let Err(error) = fs::remove_dir(path) {
+        if first_err.is_none() {
+            first_err = Some(error);
+        }
+    }
+
+    match first_err {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 fn migrate_legacy_webview_user_data(target: &Path) {

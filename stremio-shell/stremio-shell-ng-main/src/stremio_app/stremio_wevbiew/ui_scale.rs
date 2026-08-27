@@ -1,4 +1,6 @@
-use crate::stremio_app::custom_api::{adapt_ui_scale_for_new_monitor, read_ui_scale};
+use crate::stremio_app::custom_api::{
+    read_ui_scale, resolve_ui_scale_for_monitor, take_ui_scale_user_bind,
+};
 use std::mem;
 use webview2::Controller;
 use winapi::shared::windef::HWND;
@@ -60,16 +62,7 @@ fn monitor_device_key(hwnd: HWND) -> Option<String> {
     }
 }
 
-/// One-shot: when the window is on a never-seen monitor, set `uiScale` to Windows %.
-///
-/// Returns the new percent when adaptation happened; `None` when the monitor was already known.
-fn maybe_adapt_ui_scale_for_new_monitor(hwnd: HWND) -> Option<u32> {
-    let key = monitor_device_key(hwnd)?;
-    let windows_percent = windows_scale_percent(hwnd);
-    adapt_ui_scale_for_new_monitor(&key, windows_percent)
-}
-
-/// Syncs auto-adapted scale into WebView localStorage and notifies the settings UI.
+/// Syncs resolved scale into WebView localStorage and notifies the settings UI.
 fn sync_ui_scale_to_webview(controller: &Controller, percent: u32) {
     let Ok(webview) = controller.get_webview() else {
         return;
@@ -79,7 +72,7 @@ fn sync_ui_scale_to_webview(controller: &Controller, percent: u32) {
             "(function(){{try{{",
             "localStorage.setItem('stremio-custom-ui-scale-percent','{p}');",
             "document.dispatchEvent(new CustomEvent('stremio-custom-ui-scale-changed',",
-            "{{detail:{{percent:{p},source:'monitor-adapt'}}}}));",
+            "{{detail:{{percent:{p},source:'monitor'}}}}));",
             "}}catch(_){{}}}})();"
         ),
         p = percent
@@ -101,16 +94,20 @@ pub fn compute_zoom_factor(hwnd: HWND, ui_scale_percent: u32) -> f64 {
     (user_scale / dpi_scale).clamp(0.25, 4.0)
 }
 
-/// Applies the persisted UI scale to the WebView controller.
+/// Applies the per-monitor UI scale to the WebView controller.
 ///
-/// Before applying zoom, performs a one-shot adapt when the window sits on a monitor
-/// that has never been recorded in `uiScaleAdaptedMonitors`.
+/// Slider writes bind only the current monitor. HDMI unplug restores that
+/// monitor's stored percent, or seeds Windows DPI on first visit.
 pub fn apply_ui_scale(controller: &Controller, hwnd: HWND) {
-    let adapted_percent = maybe_adapt_ui_scale_for_new_monitor(hwnd);
-    let percent = read_ui_scale();
+    let previous = read_ui_scale();
+    let pending_user = take_ui_scale_user_bind();
+    let percent = match monitor_device_key(hwnd) {
+        Some(key) => resolve_ui_scale_for_monitor(&key, windows_scale_percent(hwnd), pending_user),
+        None => pending_user.unwrap_or(previous),
+    };
     let zoom = compute_zoom_factor(hwnd, percent);
     controller.put_zoom_factor(zoom).ok();
-    if let Some(new_percent) = adapted_percent {
-        sync_ui_scale_to_webview(controller, new_percent);
+    if percent != previous || pending_user.is_some() {
+        sync_ui_scale_to_webview(controller, percent);
     }
 }

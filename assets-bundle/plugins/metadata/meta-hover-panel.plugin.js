@@ -12,7 +12,7 @@
   const CONFIG = {
     HOVER_DELAY: 450,
     API_BASE: 'https://v3-cinemeta.strem.io/meta',
-    API_TIMEOUT: 6000,
+    API_TIMEOUT: 2500,
     CACHE_SIZE: 80,
     PANEL_WIDTH: 420,
     MAX_CAST: 4,
@@ -25,6 +25,7 @@
   const ratingsCache = new Map();
   const ratingsPending = new Map();
   const RATINGS_CACHE_TTL_MS = 10 * 60 * 1000;
+  const RATINGS_INCOMPLETE_TTL_MS = 5 * 1000;
   let hoverTimer = null;
   let activePanel = null;
   let activeAnchor = null;
@@ -154,6 +155,8 @@
     .meta-hover-panel-chip-brand[data-key="trakt"] { background: #ed1c24; color: #fff; }
     .meta-hover-panel-chip-brand[data-key="letterboxd"] { background: #14181c; color: #00e054; }
     .meta-hover-panel-chip-brand[data-key="rt"] { background: #fa320a; color: #fff; }
+    .meta-hover-panel-chip-brand[data-key="tvmaze"] { background: #3c948b; color: #fff; }
+    .meta-hover-panel-chip-brand[data-key="tvdb"] { background: #6cd591; color: #111; }
 
     .meta-hover-panel-chip-value { font-weight: 700; }
     .meta-hover-panel-chip-value[data-key="imdb"] { color: #f5c518; }
@@ -163,6 +166,8 @@
     .meta-hover-panel-chip-value[data-key="metacritic"] { color: #2ecc71; }
     .meta-hover-panel-chip-value[data-key="trakt"] { color: #ed1c24; }
     .meta-hover-panel-chip-value[data-key="letterboxd"] { color: #00e054; }
+    .meta-hover-panel-chip-value[data-key="tvmaze"] { color: #3c948b; }
+    .meta-hover-panel-chip-value[data-key="tvdb"] { color: #6cd591; }
 
     .meta-hover-panel-chip[data-key="fsk"] {
       background: rgba(245, 197, 24, 0.16);
@@ -788,6 +793,11 @@
     return [`${CONFIG.API_BASE}/${kind}/${encodeURIComponent(rawId)}.json`];
   }
 
+  function isUsableMeta(meta) {
+    if (!meta || typeof meta !== 'object') return false;
+    return Boolean(String(meta.name || meta.title || '').trim());
+  }
+
   function isGatedMetaResponse(response, data) {
     if (!response) return true;
     if (data && data.error === 'mystremio-meta-gated') return true;
@@ -795,78 +805,90 @@
     return !response.ok;
   }
 
-  async function fetchMeta(type, id) {
-    const rawId = String(id || '').trim();
-    if (!rawId) return null;
-    if (!/^tt\d{7,}$/i.test(rawId) && !/^tmdb:\d+$/i.test(rawId)) return null;
-
-    const key = `${type}:${rawId}`;
-    if (metaCache.has(key)) return metaCache.get(key);
-
-    const urls = metaRequestUrls(type, rawId);
-    if (!urls.length) {
-      metaCache.set(key, null);
-      return null;
-    }
-
+  /**
+   * One provider URL. Failures return null and never abort siblings.
+   * @param {string} url
+   * @returns {Promise<object|null>}
+   */
+  async function fetchMetaUrl(url) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT);
     try {
-      for (const url of urls) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT);
-        let response;
-        try {
-          response = await fetch(url, { signal: controller.signal });
-        } catch {
-          clearTimeout(timer);
-          continue;
-        }
-        clearTimeout(timer);
-
-        let data = null;
-        try {
-          data = await response.json();
-        } catch {
-          data = null;
-        }
-        if (isGatedMetaResponse(response, data)) continue;
-        const meta = data?.meta || null;
-        if (!meta) continue;
-        if (metaCache.size >= CONFIG.CACHE_SIZE) {
-          metaCache.delete(metaCache.keys().next().value);
-        }
-        metaCache.set(key, meta);
-        return meta;
+      const response = await fetch(url, { signal: controller.signal });
+      let data = null;
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
       }
-      return null;
+      if (isGatedMetaResponse(response, data)) return null;
+      const meta = data?.meta || null;
+      return isUsableMeta(meta) ? meta : null;
     } catch {
       return null;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
-  async function fetchMetaWithFallback(type, id) {
-    let meta = await fetchMeta(type, id);
-    if (meta) return { meta, type };
-    const alt = type === 'series' ? 'movie' : 'series';
-    meta = await fetchMeta(alt, id);
-    return meta ? { meta, type: alt } : null;
-  }
-
+  /**
+   * Parallel provider × id × type fetch. Chip order wins among usable results.
+   * Misses are not cached so extra sources cannot poison a later TMDB hit.
+   * @param {string} type
+   * @param {string[]} ids
+   * @returns {Promise<{meta: object, type: string}|null>}
+   */
   async function fetchMetaCandidates(type, ids) {
     const unique = [];
     const seen = new Set();
     for (const id of ids || []) {
       const raw = String(id || '').trim();
       if (!raw) continue;
+      if (!/^tt\d{7,}$/i.test(raw) && !/^tmdb:\d+$/i.test(raw)) continue;
       const key = raw.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
       unique.push(raw);
     }
-    for (const id of unique) {
-      const result = await fetchMetaWithFallback(type, id);
-      if (result) return result;
+    if (!unique.length) return null;
+
+    const requested = String(type || 'movie').trim() || 'movie';
+    const alt = requested === 'series' ? 'movie' : 'series';
+    const kinds = [requested, alt];
+    const tasks = [];
+    unique.forEach((id, idIndex) => {
+      kinds.forEach((kind, typeIndex) => {
+        const urls = metaRequestUrls(kind, id);
+        urls.forEach((url, urlIndex) => {
+          tasks.push({
+            order: idIndex * 10000 + typeIndex * 100 + urlIndex,
+            kind,
+            id,
+            url,
+          });
+        });
+      });
+    });
+    if (!tasks.length) return null;
+
+    const results = await Promise.allSettled(tasks.map((task) => fetchMetaUrl(task.url)));
+    let best = null;
+    let bestOrder = Infinity;
+    results.forEach((result, index) => {
+      if (result.status !== 'fulfilled' || !result.value) return;
+      const task = tasks[index];
+      if (task.order >= bestOrder) return;
+      bestOrder = task.order;
+      best = { meta: result.value, type: task.kind, id: task.id };
+    });
+    if (best) {
+      const key = `${best.type}:${best.id}`;
+      if (metaCache.size >= CONFIG.CACHE_SIZE) {
+        metaCache.delete(metaCache.keys().next().value);
+      }
+      metaCache.set(key, best.meta);
     }
-    return null;
+    return best;
   }
 
   function getGenres(meta) {
@@ -1158,8 +1180,21 @@
     return window.StremioCustomAPI || window.StremioEnhancedAPI || null;
   }
 
+  // Strict whitelist: a key missing here is silently dropped and never rendered.
   function orderHoverRatings(ratings) {
-    const order = ['fsk', 'imdb', 'mal', 'rt', 'tmdb', 'metacritic', 'trakt', 'mcusers', 'letterboxd'];
+    const order = [
+      'fsk',
+      'imdb',
+      'mal',
+      'rt',
+      'tmdb',
+      'metacritic',
+      'trakt',
+      'mcusers',
+      'tvmaze',
+      'tvdb',
+      'letterboxd',
+    ];
     const by = Object.fromEntries(
       (ratings || []).filter((item) => item?.key).map((item) => [item.key, item])
     );
@@ -1168,53 +1203,128 @@
 
   function hoverMediaType(typeHint) {
     const hint = String(typeHint || '').toLowerCase();
-    if (hint === 'series' || hint === 'tv' || hint === 'show' || hint === 'anime') return 'series';
+    if (
+      hint === 'series' ||
+      hint === 'tv' ||
+      hint === 'show' ||
+      hint === 'anime' ||
+      hint === 'episode' ||
+      hint === 'season'
+    ) {
+      return 'series';
+    }
     if (hint === 'movie' || hint === 'film') return 'movie';
     return 'movie';
+  }
+
+  /**
+   * A result whose sources all answered is worth the full TTL; one with an
+   * unreachable source is only held long enough to dedupe a request burst.
+   * @param {{ at: number, complete?: boolean }} entry
+   */
+  function hoverCacheFresh(entry) {
+    if (!entry) return false;
+    const ttl = entry.complete === false ? RATINGS_INCOMPLETE_TTL_MS : RATINGS_CACHE_TTL_MS;
+    return Date.now() - entry.at < ttl;
+  }
+
+  /**
+   * Cache slot for a title's ratings.
+   *
+   * Keyed by media type because the shell answers per type and a board poster only
+   * yields a guess. A result fetched under a guessed 'movie' used to occupy the single
+   * slot the resolved type read from, so a series showed IMDb plus a TMDb score taken
+   * from an unrelated movie of the same numeric id.
+   */
+  function hoverRatingsKey(id, type) {
+    return `${id}:${hoverMediaType(type)}`;
+  }
+
+  function rememberHoverRatings(imdbId, ratings, complete = true, type = 'series') {
+    const ordered = orderHoverRatings(ratings);
+    const id = pickHoverImdbId(imdbId, null);
+    if (!id || !ordered.length) return ordered;
+    const key = hoverRatingsKey(id, type);
+    const existing = ratingsCache.get(key);
+    if (existing && hoverCacheFresh(existing) && existing.complete && !complete) {
+      return existing.ratings.slice();
+    }
+    ratingsCache.set(key, { at: Date.now(), ratings: ordered, complete });
+    if (ratingsCache.size > 256) {
+      for (const [cachedKey, entry] of ratingsCache) {
+        if (!hoverCacheFresh(entry)) ratingsCache.delete(cachedKey);
+      }
+    }
+    return ordered.slice();
   }
 
   /**
    * @param {string} imdbId
    * @param {string} [typeHint]
    * @param {'fast'|'full'} [mode]
+   * @param {{ background?: boolean }} [options]
    * @returns {Promise<object[]>}
    */
-  async function fetchHoverRatings(imdbId, typeHint, mode = 'full') {
+  async function fetchHoverRatings(imdbId, typeHint, mode = 'full', options = null) {
     const id = pickHoverImdbId(imdbId, null);
     if (!id) return [];
-    const cacheKey = `${id}:${mode}`;
+    const background = options?.background === true;
+    // Background and foreground stay separate jobs on purpose: a visible panel must
+    // not end up waiting behind the low-priority queue. Whichever finishes first
+    // fills ratingsCache, and the native cache absorbs the overlap.
+    const requestedType = hoverMediaType(typeHint);
+    const cacheKey = `${id}:${requestedType}:${mode}${background ? ':bg' : ''}`;
     if (mode === 'full') {
-      const cached = ratingsCache.get(id);
-      if (cached && Date.now() - cached.at < RATINGS_CACHE_TTL_MS) return cached.ratings.slice();
+      const cached = ratingsCache.get(hoverRatingsKey(id, requestedType));
+      if (cached && hoverCacheFresh(cached)) return cached.ratings.slice();
     }
     if (ratingsPending.has(cacheKey)) return ratingsPending.get(cacheKey);
 
     const job = (async () => {
       const client = hoverRatingsApi();
       if (!client?.invoke) return [];
-      const types = [hoverMediaType(typeHint)];
+      const types = [requestedType];
       if (types[0] === 'movie') types.push('series');
       else types.push('movie');
       let ratings = [];
+      let complete = true;
+      let resolvedType = requestedType;
       for (const type of types) {
         try {
-          const result = await client.invoke('get-title-ratings', {
+          const payload = {
             imdbId: id,
             type,
             mode,
-          });
+          };
+          if (background) payload.background = true;
+          const result = await client.invoke('get-title-ratings', payload);
           if (Array.isArray(result?.ratings) && result.ratings.length) {
-            ratings = result.ratings;
-            break;
+            const answeredComplete = result.complete !== false;
+            // Keep the richer answer.
+            if (!ratings.length || result.ratings.length > ratings.length) {
+              ratings = result.ratings;
+              complete = answeredComplete;
+              // The shell proves the type via TMDB and reports what it resolved.
+              resolvedType = hoverMediaType(result.type || type);
+            }
+            // Only an unproven type justifies asking again. Retrying on an incomplete
+            // answer instead meant a single slow source doubled every hover, because
+            // the other type is a full second fan-out.
+            if (result.typeVerified === true || answeredComplete) break;
           }
         } catch (_) {
-          /* try next */
+          complete = false;
         }
       }
       const ordered = orderHoverRatings(ratings);
-      const hasImdb = ordered.some((item) => String(item?.key || '').toLowerCase() === 'imdb');
-      if (mode === 'full' && ordered.length && hasImdb) {
-        ratingsCache.set(id, { at: Date.now(), ratings: ordered });
+      if (mode === 'full' && ordered.length) {
+        const stored = rememberHoverRatings(id, ordered, complete, resolvedType);
+        // Also fill the slot the caller asked under, so a repeated wrong guess is a
+        // cache hit instead of a refetch. Same answer, the shell already corrected it.
+        if (resolvedType !== requestedType) {
+          rememberHoverRatings(id, ordered, complete, requestedType);
+        }
+        return stored;
       }
       return ordered.slice();
     })().finally(() => ratingsPending.delete(cacheKey));
@@ -1223,18 +1333,21 @@
     return job;
   }
 
+  /**
+   * Starts the full fan-out while meta/cast are still loading, so the panel can
+   * paint the complete bar in one go instead of trickling chips in.
+   */
   function prefetchHoverRatings(imdbId, typeHint) {
     const id = pickHoverImdbId(imdbId, null);
     if (!id) return;
-    fetchHoverRatings(id, typeHint, 'fast').catch(() => {});
-    fetchHoverRatings(id, typeHint, 'full').catch(() => {});
+    fetchHoverRatings(id, typeHint, 'full', { background: true }).catch(() => {});
   }
 
-  function peekHoverRatings(imdbId) {
+  function peekHoverRatings(imdbId, type) {
     const id = pickHoverImdbId(imdbId, null);
     if (!id) return null;
-    const cached = ratingsCache.get(id);
-    if (cached && Date.now() - cached.at < RATINGS_CACHE_TTL_MS) return cached.ratings.slice();
+    const cached = ratingsCache.get(hoverRatingsKey(id, type));
+    if (cached && hoverCacheFresh(cached)) return cached.ratings.slice();
     return null;
   }
 
@@ -1249,6 +1362,8 @@
     if (key === 'letterboxd') return 'LB';
     if (key === 'rt') return 'RT';
     if (key === 'fsk') return 'FSK';
+    if (key === 'tvmaze') return 'TVmaze';
+    if (key === 'tvdb') return 'TVDB';
     return String(rating?.label || key || '?');
   }
 
@@ -1350,7 +1465,7 @@
       return;
     }
 
-    const cached = peekHoverRatings(imdbId);
+    const cached = peekHoverRatings(imdbId, type);
     if (cached?.length) {
       paintHoverRatings(host, cached);
       return;
@@ -1360,17 +1475,12 @@
       showRatingsSkeleton(host);
     }
 
+    // Skeleton until the one native answer arrives, then paint everything at once.
     try {
-      const fast = await fetchHoverRatings(imdbId, type, 'fast');
+      const ratings = await fetchHoverRatings(imdbId, type, 'full');
       if (!host.isConnected) return;
-      if (fast.length) paintHoverRatings(host, fast);
-      const full = await fetchHoverRatings(imdbId, type, 'full');
-      if (!host.isConnected) return;
-      if (full.length) {
-        paintHoverRatings(host, orderHoverRatings([...(fast || []), ...(full || [])]));
-        return;
-      }
-      if (!fast.length) renderImdbFallback(host, meta);
+      if (ratings.length) paintHoverRatings(host, ratings);
+      else renderImdbFallback(host, meta);
     } catch (_) {
       if (host.isConnected) renderImdbFallback(host, meta);
     }
@@ -1399,7 +1509,7 @@
     const ratingsHost = document.createElement('span');
     ratingsHost.className = 'meta-hover-panel-ratings-host';
     const imdbId = pickHoverImdbId(resolvedImdb, meta);
-    const cached = imdbId ? peekHoverRatings(imdbId) : null;
+    const cached = imdbId ? peekHoverRatings(imdbId, type) : null;
     if (cached?.length) {
       paintHoverRatings(ratingsHost, cached);
     } else if (imdbId) {
@@ -1540,10 +1650,14 @@
    * @returns {boolean}
    */
   function isPointerOverHoverTarget(x, y) {
-    if (activeAnchor?.isConnected && pointInRect(x, y, activeAnchor.getBoundingClientRect(), 4)) {
+    const pad = 48;
+    if (activeAnchor?.isConnected && pointInRect(x, y, activeAnchor.getBoundingClientRect(), pad)) {
       return true;
     }
-    if (activePanel?.isConnected && pointInRect(x, y, activePanel.getBoundingClientRect(), 4)) {
+    if (trackedAnchor?.isConnected && pointInRect(x, y, trackedAnchor.getBoundingClientRect(), pad)) {
+      return true;
+    }
+    if (activePanel?.isConnected && pointInRect(x, y, activePanel.getBoundingClientRect(), pad)) {
       return true;
     }
     return false;
@@ -1620,8 +1734,17 @@
     if (imdbId) prefetchHoverRatings(imdbId, media.type);
 
     const result = await fetchMetaCandidates(media.type, candidateIds);
-    if (!result || !stillValid()) {
+    if (!stillValid()) {
       removePanel();
+      return;
+    }
+    if (!result) {
+      if (activePanel) {
+        activePanel.innerHTML = '<div class="meta-hover-panel-loading">Keine Metadaten</div>';
+        setTimeout(() => {
+          if (generation === showGeneration) removePanel();
+        }, 1200);
+      }
       return;
     }
 
@@ -1712,6 +1835,9 @@
 
       const anchor = getMetaItemAnchor(document.elementFromPoint(x, y));
       if (!anchor) {
+        if (isPointerOverHoverTarget(x, y)) {
+          return;
+        }
         clearHoverState();
         return;
       }

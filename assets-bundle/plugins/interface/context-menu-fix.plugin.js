@@ -1,28 +1,4 @@
-﻿function waitForElement(selector, timeout = 10000) {
-    return new Promise((resolve, reject) => {
-        const element = document.querySelector(selector);
-        if (element) return resolve(element);
-
-        const observer = new MutationObserver(() => {
-            const el = document.querySelector(selector);
-            if (el) {
-                observer.disconnect();
-                resolve(el);
-            }
-        });
-        
-        // Safe observation target
-        const target = document.body || document.documentElement;
-        observer.observe(target, { childList: true, subtree: true });
-
-        setTimeout(() => {
-            observer.disconnect();
-            reject(new Error(`Timeout: ${selector}`));
-        }, timeout);
-    });
-}
-
-/**
+﻿/**
  * @name Context Menu Fix
  * @description Fixes context menus appearing behind UI elements by moving them to the document root.
  * @version 2.0.0
@@ -31,17 +7,8 @@
 class ContextMenuFix {
     constructor() {
         this.observer = null;
-        this.navMenuProcessed = new WeakSet();
         this.seasonDropdownProcessed = new WeakSet();
         this.init();
-    }
-
-    isNavMenuExpanded(buttonWrapper) {
-        const menu = buttonWrapper?.querySelector?.('[class*="menu-container"]');
-        if (!menu) return false;
-        const inner = menu.querySelector?.('[class*="nav-menu-container"]') || menu;
-        const rect = inner.getBoundingClientRect();
-        return rect.height > 20 && rect.width > 10;
     }
 
     init() {
@@ -153,142 +120,8 @@ class ContextMenuFix {
             return; // Keep profile menu native/clickable
         }
 
-        if (false && isNavMenu) {
-            const buttonWrapper = menuContainer.closest('.menu-button-container-DtW4v, [class*="menu-button-container"], .nav-menu-popup-label-XmUBo, [class*="nav-menu-popup-label"], .label-container-XOyzm') || menuContainer.parentElement;
-            if (!buttonWrapper?.isConnected || buttonWrapper.closest('.context-menu-portal') || this.navMenuProcessed.has(menuContainer)) return;
-
-            const tryMove = (attempt = 0) => {
-                if (!buttonWrapper.isConnected || buttonWrapper.closest('.context-menu-portal')) return;
-                if (this.navMenuProcessed.has(menuContainer)) return;
-                if (this.isNavMenuExpanded(buttonWrapper)) {
-                    this.moveNavMenuToBody(buttonWrapper, menuContainer);
-                    return;
-                }
-                if (attempt < 5) {
-                    setTimeout(() => tryMove(attempt + 1), 35 + attempt * 30);
-                }
-            };
-            requestAnimationFrame(() => requestAnimationFrame(() => tryMove(0)));
-            return;
-        }
-
         if (problematicParent) {
             this.moveMenuToBody(menuContainer, false);
-        }
-    }
-
-    moveNavMenuToBody(buttonWrapper, menuContainer) {
-        if (!this.isNavMenuExpanded(buttonWrapper)) return;
-        if (this.navMenuProcessed.has(menuContainer)) return;
-        this.navMenuProcessed.add(menuContainer);
-
-        const anchor =
-            buttonWrapper.querySelector?.('[class*="nav-menu-popup-label"]') ||
-            buttonWrapper.querySelector?.('[class*="label-container"]') ||
-            buttonWrapper;
-        const anchorRect = anchor.getBoundingClientRect();
-        const menuRect = menuContainer.getBoundingClientRect();
-        const menuWidth = Math.max(menuRect.width || 0, 352);
-
-        const wrapper = document.createElement('div');
-        wrapper.className = 'context-menu-portal';
-        wrapper.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 2147483647;
-        `;
-
-        const menuClone = menuContainer.cloneNode(true);
-        menuClone.style.position = 'fixed';
-        menuClone.style.top = `${anchorRect.bottom + 16}px`;
-        menuClone.style.right = `${Math.max(16, window.innerWidth - anchorRect.right)}px`;
-        menuClone.style.left = 'auto';
-        menuClone.style.width = `${menuWidth}px`;
-        menuClone.style.zIndex = '2147483647';
-        menuClone.style.pointerEvents = 'auto';
-        menuClone.style.visibility = 'visible';
-        menuClone.style.opacity = '1';
-
-        wrapper.appendChild(menuClone);
-        document.body.appendChild(wrapper);
-
-        menuContainer.style.visibility = 'hidden';
-        menuContainer.style.opacity = '0';
-        menuContainer.style.pointerEvents = 'none';
-        menuContainer.style.position = 'fixed';
-        menuContainer.style.left = '-9999px';
-        menuContainer.style.top = '0';
-
-        const optionSelectors = '[class*="nav-menu-option-container"], [class*="logout-button-container"]';
-        const cloneOptions = menuClone.querySelectorAll(optionSelectors);
-        const originalOptions = menuContainer.querySelectorAll(optionSelectors);
-        cloneOptions.forEach((opt, i) => {
-            opt.style.pointerEvents = 'auto';
-            opt.addEventListener('click', (e) => {
-                e.preventDefault();
-                if (originalOptions[i]) originalOptions[i].click();
-                this.cleanupNavMenu(wrapper, menuContainer);
-            });
-        });
-
-        menuClone.querySelectorAll('a[href]').forEach((link, i) => {
-            link.style.pointerEvents = 'auto';
-            const origLinks = menuContainer.querySelectorAll('a[href]');
-            if (origLinks[i]) {
-                link.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    origLinks[i].click();
-                    this.cleanupNavMenu(wrapper, menuContainer);
-                });
-            }
-        });
-
-        const closeHandler = (e) => {
-            if (!wrapper.contains(e.target)) {
-                this.cleanupNavMenu(wrapper, menuContainer);
-                document.removeEventListener('click', closeHandler, true);
-                document.removeEventListener('contextmenu', closeHandler, true);
-            }
-        };
-        setTimeout(() => {
-            document.addEventListener('click', closeHandler, true);
-            document.addEventListener('contextmenu', closeHandler, true);
-        }, 10);
-
-        const removalObserver = new MutationObserver((mutations) => {
-            mutations.forEach((mutation) => {
-                mutation.removedNodes.forEach((node) => {
-                    if (node === menuContainer || node.contains?.(menuContainer)) {
-                        this.navMenuProcessed.delete(menuContainer);
-                        if (wrapper.parentElement) wrapper.remove();
-                        removalObserver.disconnect();
-                    }
-                });
-            });
-        });
-        const originalParent = menuContainer.parentElement;
-        if (originalParent) removalObserver.observe(originalParent, { childList: true, subtree: true });
-
-        console.log('[ContextMenuFix] Cloned profile menu panel to body');
-    }
-
-    cleanupNavMenu(wrapper, buttonWrapper, menuContainer) {
-        if (wrapper?.parentElement) wrapper.remove();
-        if (menuContainer) {
-            this.navMenuProcessed.delete(menuContainer);
-            menuContainer.style.visibility = '';
-            menuContainer.style.opacity = '';
-            menuContainer.style.pointerEvents = '';
-            menuContainer.style.position = '';
-            menuContainer.style.left = '';
-            menuContainer.style.top = '';
-        }
-        if (buttonWrapper?.style) {
-            buttonWrapper.style.pointerEvents = '';
         }
     }
 
@@ -472,9 +305,13 @@ class ContextMenuFix {
         if (wrapper && wrapper.parentElement) {
             wrapper.remove();
         }
-        if (originalMenu) {
+        if (originalMenu?.style) {
             originalMenu.style.visibility = '';
+            originalMenu.style.opacity = '';
             originalMenu.style.pointerEvents = '';
+            originalMenu.style.position = '';
+            originalMenu.style.left = '';
+            originalMenu.style.top = '';
         }
     }
 
