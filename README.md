@@ -178,6 +178,12 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 
 ## 🛠️ Patch Notes
 
+### 2.4.2
+- **Data Enrichment** — Enhanced episode rating sources and loading
+- **Episode marking** — Added an UI element to mark episodes as watched
+- **UI-Scaling** — Now saves the previously set UI scaling pre monitor 
+- **Meta Hover Panel** — Fixed flickering issue when multiple metadata sources enabled
+
 ### 2.4.1
 - **Addon Manager** — Self made addon manager which combines the standard manager tools with the ability to disable cinemeta
 - **Cast Overlay** — Now displays season specific cast
