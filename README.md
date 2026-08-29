@@ -178,6 +178,13 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 
 ## 🛠️ Patch Notes
 
+### 2.4.3
+
+- **Data Enrichment** — Fixed bug that IMDb episode ratings wouldn't display
+- **Intro Skip** — Fixed issue with timestamp submission and increased segment loading speed
+- **Search suggestions** — Are now auto completing searches instead of opening the detail page directly + faster suggestions + search history
+- **Addon Manager** — Added the native share button to custom addon page + fixed the "configure" button
+
 ### 2.4.2
 - **Data Enrichment** — Enhanced episode rating sources and loading
 - **Episode marking** — Added an UI element to mark episodes as watched
@@ -210,23 +217,6 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 - **Quick Settings** — Are now part of the settings menu bar
 
 
-### 2.3.7
-
-- **Board catalogue navigation** — Optimized catalogue loading on board to reduce lag on weaker hardware
-- **Enhanced Title Bar** — Optimized enhanced title bar loading to reduce lag on weaker hardware
-- **Search suggestions** — Optimized search suggestion order
-- **Search results** — Fixed issue where search results would appear to big
-
-
-### 2.3.6
-
-- **WatchHub** — Redesigned “Available on” panel with provider logos, Sub/Buy/Rent/Free badges, and a cleaner tile grid (StreamUI)
-- **Board catalog navigation** — Per-row chevrons, horizontal scroll, and LoadNextPage so board catalogs go beyond the first preview strip
-- **Multi-source ratings** — Shared ratings on Detail (Data Enrichment) and Meta Hover (IMDb, TMDb, Metacritic, RT, Trakt, …) via shell proxy; optional MDBList key under Settings → API Keys unlocks the full set
-- **Search suggestions** — Cinemeta type ahead above the search bar (posters, ranking, recent picks, keyboard navigation)
-- **Stream flags** — Language codes in stream rows render as Twemoji flags (Liquid Glass no longer strips them)
-- **Board hero** — Fixed the left grey gutter / full-bleed hero shading on the board
-- **Continue Watching** — Enhanced Titlebar + Enhanced Covers stay in sync after card reuse; row chevrons re-center after landscape covers load
 
 ---
 
