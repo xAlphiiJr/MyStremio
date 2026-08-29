@@ -1,9 +1,11 @@
 mod aniskip_proxy;
 mod api_keys;
+mod imdb_suggest;
 mod introdb_proxy;
 mod paths;
 mod ratings_proxy;
 mod storage;
+mod theintrodb_proxy;
 
 use crate::stremio_app::discord_presence;
 use paths::{
@@ -85,7 +87,24 @@ fn ratings_is_background(message: &Value) -> bool {
         .unwrap_or(false)
 }
 
-pub fn enqueue_title_ratings(message: Value, tx: flume::Sender<String>) {
+/// HTTP fan-out that must not block the WebView IPC loop (ratings, intro proxies, layout).
+pub fn is_slow_http_method(method: &str) -> bool {
+    matches!(
+        method,
+        "get-title-ratings"
+            | "map-tv-episode-layout"
+            | "introdb-get-segments"
+            | "introdb-submit"
+            | "theintrodb-submit"
+            | "aniskip-get-skip-times"
+            | "aniskip-resolve-mal-kitsu"
+            | "aniskip-resolve-mal-jikan"
+            | "aniskip-resolve-mal-kitsu-title"
+            | "imdb-suggest"
+    )
+}
+
+pub fn enqueue_slow_request(message: Value, tx: flume::Sender<String>) {
     let background = ratings_is_background(&message);
     let job = RatingsJob { message, tx };
     let queues = ratings_queues();
@@ -390,6 +409,13 @@ pub fn handle_request(message: &Value) -> Option<String> {
                 Err(error) => return Some(error_response(id, &error)),
             }
         }
+        "imdb-suggest" => {
+            let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
+            match imdb_suggest::suggest(query) {
+                Ok(payload) => json!(payload),
+                Err(error) => return Some(error_response(id, &error)),
+            }
+        }
         "introdb-get-segments" => {
             let imdb_id = params.get("imdbId").and_then(|v| v.as_str()).unwrap_or("");
             let season = params.get("season").and_then(json_u64).unwrap_or(0);
@@ -403,6 +429,14 @@ pub fn handle_request(message: &Value) -> Option<String> {
             let api_key = params.get("apiKey").and_then(|v| v.as_str()).unwrap_or("");
             let body = params.get("body").cloned().unwrap_or(Value::Null);
             match introdb_proxy::submit_segment(api_key, &body) {
+                Ok(payload) => json!(payload),
+                Err(error) => return Some(error_response(id, &error)),
+            }
+        }
+        "theintrodb-submit" => {
+            let api_key = params.get("apiKey").and_then(|v| v.as_str()).unwrap_or("");
+            let body = params.get("body").cloned().unwrap_or(Value::Null);
+            match theintrodb_proxy::submit_segment(api_key, &body) {
                 Ok(payload) => json!(payload),
                 Err(error) => return Some(error_response(id, &error)),
             }

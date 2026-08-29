@@ -1,9 +1,22 @@
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, USER_AGENT};
 use serde_json::{json, Value};
+use std::time::Duration;
 
 const INTRODB_API_BASE: &str = "https://api.introdb.app";
 const USER_AGENT_VALUE: &str = "MyStremio Intro Skip Plugin";
+const GET_TIMEOUT: Duration = Duration::from_secs(4);
+const GET_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+const SUBMIT_TIMEOUT: Duration = Duration::from_secs(25);
+const SUBMIT_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+
+fn http_client(timeout: Duration, connect: Duration) -> Result<Client, String> {
+    Client::builder()
+        .connect_timeout(connect)
+        .timeout(timeout)
+        .build()
+        .map_err(|error| format!("IntroDB HTTP client failed: {error}"))
+}
 
 /// Fetch aggregated IntroDB.app segments for a TV episode.
 ///
@@ -25,7 +38,7 @@ pub fn get_segments(imdb_id: &str, season: u64, episode: u64) -> Result<Value, S
         return Err("IntroDB segment lookup requires imdbId, season and episode.".to_string());
     }
 
-    let client = Client::new();
+    let client = http_client(GET_TIMEOUT, GET_CONNECT_TIMEOUT)?;
     let url = format!(
         "{INTRODB_API_BASE}/segments?imdb_id={imdb_id}&season={season}&episode={episode}"
     );
@@ -71,7 +84,7 @@ pub fn submit_segment(api_key: &str, body: &Value) -> Result<Value, String> {
         return Err("IntroDB submit body must be a JSON object.".to_string());
     }
 
-    let client = Client::new();
+    let client = http_client(SUBMIT_TIMEOUT, SUBMIT_CONNECT_TIMEOUT)?;
     let response = client
         .post(format!("{INTRODB_API_BASE}/submit"))
         .headers(default_headers(Some(api_key)))

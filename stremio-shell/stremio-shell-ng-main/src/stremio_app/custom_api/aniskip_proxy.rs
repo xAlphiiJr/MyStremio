@@ -1,11 +1,22 @@
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 use serde_json::Value;
+use std::time::Duration;
 
 const ANISKIP_API_BASE: &str = "https://api.aniskip.com";
 const KITSU_API_BASE: &str = "https://kitsu.io/api/edge";
 const JIKAN_API_BASE: &str = "https://api.jikan.moe/v4";
 const USER_AGENT_VALUE: &str = "MyStremio Intro Skip Plugin";
+const GET_TIMEOUT: Duration = Duration::from_secs(4);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+
+fn http_client() -> Result<Client, String> {
+    Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(GET_TIMEOUT)
+        .build()
+        .map_err(|error| format!("AniSkip HTTP client failed: {error}"))
+}
 
 fn default_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
@@ -51,7 +62,7 @@ pub fn get_skip_times(
         return Err("AniSkip lookup requires malId and episode.".to_string());
     }
 
-    let client = Client::new();
+    let client = http_client()?;
 
     // v1 does not require episodeLength and returns snake_case intervals.
     let v1_url = format!(
@@ -123,7 +134,7 @@ pub fn resolve_mal_from_kitsu(kitsu_id: u64) -> Result<Option<u64>, String> {
         return Ok(None);
     }
 
-    let client = Client::new();
+    let client = http_client()?;
     let url = format!("{KITSU_API_BASE}/anime/{kitsu_id}/mappings");
     let response = client
         .get(url)
@@ -188,7 +199,7 @@ pub fn resolve_mal_from_jikan(title: &str, year: Option<u32>) -> Result<Option<u
         return Ok(None);
     }
 
-    let client = Client::new();
+    let client = http_client()?;
     let url = format!(
         "{JIKAN_API_BASE}/anime?q={}&limit=8",
         urlencoding_encode(trimmed)
@@ -293,7 +304,7 @@ pub fn resolve_mal_from_kitsu_title(title: &str) -> Result<Option<u64>, String> 
         return Ok(None);
     }
 
-    let client = Client::new();
+    let client = http_client()?;
     let url = format!(
         "{KITSU_API_BASE}/anime?filter[text]={}&page[limit]=5",
         urlencoding_encode(trimmed)

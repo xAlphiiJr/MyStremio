@@ -417,6 +417,23 @@
 		return "Copy the full key from theintrodb.org Docs/API (theintrodb:user_…:…). Do not paste only the part after the colon.";
 	}
 
+	/**
+	 * Strip reqwest "error sending request for url (...)" noise from proxy errors.
+	 *
+	 * @param {unknown} message
+	 * @returns {string}
+	 */
+	function sanitizeProxyError(message) {
+		const text = String(message || "").trim();
+		if (!text) return "Network error.";
+		const cleaned = text
+			.replace(/error sending request for url \([^)]+\)(?::\s*)?/gi, "")
+			.replace(/https?:\/\/\S+/gi, "")
+			.replace(/\s+/g, " ")
+			.trim();
+		return cleaned || "TheIntroDB could not be reached. Try again.";
+	}
+
 	function formatIntroDbApiKeyHint() {
 		return "Copy your API key from introdb.app (format: idb_…).";
 	}
@@ -471,6 +488,41 @@
 	}
 
 	/**
+	 * Fill missing segment types from `incoming` without replacing an existing interval.
+	 *
+	 * @param {Record<string, Array<{start: number, end: number|null}>>} current
+	 * @param {Record<string, Array<{start: number, end: number|null}>>} incoming
+	 * @returns {Record<string, Array<{start: number, end: number|null}>>}
+	 */
+	function mergeMissingSegmentTypes(current, incoming) {
+		const next = emptySegments();
+		for (const segmentType of SEGMENT_TYPES) {
+			const have = (current && current[segmentType]) || [];
+			const extra = (incoming && incoming[segmentType]) || [];
+			if (have.length) next[segmentType] = [have[0]];
+			else if (extra.length) next[segmentType] = [extra[0]];
+		}
+		return next;
+	}
+
+	/**
+	 * True when two skip intervals are the same type and overlap in time.
+	 *
+	 * @param {{type: string, start: number, end: number|null}|null} a
+	 * @param {{type: string, start: number, end: number|null}|null} b
+	 * @returns {boolean}
+	 */
+	function segmentsOverlap(a, b) {
+		if (!a || !b || a.type !== b.type) return false;
+		const aStart = Number(a.start);
+		const bStart = Number(b.start);
+		if (!Number.isFinite(aStart) || !Number.isFinite(bStart)) return false;
+		const aEnd = a.end != null && Number.isFinite(a.end) ? a.end : Infinity;
+		const bEnd = b.end != null && Number.isFinite(b.end) ? b.end : Infinity;
+		return aStart < bEnd && bStart < aEnd;
+	}
+
+	/**
 	 * Typical anime episode length — AniSkip may scale to this; only then as a gap-filler.
 	 *
 	 * @param {number|null|undefined} durationSecs
@@ -492,6 +544,26 @@
 		if (!match) return null;
 		const id = Number(match[1]);
 		return Number.isFinite(id) && id > 0 ? id : null;
+	}
+
+	/**
+	 * Anime catalog / MAL / Kitsu — AniSkip should run. Western TV should not hit Jikan.
+	 *
+	 * @param {string|null|undefined} episodeId
+	 * @param {object|null|undefined} meta
+	 * @param {string|null|undefined} extraId
+	 * @returns {boolean}
+	 */
+	function looksLikeAnime(episodeId, meta, extraId) {
+		if (extractKitsuId(episodeId) || extractKitsuId(meta && meta.id) || extractKitsuId(extraId)) {
+			return true;
+		}
+		if (extractMalIdFromMeta(meta)) return true;
+		if (String(meta && meta.type ? meta.type : "").toLowerCase() === "anime") return true;
+		const genres = []
+			.concat((meta && meta.genre) || [], (meta && meta.genres) || [])
+			.map((g) => String(g).toLowerCase());
+		return genres.some((g) => g === "anime" || g.startsWith("anime "));
 	}
 
 	/**
@@ -537,12 +609,14 @@
 	 * @param {object} params
 	 * @returns {Promise<*>}
 	 */
-	async function invokeAniSkipProxy(method, params) {
+	async function invokeAniSkipProxy(method, params, timeoutMs) {
 		const api = window.StremioCustomAPI || window.StremioEnhancedAPI;
 		if (!api || typeof api.invoke !== "function") {
 			throw new Error("AniSkip proxy is unavailable in this shell.");
 		}
-		return api.invoke(method, params);
+		return typeof timeoutMs === "number" && timeoutMs > 0
+			? api.invoke(method, params, timeoutMs)
+			: api.invoke(method, params, 4000);
 	}
 
 	/**
@@ -558,18 +632,21 @@
 	}
 
 	/**
-	 * Call the shell-side IntroDB proxy (bypasses browser CORS restrictions).
+	 * Call the shell-side IntroDB / TheIntroDB proxy (bypasses browser CORS).
 	 *
 	 * @param {string} method Custom API method name.
 	 * @param {object} params Request parameters.
+	 * @param {number} [timeoutMs]
 	 * @returns {Promise<*>}
 	 */
-	async function invokeIntroDbProxy(method, params) {
+	async function invokeIntroDbProxy(method, params, timeoutMs) {
 		const api = window.StremioCustomAPI || window.StremioEnhancedAPI;
 		if (!api || typeof api.invoke !== "function") {
 			throw new Error("IntroDB proxy is unavailable in this shell.");
 		}
-		return api.invoke(method, params);
+		return typeof timeoutMs === "number" && timeoutMs > 0
+			? api.invoke(method, params, timeoutMs)
+			: api.invoke(method, params);
 	}
 
 	async function invokeMapTvEpisodeLayout(imdbId, season, episode, tmdbLengths) {
@@ -581,7 +658,7 @@
 				season: Number(season),
 				episode: Number(episode),
 				tmdbLengths: Array.isArray(tmdbLengths) ? tmdbLengths : undefined
-			});
+			}, 5000);
 		} catch (_) {
 			return null;
 		}
@@ -1359,6 +1436,7 @@
 			this.segments = emptySegments();
 			this.activeSegment = null;
 			this.displayedSegmentType = null;
+			this._displayedSegment = null;
 			this.skipButtonTimeout = null;
 			this.overlayObserver = null;
 			this.userApiKey = "";
@@ -1685,27 +1763,24 @@
 			return Boolean(snap.playbackAdvanced && snap.timeFresh && !snap.seeking);
 		}
 
+		isSkipButtonShowReady() {
+			const snap = window.StremioCustomPlayback?.getMpvSnapshot?.();
+			if (!snap) return false;
+			return Boolean(snap.hasStream && (snap.timeFresh || Number.isFinite(snap.position)));
+		}
+
 		syncSkipButton() {
 			const video = this.getPlaybackVideo();
 			const duration = window.StremioCustomPlayback?.getDuration?.() || video?.duration;
 			if (!video || !Number.isFinite(duration) || duration <= 0) {
 				this.removeActiveButton();
 				this.activeSegment = null;
-				this.displayedSegmentType = null;
-				return;
-			}
-
-			if (!this.isPlaybackReadyForSkip()) {
-				this.removeActiveButton();
-				this.activeSegment = null;
-				this.displayedSegmentType = null;
 				return;
 			}
 
 			if (!this.episodeId || this._segmentsLoadedEpisodeId !== this.episodeId) {
 				this.removeActiveButton();
 				this.activeSegment = null;
-				this.displayedSegmentType = null;
 				return;
 			}
 
@@ -1716,32 +1791,36 @@
 
 			if (!seg) {
 				this.removeActiveButton();
-				this.displayedSegmentType = null;
 				return;
 			}
 
 			if (this._autoSkippedKeys.has(this.getAutoSkipKey(seg))) {
 				this.removeActiveButton();
-				this.displayedSegmentType = null;
 				return;
 			}
 
 			if (!this.isSegmentButtonEnabled(seg.type)) {
 				this.removeActiveButton();
-				this.displayedSegmentType = null;
 				return;
 			}
 
 			const existing = document.getElementById(ACTIVE_BTN_ID);
 			const segKey = this.getSkipSegmentKey(seg);
-			if (existing && existing.getAttribute("data-segment-key") === segKey) {
-				this.syncSkipButtonChromeVisibility();
-				this.syncAutoSkipCountdown();
+			if (existing) {
+				const existingKey = existing.getAttribute("data-segment-key");
+				if (existingKey === segKey || segmentsOverlap(this._displayedSegment, seg)) {
+					this.updateSkipButtonSegment(existing, seg);
+					this.syncSkipButtonChromeVisibility();
+					this.syncAutoSkipCountdown();
+					return;
+				}
+			}
+
+			if (!this.isSkipButtonShowReady()) {
 				return;
 			}
 
 			this.showSkipButton(seg);
-			this.displayedSegmentType = seg.type;
 		}
 
 		startSegmentWatcher() {
@@ -1919,6 +1998,18 @@
 				return this.mergePlaybackContext(this._lastStateContext, urlContext);
 			}
 
+			if (urlContext && urlContext.episodeId) {
+				if (shouldRefreshState) {
+					this._lastStateCheckAt = now;
+					this.getPlaybackContextFromState()
+						.then((state) => {
+							this._lastStateContext = state;
+						})
+						.catch(() => {});
+				}
+				return this.mergePlaybackContext(this._lastStateContext, urlContext);
+			}
+
 			if (shouldRefreshState) {
 				this._lastStateCheckAt = now;
 				this._lastStateContext = await this.getPlaybackContextFromState();
@@ -1989,7 +2080,7 @@
 				if (!episodeChanged && !videoChanged && !urlChanged) {
 					const durationMs = getVideoDurationMs(video);
 					if (durationMs != null && durationMs !== this._lastFetchedDurationMs) {
-						await this.fetchData();
+						this.fetchData().catch(() => {});
 					}
 					if (!this.segmentWatcher && Object.values(this.segments).flat().length > 0) {
 						this.startSegmentWatcher();
@@ -2020,7 +2111,9 @@
 				this.loadSettings().catch(() => {});
 
 				console.log(`${LOG_PREFIX} \nEpisode ID: ${this.episodeId}, \nTitle: ${this.title || "Unknown Title"}`);
-				await this.fetchData();
+				this.fetchData().catch((error) => {
+					console.error(`${LOG_PREFIX} Segment fetch failed:`, error);
+				});
 				this.attachUiObservers();
 				this.ensureContributeUi();
 			} finally {
@@ -2221,6 +2314,10 @@
 
 			let media = this.parseMediaContext();
 			if (!media) return null;
+
+			if (media.tmdbId && isValidTmdbId(media.tmdbId)) {
+				return media;
+			}
 
 			let tmdbId = null;
 			if (media.submissionImdbId || media.imdbId) {
@@ -2425,60 +2522,68 @@
 		 * @returns {Promise<{segments: Record<string, Array<{start: number, end: number|null}>>, tmdbId: number|null}>}
 		 */
 		async fetchTheIntroDbSegments(query) {
-			const identities = [];
-			if (query.imdbId) identities.push({ imdbId: query.imdbId, tmdbId: null });
-			if (query.tmdbId && isValidTmdbId(query.tmdbId)) {
-				identities.push({ imdbId: null, tmdbId: query.tmdbId });
-			}
-			if (!identities.length) {
+			const durationAttempts = query.durationMs != null ? [null, query.durationMs] : [null];
+			const identity = query.imdbId
+				? { imdbId: query.imdbId, tmdbId: null }
+				: query.tmdbId && isValidTmdbId(query.tmdbId)
+					? { imdbId: null, tmdbId: query.tmdbId }
+					: null;
+			if (!identity) {
 				return { segments: emptySegments(), tmdbId: null };
 			}
 
-			const durationAttempts = query.durationMs != null ? [null, query.durationMs] : [null];
 			let lastEmpty = { segments: emptySegments(), tmdbId: null };
-			for (const identity of identities) {
-				for (const durationMs of durationAttempts) {
-					const params = new URLSearchParams();
-					if (identity.imdbId) {
-						params.set("imdb_id", identity.imdbId);
-					} else {
-						params.set("tmdb_id", String(identity.tmdbId));
-					}
-					if (query.isTvShow) {
-						params.set("season", String(query.season));
-						params.set("episode", String(query.episode));
-					}
-					if (durationMs != null) {
-						params.set("duration_ms", String(durationMs));
-					}
-
-					const res = await fetch(`${THEINTRODB_SERVER_URL}/media?${params}`, {
-						headers: this.getTidbHeaders()
-					});
-
-					if (res.status === 204 || res.status === 404 || !res.ok) {
-						lastEmpty = { segments: emptySegments(), tmdbId: null };
-						continue;
-					}
-
-					const json = await res.json();
-					const segments = emptySegments();
-					for (const segmentType of SEGMENT_TYPES) {
-						if (json[segmentType] && json[segmentType].length > 0) {
-							segments[segmentType] = json[segmentType].map((segment) => ({
-								start: segment.start_ms == null ? 0 : segment.start_ms / 1000,
-								end: segment.end_ms == null ? null : segment.end_ms / 1000
-							}));
-						}
-					}
-
-					const payload = {
-						segments,
-						tmdbId: isValidTmdbId(json.tmdb_id) ? Number(json.tmdb_id) : null
-					};
-					if (Object.values(segments).flat().length > 0) return payload;
-					lastEmpty = payload;
+			for (const durationMs of durationAttempts) {
+				const params = new URLSearchParams();
+				if (identity.imdbId) {
+					params.set("imdb_id", identity.imdbId);
+				} else {
+					params.set("tmdb_id", String(identity.tmdbId));
 				}
+				if (query.isTvShow) {
+					params.set("season", String(query.season));
+					params.set("episode", String(query.episode));
+				}
+				if (durationMs != null) {
+					params.set("duration_ms", String(durationMs));
+				}
+
+				const controller = new AbortController();
+				const timer = window.setTimeout(() => controller.abort(), 4000);
+				let res;
+				try {
+					res = await fetch(`${THEINTRODB_SERVER_URL}/media?${params}`, {
+						headers: this.getTidbHeaders(),
+						signal: controller.signal
+					});
+				} catch (_) {
+					window.clearTimeout(timer);
+					continue;
+				}
+				window.clearTimeout(timer);
+
+				if (res.status === 204 || res.status === 404 || !res.ok) {
+					lastEmpty = { segments: emptySegments(), tmdbId: null };
+					continue;
+				}
+
+				const json = await res.json();
+				const segments = emptySegments();
+				for (const segmentType of SEGMENT_TYPES) {
+					if (json[segmentType] && json[segmentType].length > 0) {
+						segments[segmentType] = json[segmentType].map((segment) => ({
+							start: segment.start_ms == null ? 0 : segment.start_ms / 1000,
+							end: segment.end_ms == null ? null : segment.end_ms / 1000
+						}));
+					}
+				}
+
+				const payload = {
+					segments,
+					tmdbId: isValidTmdbId(json.tmdb_id) ? Number(json.tmdb_id) : null
+				};
+				if (Object.values(segments).flat().length > 0) return payload;
+				lastEmpty = payload;
 			}
 			return lastEmpty;
 		}
@@ -2501,7 +2606,7 @@
 					imdbId,
 					season: Number(season),
 					episode: Number(episode)
-				});
+				}, 5000);
 				if (!json || typeof json !== "object") {
 					return emptySegments();
 				}
@@ -2545,12 +2650,17 @@
 				try {
 					const payload = await invokeAniSkipProxy("aniskip-resolve-mal-kitsu", {
 						kitsuId
-					});
+					}, 4000);
 					const malId = Number(payload && payload.malId);
 					if (Number.isFinite(malId) && malId > 0) return malId;
 				} catch (error) {
 					console.warn(`${LOG_PREFIX} Kitsu→MAL resolve failed:`, error);
 				}
+				return null;
+			}
+
+			if (!looksLikeAnime(options.episodeId, meta, this.seriesImdbId)) {
+				return null;
 			}
 
 			const title = seriesTitleFromDisplayTitle(
@@ -2558,27 +2668,49 @@
 			);
 			if (!title) return null;
 
-			try {
-				const payload = await invokeAniSkipProxy("aniskip-resolve-mal-jikan", {
-					title,
-					year: parseYearHint(meta && (meta.year || meta.releaseInfo))
-				});
+			const year = parseYearHint(meta && (meta.year || meta.releaseInfo));
+			const parseMal = (payload) => {
 				const malId = Number(payload && payload.malId);
-				if (Number.isFinite(malId) && malId > 0) return malId;
-			} catch (error) {
-				console.warn(`${LOG_PREFIX} Jikan→MAL resolve failed:`, error);
-			}
-
-			try {
-				const payload = await invokeAniSkipProxy("aniskip-resolve-mal-kitsu-title", {
-					title
-				});
-				const malId = Number(payload && payload.malId);
-				if (Number.isFinite(malId) && malId > 0) return malId;
-			} catch (error) {
-				console.warn(`${LOG_PREFIX} Kitsu-title→MAL resolve failed:`, error);
-			}
-			return null;
+				return Number.isFinite(malId) && malId > 0 ? malId : null;
+			};
+			return new Promise((resolve) => {
+				let pending = 2;
+				let settled = false;
+				const finish = (value) => {
+					if (settled) return;
+					if (value || pending <= 0) {
+						settled = true;
+						resolve(value || null);
+					}
+				};
+				const timer = window.setTimeout(() => {
+					pending = 0;
+					finish(null);
+				}, 3000);
+				const hop = (method, params) => {
+					invokeAniSkipProxy(method, params, 3000)
+						.then((payload) => {
+							pending -= 1;
+							const malId = parseMal(payload);
+							if (malId) {
+								window.clearTimeout(timer);
+								finish(malId);
+							} else if (pending <= 0) {
+								window.clearTimeout(timer);
+								finish(null);
+							}
+						})
+						.catch(() => {
+							pending -= 1;
+							if (pending <= 0) {
+								window.clearTimeout(timer);
+								finish(null);
+							}
+						});
+				};
+				hop("aniskip-resolve-mal-jikan", { title, year });
+				hop("aniskip-resolve-mal-kitsu-title", { title });
+			});
 		}
 
 		/**
@@ -2596,7 +2728,7 @@
 				if (Number.isFinite(episodeLengthSecs) && episodeLengthSecs > 0) {
 					params.episodeLength = episodeLengthSecs;
 				}
-				const payload = await invokeAniSkipProxy("aniskip-get-skip-times", params);
+				const payload = await invokeAniSkipProxy("aniskip-get-skip-times", params, 4000);
 				const segments = emptySegments();
 				if (!payload || payload.found !== true || !Array.isArray(payload.results)) {
 					return segments;
@@ -2650,11 +2782,33 @@
 			const episode =
 				isPlausibleEpisode(this.playbackEpisode) ? this.playbackEpisode : parsedEpisode?.episode;
 			const isTvShow = isPlausibleSeason(season) && isPlausibleEpisode(episode);
+			const stillThis = () =>
+				fetchGeneration === this._fetchGeneration && this.episodeId === episodeId;
 
-			for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-				console.log(`${LOG_PREFIX} Fetching segments for episode ${episodeId} (attempt ${attempt})`);
+			const applyIncoming = (incoming, replacePresent) => {
+				if (!stillThis() || !incoming) return;
+				this.segments = replacePresent
+					? (() => {
+							const next = emptySegments();
+							for (const segmentType of SEGMENT_TYPES) {
+								const neu = (incoming[segmentType] || [])[0];
+								const have = (this.segments[segmentType] || [])[0];
+								next[segmentType] = neu ? [neu] : have ? [have] : [];
+							}
+							return next;
+						})()
+					: mergeMissingSegmentTypes(this.segments, incoming);
+				this._segmentsLoadedEpisodeId = episodeId;
+				this.waitAndHighlight();
+				this.startSegmentWatcher();
+				if (fileKey && Object.values(this.segments).flat().length > 0) {
+					writeFileSegmentCache(fileKey, this.segments);
+				}
+			};
 
-				try {
+			console.log(`${LOG_PREFIX} Fetching segments for episode ${episodeId}`);
+
+			try {
 					let imdbId =
 						extractImdbId(id) ||
 						this.seriesImdbId ||
@@ -2663,27 +2817,15 @@
 						null;
 					const tmdbFromId =
 						extractTmdbIdFromCatalogId(id) || parsedEpisode?.tmdbId || null;
-					if (!imdbId && tmdbFromId) {
-						imdbId = await this.resolveImdbFromTmdb(tmdbFromId, isTvShow);
-						if (imdbId) {
-							this.mediaImdbId = imdbId;
-							this.seriesImdbId = this.seriesImdbId || imdbId;
-						}
-					}
 					const durationMs = getVideoDurationMs(video);
 					this._lastFetchedDurationMs = durationMs;
 
 					const loadTheIntroDb =
 						this.isTheIntroDbServiceEnabled() && Boolean(imdbId || tmdbFromId);
-					const loadIntroDb = this.isIntroDbServiceEnabled() && isTvShow && imdbId;
+					const loadIntroDbNow = this.isIntroDbServiceEnabled() && isTvShow && Boolean(imdbId);
 					const loadAniSkip = this.isAniSkipServiceEnabled();
-					if (this.isIntroDbServiceEnabled() && isTvShow && !imdbId && tmdbFromId) {
-						console.log(
-							`${LOG_PREFIX} IntroDB skipped: tmdb:${tmdbFromId} has no IMDb (TMDB key / resolve failed)`
-						);
-					}
 
-					if (!loadTheIntroDb && !loadIntroDb && !loadAniSkip) {
+					if (!loadTheIntroDb && !loadIntroDbNow && !loadAniSkip && !(this.isIntroDbServiceEnabled() && isTvShow && tmdbFromId)) {
 						console.warn(
 							`${LOG_PREFIX} No provider can load for episode ${episodeId} (missing IMDB/TMDB and AniSkip off)`
 						);
@@ -2699,20 +2841,10 @@
 					const stream =
 						(this._lastStateContext && this._lastStateContext.stream) ||
 						null;
-					let streamForCache = stream;
-					if (!streamForCache) {
-						const playerState = await this.waitForPlayerState();
-						streamForCache =
-							(playerState && playerState.stream) ||
-							(playerState && playerState.selected && playerState.selected.stream) ||
-							null;
-					}
-					const fileKey = streamFileCacheKey(streamForCache, video);
-					const cachedFileSegments = readFileSegmentCache(fileKey);
+					const fileKey = streamFileCacheKey(stream, video);
+					const cachedFileSegments = fileKey ? readFileSegmentCache(fileKey) : null;
 					if (cachedFileSegments) {
-						if (fetchGeneration !== this._fetchGeneration || this.episodeId !== episodeId) {
-							return null;
-						}
+						if (!stillThis()) return null;
 						this.segments = cachedFileSegments;
 						console.log(`${LOG_PREFIX} File-cache hit for ${fileKey}`);
 						this._segmentsLoadedEpisodeId = episodeId;
@@ -2737,35 +2869,45 @@
 					let absEpisode = sourceLengths.length
 						? absoluteFromSeasonEpisode(sourceLengths, season, episode)
 						: episode;
-					let mapNote = "source";
-					if (imdbId && isPlausibleSeason(season) && isPlausibleEpisode(episode)) {
-						const mapped = await invokeMapTvEpisodeLayout(
+
+					const introDbPromise = loadIntroDbNow
+						? this.fetchIntroDbSegments(imdbId, introSeason, introEpisode)
+						: Promise.resolve(emptySegments());
+					const theIntroDbPromise = loadTheIntroDb
+						? this.fetchTheIntroDbSegments({
 							imdbId,
-							season,
-							episode,
-							sourceLengths
-						);
-						if (mapped && mapped.cinemetaSeason && mapped.cinemetaEpisode) {
-							introSeason = Number(mapped.cinemetaSeason);
-							introEpisode = Number(mapped.cinemetaEpisode);
-							if (Number(mapped.tmdbSeason) > 0) tmdbSeason = Number(mapped.tmdbSeason);
-							if (Number(mapped.tmdbEpisode) > 0) tmdbEpisode = Number(mapped.tmdbEpisode);
-							if (Number(mapped.absolute) > 0) absEpisode = Number(mapped.absolute);
-							mapNote = "map-tv-episode-layout";
+							tmdbId: tmdbFromId,
+							isTvShow,
+							season: tmdbSeason,
+							episode: tmdbEpisode,
+							durationMs
+						})
+						: Promise.resolve({ segments: emptySegments(), tmdbId: null });
+
+					introDbPromise.then((segs) => {
+						const hit = Object.values(segs || {}).flat().length > 0;
+						if (loadIntroDbNow && imdbId) {
+							console.log(
+								`${LOG_PREFIX} IntroDB ${imdbId} S${introSeason}E${introEpisode} → ${hit ? "hit" : "empty"}`
+							);
 						}
-					}
+						applyIncoming(segs, false);
+					}).catch((error) => {
+						console.warn(`${LOG_PREFIX} IntroDB fetch failed:`, error);
+					});
+					theIntroDbPromise.then((payload) => {
+						if (payload && payload.tmdbId) this.resolvedTmdbId = payload.tmdbId;
+						applyIncoming(payload && payload.segments, false);
+					}).catch((error) => {
+						console.warn(`${LOG_PREFIX} TheIntroDB fetch failed:`, error);
+					});
 
-					const aniSkipEpisode = isPlausibleEpisode(absEpisode)
-						? absEpisode
-						: isPlausibleEpisode(episode)
-							? episode
-							: isPlausibleEpisode(this.playbackEpisode)
-								? this.playbackEpisode
-								: null;
-
-					let aniSkipMalId = null;
-					if (loadAniSkip && aniSkipEpisode) {
-						aniSkipMalId = await this.resolveMalIdForAniSkip({
+					const mapPromise =
+						imdbId && isPlausibleSeason(season) && isPlausibleEpisode(episode)
+							? invokeMapTvEpisodeLayout(imdbId, season, episode, sourceLengths)
+							: Promise.resolve(null);
+					const malPromise = loadAniSkip
+						? this.resolveMalIdForAniSkip({
 							episodeId,
 							meta,
 							title: seriesTitleFromDisplayTitle(
@@ -2774,146 +2916,111 @@
 									this.seriesTitle ||
 									this.title
 							)
-						});
-						if (!aniSkipMalId) {
-							console.log(`${LOG_PREFIX} AniSkip: could not resolve MAL id`);
-						} else {
-							console.log(
-								`${LOG_PREFIX} AniSkip: fetching MAL ${aniSkipMalId} episode ${aniSkipEpisode}`
-							);
-						}
-					}
+						})
+						: Promise.resolve(null);
+					const imdbPromise =
+						!imdbId && tmdbFromId
+							? this.resolveImdbFromTmdb(tmdbFromId, isTvShow)
+							: Promise.resolve(imdbId);
 
-					const providerJobs = [];
-					if (loadIntroDb) {
-						providerJobs.push({
-							key: "introDb",
-							promise: this.fetchIntroDbSegments(imdbId, introSeason, introEpisode)
-						});
-					}
-					if (loadTheIntroDb) {
-						providerJobs.push({
-							key: "theIntroDb",
-							promise: this.fetchTheIntroDbSegments({
+					imdbPromise.then(async (resolved) => {
+						if (!stillThis() || !resolved) return;
+						if (!imdbId) {
+							imdbId = resolved;
+							this.mediaImdbId = resolved;
+							this.seriesImdbId = this.seriesImdbId || resolved;
+						}
+						if (this.isIntroDbServiceEnabled() && isTvShow && !loadIntroDbNow) {
+							const segs = await this.fetchIntroDbSegments(resolved, introSeason, introEpisode);
+							applyIncoming(segs, false);
+						}
+					}).catch(() => {});
+
+					mapPromise.then((mapped) => {
+						if (!stillThis() || !mapped || !mapped.cinemetaSeason || !mapped.cinemetaEpisode) return;
+						const nextIntroS = Number(mapped.cinemetaSeason);
+						const nextIntroE = Number(mapped.cinemetaEpisode);
+						const nextTmdbS = Number(mapped.tmdbSeason) > 0 ? Number(mapped.tmdbSeason) : tmdbSeason;
+						const nextTmdbE = Number(mapped.tmdbEpisode) > 0 ? Number(mapped.tmdbEpisode) : tmdbEpisode;
+						if (Number(mapped.absolute) > 0) absEpisode = Number(mapped.absolute);
+						const coordsChanged =
+							nextIntroS !== introSeason ||
+							nextIntroE !== introEpisode ||
+							nextTmdbS !== tmdbSeason ||
+							nextTmdbE !== tmdbEpisode;
+						introSeason = nextIntroS;
+						introEpisode = nextIntroE;
+						tmdbSeason = nextTmdbS;
+						tmdbEpisode = nextTmdbE;
+						if (!coordsChanged) return;
+						if (this.isIntroDbServiceEnabled() && isTvShow && imdbId) {
+							this.fetchIntroDbSegments(imdbId, introSeason, introEpisode).then((segs) => {
+								applyIncoming(segs, true);
+							}).catch(() => {});
+						}
+						if (loadTheIntroDb) {
+							this.fetchTheIntroDbSegments({
 								imdbId,
 								tmdbId: tmdbFromId,
 								isTvShow,
 								season: tmdbSeason,
 								episode: tmdbEpisode,
 								durationMs
-							})
-						});
-					}
-					if (loadAniSkip && aniSkipEpisode && aniSkipMalId) {
-						providerJobs.push({
-							key: "aniSkip",
-							promise: this.fetchAniSkipSegments(aniSkipMalId, aniSkipEpisode, null)
-						});
-					}
-
-					const settled = await Promise.allSettled(providerJobs.map((job) => job.promise));
-					const byKey = {};
-					providerJobs.forEach((job, index) => {
-						byKey[job.key] =
-							settled[index] && settled[index].status === "fulfilled"
-								? settled[index].value
-								: null;
-					});
-
-					if (fetchGeneration !== this._fetchGeneration || this.episodeId !== episodeId) {
-						return null;
-					}
-
-					const theIntroDbPayload =
-						byKey.theIntroDb && typeof byKey.theIntroDb === "object"
-							? byKey.theIntroDb
-							: { segments: emptySegments(), tmdbId: null };
-					const introDbSegments = byKey.introDb || emptySegments();
-					const introDbHit = Object.values(introDbSegments).flat().length > 0;
-					if (loadIntroDb && imdbId) {
-						console.log(
-							`${LOG_PREFIX} IntroDB ${imdbId} S${introSeason}E${introEpisode} (abs=${absEpisode}, ${mapNote}) → ${introDbHit ? "hit" : "empty"}`
-						);
-					}
-					const aniSkipSegments = byKey.aniSkip || emptySegments();
-
-					if (theIntroDbPayload.tmdbId) {
-						this.resolvedTmdbId = theIntroDbPayload.tmdbId;
-					} else if (imdbId) {
-						const resolved = await this.fetchTmdbIdViaTmdbFind(imdbId, isTvShow ? "tv" : "movie");
-						if (resolved) this.resolvedTmdbId = resolved;
-					}
-
-					const priority = [];
-					if (loadIntroDb) priority.push(introDbSegments);
-					if (loadTheIntroDb) priority.push(theIntroDbPayload.segments || emptySegments());
-					if (loadAniSkip) priority.push(aniSkipSegments);
-					this.segments = pickProviderSegments(priority);
-
-					const durationSecs =
-						Number.isFinite(durationMs) && durationMs > 0 ? durationMs / 1000 : null;
-					const missingTypes = SEGMENT_TYPES.filter(
-						(segmentType) => !(this.segments[segmentType] || []).length
-					);
-					if (
-						loadAniSkip &&
-						aniSkipMalId &&
-						aniSkipEpisode &&
-						missingTypes.length &&
-						isPlausibleAniSkipLength(durationSecs)
-					) {
-						const scaled = await this.fetchAniSkipSegments(
-							aniSkipMalId,
-							aniSkipEpisode,
-							durationSecs
-						);
-						if (fetchGeneration !== this._fetchGeneration || this.episodeId !== episodeId) {
-							return null;
+							}).then((payload) => {
+								if (payload && payload.tmdbId) this.resolvedTmdbId = payload.tmdbId;
+								applyIncoming(payload && payload.segments, true);
+							}).catch(() => {});
 						}
-						for (const segmentType of missingTypes) {
-							if ((scaled[segmentType] || []).length) {
-								this.segments[segmentType] = [scaled[segmentType][0]];
-							}
-						}
-					}
+					}).catch(() => {});
 
-					for (const segmentType of SEGMENT_TYPES) {
-						if (this.segments[segmentType].length > 0) {
+					malPromise.then(async (aniSkipMalId) => {
+						if (!stillThis()) return;
+						const aniSkipEpisode = isPlausibleEpisode(absEpisode)
+							? absEpisode
+							: isPlausibleEpisode(episode)
+								? episode
+								: isPlausibleEpisode(this.playbackEpisode)
+									? this.playbackEpisode
+									: null;
+						if (loadAniSkip && aniSkipEpisode && aniSkipMalId) {
 							console.log(
-								`${LOG_PREFIX} Loaded ${this.segments[segmentType].length} ${segmentType} segment(s)`
+								`${LOG_PREFIX} AniSkip: fetching MAL ${aniSkipMalId} episode ${aniSkipEpisode}`
 							);
+							const aniSkipSegments = await this.fetchAniSkipSegments(
+								aniSkipMalId,
+								aniSkipEpisode,
+								null
+							);
+							applyIncoming(aniSkipSegments, false);
+							const durationSecs =
+								Number.isFinite(durationMs) && durationMs > 0 ? durationMs / 1000 : null;
+							const missingTypes = SEGMENT_TYPES.filter(
+								(segmentType) => !(this.segments[segmentType] || []).length
+							);
+							if (missingTypes.length && isPlausibleAniSkipLength(durationSecs)) {
+								this.fetchAniSkipSegments(aniSkipMalId, aniSkipEpisode, durationSecs)
+									.then((scaled) => {
+										if (!stillThis()) return;
+										const fill = emptySegments();
+										for (const segmentType of missingTypes) {
+											if ((scaled[segmentType] || []).length) {
+												fill[segmentType] = [scaled[segmentType][0]];
+											}
+										}
+										applyIncoming(fill, false);
+									})
+									.catch(() => {});
+							}
+						} else if (loadAniSkip && !aniSkipMalId) {
+							console.log(`${LOG_PREFIX} AniSkip: could not resolve MAL id`);
 						}
-					}
+					}).catch(() => {});
 
-					if (Object.values(this.segments).flat().length === 0) {
-						console.log(`${LOG_PREFIX} No segment data found for episode ${episodeId}`);
-					} else {
-						writeFileSegmentCache(fileKey, this.segments);
-					}
-
-					this._segmentsLoadedEpisodeId = episodeId;
-					this.waitAndHighlight();
-					this.startSegmentWatcher();
-					this.track("segments_loaded", {
-						has_intro: this.segments.intro && this.segments.intro.length > 0,
-						has_recap: this.segments.recap && this.segments.recap.length > 0,
-						has_credits: this.segments.credits && this.segments.credits.length > 0,
-						has_preview: this.segments.preview && this.segments.preview.length > 0,
-						total: Object.values(this.segments).reduce((acc, list) => acc + (list ? list.length : 0), 0)
-					});
 					return null;
-				} catch (err) {
-					console.error(`${LOG_PREFIX} Error fetching segments for ${episodeId}:`, err);
-
-					if (attempt < MAX_RETRIES) {
-						await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
-					} else {
-						return null;
-					}
-				}
+			} catch (err) {
+				console.error(`${LOG_PREFIX} Error fetching segments for ${episodeId}:`, err);
+				return null;
 			}
-
-			return null;
 		}
 
 		waitAndHighlight() {
@@ -3052,6 +3159,7 @@
 			document.getElementById("tidb-skip-btn-styles")?.remove();
 			document.querySelectorAll(".tidb-skip-btn").forEach((button) => button.remove());
 			this.displayedSegmentType = null;
+			this._displayedSegment = null;
 			this._skipGraceUntil = 0;
 			this._skipGraceSegmentKey = null;
 		}
@@ -3106,6 +3214,19 @@
 		getSkipSegmentKey(segment) {
 			if (!segment) return null;
 			return `${segment.type}:${Number(segment.start)}:${Number(segment.end)}`;
+		}
+
+		updateSkipButtonSegment(btn, segment) {
+			if (!btn || !segment) return;
+			btn.setAttribute("data-segment-type", segment.type);
+			btn.setAttribute("data-segment-key", this.getSkipSegmentKey(segment));
+			this.displayedSegmentType = segment.type;
+			this._displayedSegment = {
+				type: segment.type,
+				start: segment.start,
+				end: segment.end
+			};
+			this.activeSegment = segment;
 		}
 
 		isSkipGraceActive() {
@@ -3205,7 +3326,7 @@
 		}
 
 		showSkipButton(segment) {
-			if (!this.isPlaybackReadyForSkip()) return;
+			if (!this.isSkipButtonShowReady()) return;
 			const segmentType = segment.type;
 			const theme = THEMES[this.theme] || THEMES.default;
 			const segmentKey = this.getSkipSegmentKey(segment);
@@ -3213,7 +3334,9 @@
 			if (!this.isSegmentButtonEnabled(segmentType)) return;
 
 			const existing = document.getElementById(ACTIVE_BTN_ID);
-			if (existing && existing.getAttribute("data-segment-key") === segmentKey) {
+			if (existing && (existing.getAttribute("data-segment-key") === segmentKey
+				|| segmentsOverlap(this._displayedSegment, segment))) {
+				this.updateSkipButtonSegment(existing, segment);
 				this.syncSkipButtonChromeVisibility();
 				this.syncAutoSkipCountdown();
 				return;
@@ -3318,6 +3441,7 @@
 			};
 
 			document.body.appendChild(skipBtn);
+			this.updateSkipButtonSegment(skipBtn, segment);
 
 			// 10s grace: stay visible even if control bar hides; autoskip seeks at deadline.
 			this._skipBtnHovered = false;
@@ -4128,50 +4252,85 @@
 			}
 
 			console.log(`${LOG_PREFIX} TheIntroDB submit payload:`, body);
-			const res = await fetch(`${THEINTRODB_SERVER_URL}/submit`, {
-				method: "POST",
-				headers: {
-					...this.getTidbHeaders(),
-					"Content-Type": "application/json",
-					Accept: "application/json"
-				},
-				credentials: "omit",
-				body: JSON.stringify(body)
-			});
 
-			const responseText = await res.text();
-			let responseJson = null;
-			try {
-				responseJson = responseText ? JSON.parse(responseText) : null;
-			} catch (_) {}
-
-			console.log(`${LOG_PREFIX} TheIntroDB submit response:`, res.status, responseJson || responseText);
-
-			if (!res.ok) {
-				const apiMessage = responseJson && (responseJson.message || responseJson.error);
+			const finishTheIntroDb = (status, responseJson) => {
+				if (!Number.isFinite(status) || status < 200 || status >= 300) {
+					const apiMessage = responseJson && (responseJson.message || responseJson.error);
+					return {
+						ok: false,
+						label: "TheIntroDB",
+						message: apiMessage
+							? this.formatSubmitAuthError(String(apiMessage), SUBMIT_TARGET_THEINTRODB)
+							: `TheIntroDB submission failed (${status || "unknown"}).`
+					};
+				}
+				const submissionResult = parseSubmissionResponse(responseJson);
+				if (!submissionResult.ok) {
+					const apiMessage = responseJson && (responseJson.message || responseJson.error);
+					return {
+						ok: false,
+						label: "TheIntroDB",
+						message: apiMessage
+							? String(apiMessage)
+							: "TheIntroDB accepted the request but did not return a submission."
+					};
+				}
 				return {
-					ok: false,
+					ok: true,
 					label: "TheIntroDB",
-					message: apiMessage
-						? this.formatSubmitAuthError(apiMessage, SUBMIT_TARGET_THEINTRODB)
-						: `TheIntroDB submission failed (${res.status}).`
+					statuses: submissionResult.statuses
 				};
-			}
-
-			const submissionResult = parseSubmissionResponse(responseJson);
-			if (!submissionResult.ok) {
-				return {
-					ok: false,
-					label: "TheIntroDB",
-					message: "TheIntroDB accepted the request but did not return a submission."
-				};
-			}
-
-			return {
-				ok: true,
-				label: "TheIntroDB",
-				statuses: submissionResult.statuses
 			};
+
+			try {
+				const controller = new AbortController();
+				const timer = window.setTimeout(() => controller.abort(), 5000);
+				const res = await fetch(`${THEINTRODB_SERVER_URL}/submit`, {
+					method: "POST",
+					headers: {
+						...this.getTidbHeaders(),
+						"Content-Type": "application/json",
+						Accept: "application/json"
+					},
+					credentials: "omit",
+					body: JSON.stringify(body),
+					signal: controller.signal
+				});
+				window.clearTimeout(timer);
+				let responseJson = null;
+				try {
+					const text = await res.text();
+					responseJson = text ? JSON.parse(text) : null;
+				} catch (_) {}
+				console.log(`${LOG_PREFIX} TheIntroDB submit (browser) response:`, res.status, responseJson);
+				return finishTheIntroDb(res.status, responseJson);
+			} catch (browserError) {
+				console.warn(`${LOG_PREFIX} TheIntroDB browser submit failed, using proxy:`, browserError);
+			}
+
+			let proxyResult;
+			try {
+				proxyResult = await invokeIntroDbProxy(
+					"theintrodb-submit",
+					{
+						apiKey: this.userApiKey,
+						body
+					},
+					30000
+				);
+			} catch (error) {
+				console.error(`${LOG_PREFIX} TheIntroDB submit proxy failed:`, error);
+				return {
+					ok: false,
+					label: "TheIntroDB",
+					message: sanitizeProxyError(error && error.message)
+				};
+			}
+
+			const status = Number(proxyResult && proxyResult.status);
+			const responseJson = proxyResult && proxyResult.body ? proxyResult.body : null;
+			console.log(`${LOG_PREFIX} TheIntroDB submit (proxy) response:`, status, responseJson);
+			return finishTheIntroDb(status, responseJson);
 		}
 
 		async submitToIntroDb(segment, startSec, endSec, mediaContext, durationSec) {
@@ -4201,18 +4360,20 @@
 			console.log(`${LOG_PREFIX} IntroDB submit payload:`, body);
 			let proxyResult;
 			try {
-				proxyResult = await invokeIntroDbProxy("introdb-submit", {
-					apiKey: this.introDbApiKey,
-					body
-				});
+				proxyResult = await invokeIntroDbProxy(
+					"introdb-submit",
+					{
+						apiKey: this.introDbApiKey,
+						body
+					},
+					30000
+				);
 			} catch (error) {
 				console.error(`${LOG_PREFIX} IntroDB submit proxy failed:`, error);
 				return {
 					ok: false,
 					label: "IntroDB",
-					message: error && error.message
-						? String(error.message)
-						: "IntroDB submission failed due to a network error."
+					message: sanitizeProxyError(error && error.message)
 				};
 			}
 
@@ -4331,51 +4492,37 @@
 				wantsIntroDb = false;
 			}
 
-			const mediaContext = await this.prepareSubmissionMediaContext(durationMs);
-			if (!mediaContext || (!mediaContext.imdbId && !mediaContext.tmdbId)) {
-				this.setContributeStatus(
-					"Could not resolve a valid IMDB or TMDB ID for this title. Use a Cinemeta/IMDB-linked source.",
-					"error"
-				);
-				return;
-			}
-
 			this.contributeSubmitting = true;
 			fields.submitBtn.disabled = true;
 			this.setContributeStatus("Submitting…");
 
 			try {
-				const results = [];
-				const errors = [];
-
-				if (wantsTheIntroDb) {
-					const result = await this.submitToTheIntroDb(
-						segment,
-						startSec,
-						endSec,
-						durationMs,
-						mediaContext
+				const mediaContext = await this.prepareSubmissionMediaContext(durationMs);
+				if (!mediaContext || (!mediaContext.imdbId && !mediaContext.tmdbId)) {
+					this.setContributeStatus(
+						"Could not resolve a valid IMDB or TMDB ID for this title. Use a Cinemeta/IMDB-linked source.",
+						"error"
 					);
-					if (result.ok) {
-						results.push(result);
-					} else {
-						errors.push(result.message);
-					}
+					return;
 				}
 
-				if (wantsIntroDb) {
-					const result = await this.submitToIntroDb(
-						segment,
-						startSec,
-						endSec,
-						mediaContext,
-						durationSec
+				const results = [];
+				const errors = [];
+				const jobs = [];
+				if (wantsTheIntroDb) {
+					jobs.push(
+						this.submitToTheIntroDb(segment, startSec, endSec, durationMs, mediaContext)
 					);
-					if (result.ok) {
-						results.push(result);
-					} else {
-						errors.push(result.message);
-					}
+				}
+				if (wantsIntroDb) {
+					jobs.push(
+						this.submitToIntroDb(segment, startSec, endSec, mediaContext, durationSec)
+					);
+				}
+				const settled = await Promise.all(jobs);
+				for (const result of settled) {
+					if (result.ok) results.push(result);
+					else errors.push(result.message);
 				}
 
 				if (results.length === 0) {
@@ -4401,7 +4548,9 @@
 					this.contributeMarkedStartSec = null;
 					this.refreshContributeMarkHint();
 				}
-				await this.fetchData();
+				this.fetchData().catch((refetchError) => {
+					console.warn(`${LOG_PREFIX} Refetch after submit failed:`, refetchError);
+				});
 			} catch (error) {
 				console.error(`${LOG_PREFIX} Submit failed:`, error);
 				this.setContributeStatus("Network error while submitting.", "error");
@@ -4445,6 +4594,7 @@
 				segments: emptySegments(),
 				activeSegment: null,
 				displayedSegmentType: null,
+				_displayedSegment: null,
 				_lastFetchedDurationMs: null,
 				mediaImdbId: null,
 				seriesImdbId: null,

@@ -2,8 +2,7 @@
  * Native Cinemeta search suggestions (always-on shell module).
  * Dropdown is portaled to document.body and opens above the bottom search bar.
  *
- * Ranking: tiered exact/prefix first, then Damerau fuzzy fallback;
- * keyboard ↑/↓/Enter/Esc; recent picks from localStorage.
+ * IMDb typeahead: prefix-paint + cache; exact/prefix first; recents from localStorage.
  */
 (function () {
   'use strict';
@@ -11,23 +10,29 @@
   if (window.__mystremioSearchSuggestionsReady) return;
   window.__mystremioSearchSuggestionsReady = true;
 
-  const STYLE_ID = 'mystremio-search-suggestions-styles-v3';
+  const STYLE_ID = 'mystremio-search-suggestions-styles-v5';
   const ROOT_ID = 'mystremio-search-suggestions';
-  const CINEMETA_CATALOG = 'https://v3-cinemeta.strem.io/catalog';
+  const IMDB_SUGGEST = 'https://v3.sg.media-imdb.com/suggestion/titles';
   const RECENT_KEY = 'mystremio_search_recent_v1';
-  const DEBOUNCE_MS = 200;
+  const DEBOUNCE_MS = 0;
   const MIN_QUERY = 2;
   const MAX_RESULTS = 10;
   const MAX_RECENT = 5;
-  const STRONG_SCORE = 500;
-  const STRONG_MIN = 3;
+  const CACHE_MAX = 40;
 
   let debounceTimer = null;
   let activeInput = null;
   let requestGen = 0;
+  /** @type {AbortController|null} */
+  let searchAbort = null;
   let activeIndex = -1;
   /** @type {object[]} */
   let currentMetas = [];
+  /** @type {Map<string, object[]>} */
+  const suggestCache = new Map();
+  let lastTypedQuery = '';
+  /** @type {object[]} */
+  let lastNetworkMetas = [];
   /** @type {WeakSet<HTMLInputElement>} */
   const boundInputs = new WeakSet();
   let positionRaf = null;
@@ -67,23 +72,30 @@
       }
       #${ROOT_ID}.open{display:block}
       #${ROOT_ID} .mss-item{
-        display:flex;align-items:center;gap:10px;
-        width:100%;padding:8px 10px;border:0;border-radius:9px;
+        display:flex;align-items:center;gap:4px;
+        width:100%;padding:0;border:0;border-radius:9px;
+        background:transparent;color:#fff;text-align:left;font:inherit;
+      }
+      #${ROOT_ID} .mss-pick{
+        display:flex;align-items:center;gap:10px;flex:1;min-width:0;
+        padding:8px 10px;border:0;border-radius:9px;
         background:transparent;color:#fff;text-align:left;cursor:pointer;font:inherit;
       }
-      #${ROOT_ID} .mss-item:hover,
-      #${ROOT_ID} .mss-item:focus,
-      #${ROOT_ID} .mss-item.active{background:rgba(255,255,255,.12);outline:none}
-      #${ROOT_ID} .mss-poster{
-        width:36px;height:54px;border-radius:6px;object-fit:cover;
-        background:rgba(255,255,255,.06);flex:none;
-      }
+      #${ROOT_ID} .mss-item:hover .mss-pick,
+      #${ROOT_ID} .mss-item:focus-within .mss-pick,
+      #${ROOT_ID} .mss-item.active .mss-pick{background:rgba(255,255,255,.12);outline:none}
       #${ROOT_ID} .mss-meta{min-width:0;flex:1}
       #${ROOT_ID} .mss-title{
         font-size:13px;font-weight:650;line-height:1.25;
         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
       }
       #${ROOT_ID} .mss-sub{margin-top:2px;font-size:11px;color:rgba(255,255,255,.45)}
+      #${ROOT_ID} .mss-remove{
+        flex:none;width:28px;height:28px;margin-left:4px;border:0;border-radius:8px;
+        background:transparent;color:rgba(255,255,255,.45);cursor:pointer;font:inherit;
+        font-size:16px;line-height:1;
+      }
+      #${ROOT_ID} .mss-remove:hover{background:rgba(255,255,255,.12);color:#fff}
       #${ROOT_ID} .mss-empty{padding:12px 10px;font-size:12px;color:rgba(255,255,255,.45)}
       #${ROOT_ID} .mss-section{
         padding:6px 10px 4px;font-size:10px;font-weight:700;letter-spacing:.04em;
@@ -195,12 +207,31 @@
     currentMetas = [];
   }
 
+  function isInstalledAddonsRoute(hash = location.hash) {
+    return /#\/addons\/?(?:\?.*)?$/.test(hash || '');
+  }
+
+  /**
+   * Stock addons filter bar reuses the title-search classes. Never attach
+   * recents or IMDb typeahead there.
+   *
+   * @param {EventTarget|null} el
+   * @returns {boolean}
+   */
+  function isAddonSearchContext(el) {
+    if (isInstalledAddonsRoute()) return true;
+    if (!(el instanceof Element)) return false;
+    if (el instanceof HTMLInputElement && el.dataset.msAmSearch === '1') return true;
+    return Boolean(el.closest('[class*="addons"]'));
+  }
+
   /**
    * @param {EventTarget|null} el
    * @returns {boolean}
    */
   function isSearchInput(el) {
     if (!(el instanceof HTMLInputElement)) return false;
+    if (isAddonSearchContext(el)) return false;
     try {
       if (el.matches(SEARCH_INPUT_SEL)) return true;
     } catch (_) {}
@@ -224,6 +255,7 @@
    */
   function isSearchBarTarget(el) {
     if (!(el instanceof Element)) return false;
+    if (isAddonSearchContext(el)) return false;
     if (isSearchInput(el)) return true;
     return Boolean(el.closest('[class*="search-bar-container"], [class*="search-bar"]'));
   }
@@ -501,8 +533,187 @@
       })
       .join(' ');
     if (toWordDe && toWordDe !== norm) out.push(toWordDe);
-    if (parts.length >= 2) out.push(parts.slice(0, -1).join(' '));
     return [...new Set(out.map((s) => s.trim()).filter(Boolean))];
+  }
+
+  /**
+   * @param {string} query
+   * @returns {string}
+   */
+  function imdbSlug(query) {
+    return String(query || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '_');
+  }
+
+  /**
+   * @param {object} item
+   * @returns {'movie'|'series'|null}
+   */
+  function imdbItemType(item) {
+    const qid = String(item?.qid || '').toLowerCase();
+    const q = String(item?.q || '').toLowerCase();
+    if (
+      qid === 'tvseries' ||
+      qid === 'tvminiseries' ||
+      qid === 'tvshort' ||
+      qid === 'tvspecial' ||
+      qid === 'podcastseries' ||
+      q === 'tv series' ||
+      q === 'tv mini-series' ||
+      q === 'tv miniseries'
+    ) {
+      return 'series';
+    }
+    if (
+      qid === 'movie' ||
+      qid === 'tvmovie' ||
+      qid === 'video' ||
+      qid === 'short' ||
+      q === 'feature' ||
+      q === 'tv movie' ||
+      q === 'video'
+    ) {
+      return 'movie';
+    }
+    return null;
+  }
+
+  /**
+   * @param {object} item
+   * @returns {object|null}
+   */
+  function mapImdbItem(item) {
+    const id = String(item?.id || '');
+    if (!/^tt\d{7,}$/i.test(id)) return null;
+    const type = imdbItemType(item);
+    if (!type) return null;
+    const year = item.yr != null ? String(item.yr) : item.y != null ? String(item.y) : '';
+    return {
+      id: id.toLowerCase(),
+      type,
+      name: item.l || id,
+      year,
+      releaseInfo: year,
+    };
+  }
+
+  /**
+   * @param {object} payload
+   * @returns {object[]}
+   */
+  function metasFromImdbPayload(payload) {
+    const rows = Array.isArray(payload?.d) ? payload.d : [];
+    const out = [];
+    const seen = new Set();
+    for (const item of rows) {
+      const meta = mapImdbItem(item);
+      if (!meta) continue;
+      const key = meta.id.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(meta);
+    }
+    return out;
+  }
+
+  function cacheGet(slug) {
+    if (!suggestCache.has(slug)) return null;
+    const value = suggestCache.get(slug);
+    suggestCache.delete(slug);
+    suggestCache.set(slug, value);
+    return value;
+  }
+
+  /**
+   * @param {string} slug
+   * @param {object[]} metas
+   */
+  function cacheSet(slug, metas) {
+    if (suggestCache.has(slug)) suggestCache.delete(slug);
+    suggestCache.set(slug, metas);
+    while (suggestCache.size > CACHE_MAX) {
+      const oldest = suggestCache.keys().next().value;
+      suggestCache.delete(oldest);
+    }
+  }
+
+  /**
+   * @param {string} query
+   * @returns {Promise<object[]>}
+   */
+  async function fetchImdbViaProxy(query) {
+    const api = window.StremioCustomAPI || window.StremioEnhancedAPI;
+    if (!api || typeof api.invoke !== 'function') return [];
+    try {
+      const payload = await api.invoke('imdb-suggest', { query }, 4000);
+      return metasFromImdbPayload(payload);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /**
+   * @param {string} query
+   * @param {AbortSignal} [signal]
+   * @returns {Promise<object[]>}
+   */
+  async function fetchImdbSuggestions(query, signal) {
+    const slug = imdbSlug(query);
+    if (!slug) return [];
+    const cached = cacheGet(slug);
+    if (cached) return cached;
+    const first = slug.charAt(0) || 'x';
+    const url = `${IMDB_SUGGEST}/${encodeURIComponent(first)}/${encodeURIComponent(slug)}.json`;
+    try {
+      const res = await fetch(url, signal ? { signal } : undefined);
+      if (!res.ok) throw new Error(String(res.status));
+      const json = await res.json();
+      const metas = metasFromImdbPayload(json);
+      cacheSet(slug, metas);
+      return metas;
+    } catch (error) {
+      if (signal?.aborted) return [];
+      const proxied = await fetchImdbViaProxy(query);
+      cacheSet(slug, proxied);
+      return proxied;
+    }
+  }
+
+  /**
+   * Last typed token is a prefix of a title token (`thro` → `thrones`).
+   *
+   * @param {string} query
+   * @param {object} meta
+   * @returns {boolean}
+   */
+  function lastTokenCompletesTitle(query, meta) {
+    const qCanon = canonicalTokens(query);
+    const nameCanon = canonicalTokens(meta?.name || '');
+    if (!qCanon.length || !nameCanon.length) return false;
+    const lastQ = qCanon[qCanon.length - 1];
+    if (!lastQ) return false;
+    for (let i = 0; i < qCanon.length - 1; i++) {
+      if (nameCanon[i] !== qCanon[i]) return false;
+    }
+    const lastN = nameCanon[qCanon.length - 1];
+    return Boolean(lastN && (lastN === lastQ || lastN.startsWith(lastQ)));
+  }
+
+  /**
+   * Phrase prefix or last-token completion — Netflix-style autocomplete hit.
+   *
+   * @param {string} query
+   * @param {object} meta
+   * @returns {boolean}
+   */
+  function isPrefixHit(query, meta) {
+    const q = normalizeQuery(query);
+    const name = normalizeQuery(meta?.name || '');
+    if (!q || !name) return false;
+    if (name === q || name.startsWith(`${q} `) || name.startsWith(q)) return true;
+    return lastTokenCompletesTitle(query, meta);
   }
 
   /**
@@ -647,14 +858,19 @@
       qCanon.filter((t) => /^\d+$/.test(t)).every((t) => nameSet.has(t));
 
     let score = 0;
-    if (name === q) score += 1200;
+    if (name === q) score += 2000;
     else if (name.startsWith(q + ' ') || name.startsWith(q)) {
-      score += 900;
+      score += 1600;
       // Prefer titles closer to the typed prefix (shorter remaining suffix).
       score += Math.max(0, 200 - (name.length - q.length) * 8);
-    } else if (nameCanon[0] === qCanon[0] && qCanon.length === 1) score += 750;
+    } else if (lastTokenCompletesTitle(query, meta)) score += 1500;
+    else if (nameCanon[0] === qCanon[0] && qCanon.length === 1) score += 750;
     else if (hay.startsWith(q)) score += 650;
     else if (name.includes(q) || hay.includes(q)) score += 280;
+    else if (qCanon.length >= 2 && !isPrefixHit(query, meta)) {
+      // Titles that contradict later tokens cannot beat a real completion.
+      score -= 400;
+    }
 
     // Full-title near-match: "game od thrones" → "game of thrones" (d=1).
     // Independent of token fuzzy tier so typos win before Making-of supersets.
@@ -778,99 +994,152 @@
   }
 
   /**
-   * @param {string} query
-   * @returns {Promise<object[]>}
+   * @param {string} id
    */
-  async function fetchCatalogMetas(query) {
-    const q = encodeURIComponent(query.trim());
-    const urls = [
-      `${CINEMETA_CATALOG}/movie/top/search=${q}.json`,
-      `${CINEMETA_CATALOG}/series/top/search=${q}.json`,
-    ];
-    const results = await Promise.all(
-      urls.map(async (url) => {
-        try {
-          const res = await fetch(url);
-          if (!res.ok) return [];
-          const json = await res.json();
-          return Array.isArray(json?.metas) ? json.metas : [];
-        } catch (_) {
-          return [];
-        }
-      })
-    );
-    return [...(results[0] || []), ...(results[1] || [])];
+  function removeRecent(id) {
+    const next = loadRecent().filter((m) => String(m.id).toLowerCase() !== String(id).toLowerCase());
+    try {
+      localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+    } catch (_) {}
+    return next;
   }
 
   /**
-   * Tiered: rank without fuzzy first; enable fuzzy only if < STRONG_MIN strong hits.
-   * @param {string} query
-   * @returns {Promise<object[]>}
+   * @param {HTMLInputElement} input
    */
-  async function searchCinemeta(query) {
-    const queries = expandSearchQueries(query);
-    // Fetch with expansions (broader catalog), but score only the full user query
-    // so a partial last token like "me" still prefers "Men" over "Questions".
-    const scoreQueries = [String(query || '').trim()].filter(Boolean);
-    const pools = await Promise.all(queries.map((q) => fetchCatalogMetas(q)));
-    const seen = new Set();
-    const merged = [];
-    for (const list of pools) {
-      for (const meta of list) {
-        const id = String(meta?.id || '').toLowerCase();
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
-        merged.push(meta);
-      }
+  function showRecentsIfEmpty(input) {
+    if (!(input instanceof HTMLInputElement)) return;
+    if (isAddonSearchContext(input)) {
+      hide();
+      return;
     }
-
-    const strictRanked = merged
-      .map((meta) => ({ meta, score: bestScore(scoreQueries, meta, false) }))
-      .sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score;
-        if (metaRating(b.meta) !== metaRating(a.meta)) {
-          return metaRating(b.meta) - metaRating(a.meta);
-        }
-        return metaYear(b.meta) - metaYear(a.meta);
-      });
-
-    const strongCount = strictRanked.filter((r) => r.score >= STRONG_SCORE).length;
-    const useFuzzy = strongCount < STRONG_MIN;
-
-    const ranked = useFuzzy
-      ? merged
-          .map((meta) => ({ meta, score: bestScore(scoreQueries, meta, true) }))
-          .sort((a, b) => {
-            if (b.score !== a.score) return b.score - a.score;
-            if (metaRating(b.meta) !== metaRating(a.meta)) {
-              return metaRating(b.meta) - metaRating(a.meta);
-            }
-            return metaYear(b.meta) - metaYear(a.meta);
-          })
-      : strictRanked;
-
-    return ranked
-      .filter((r) => r.score > 40)
-      .slice(0, MAX_RESULTS)
-      .map((r) => r.meta);
+    if (suppressUntilUserInput) return;
+    const q = String(input.value || '').trim();
+    if (q.length >= MIN_QUERY) return;
+    const recent = loadRecent();
+    activeInput = input;
+    if (recent.length) render(input, recent, { recent: true });
+    else hide();
   }
 
   /**
+   * @param {object[]} list
+   * @param {Set<string>} seen
+   * @param {object[]} into
+   */
+  function mergeMetas(list, seen, into) {
+    for (const meta of list || []) {
+      const id = String(meta?.id || '').toLowerCase();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      into.push(meta);
+    }
+  }
+
+  /**
+   * Keep IMDb order; exact/prefix titles first. No Damerau on the hot path.
+   *
+   * @param {object[]} metas
+   * @param {string} query
+   * @returns {object[]}
+   */
+  function rankMetas(metas, query) {
+    const qNorm = normalizeQuery(query);
+    const ranked = metas.map((meta, i) => ({
+      meta,
+      i,
+      exact: normalizeQuery(meta?.name || '') === qNorm ? 1 : 0,
+      prefix: isPrefixHit(query, meta) ? 1 : 0,
+    }));
+    ranked.sort((a, b) => {
+      if (b.exact !== a.exact) return b.exact - a.exact;
+      if (b.prefix !== a.prefix) return b.prefix - a.prefix;
+      return a.i - b.i;
+    });
+    return ranked.slice(0, MAX_RESULTS).map((r) => r.meta);
+  }
+
+  /**
+   * IMDb typeahead, then existing exact/prefix ranking.
+   *
+   * @param {string} query
+   * @param {AbortSignal} [signal]
+   * @returns {Promise<object[]>}
+   */
+  async function searchTitles(query, signal) {
+    const metas = await fetchImdbSuggestions(query, signal);
+    if (signal?.aborted) return [];
+    lastNetworkMetas = metas;
+    lastTypedQuery = normalizeQuery(query);
+    return rankMetas(metas, query);
+  }
+
+  /**
+   * Write through React's controlled input so Stremio sees the completed title.
+   *
+   * @param {HTMLInputElement} input
+   * @param {string} value
+   */
+  function setNativeInputValue(input, value) {
+    const proto = window.HTMLInputElement && HTMLInputElement.prototype;
+    const desc = proto && Object.getOwnPropertyDescriptor(proto, 'value');
+    if (desc && typeof desc.set === 'function') {
+      desc.set.call(input, value);
+    } else {
+      input.value = value;
+    }
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  /**
+   * Complete the search bar with the suggestion title and run the same search as Enter.
+   *
+   * @param {HTMLInputElement} input
    * @param {object} meta
    */
-  function openMeta(meta) {
-    const id = String(meta?.id || '');
+  function applySuggestionAndSearch(input, meta) {
+    const title = String(meta?.name || '').trim();
+    if (!title || !(input instanceof HTMLInputElement)) return;
     const type = String(meta?.type || 'movie').toLowerCase() === 'series' ? 'series' : 'movie';
-    if (!id) return;
     saveRecent({
-      id,
+      id: String(meta?.id || title),
       type,
-      name: meta.name || id,
+      name: title,
       poster: meta.poster || '',
       year: meta.releaseInfo || meta.year || '',
     });
     hide();
-    window.location.hash = `#/detail/${type}/${id}/${id}`;
+    suppressSuggestionsOnce();
+    setNativeInputValue(input, title);
+
+    const startSearch = () => {
+      const form = input.form;
+      if (form && typeof form.requestSubmit === 'function') {
+        form.requestSubmit();
+      } else if (form) {
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      } else {
+        const enterInit = {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true,
+        };
+        input.dispatchEvent(new KeyboardEvent('keydown', enterInit));
+        input.dispatchEvent(new KeyboardEvent('keypress', enterInit));
+        input.dispatchEvent(new KeyboardEvent('keyup', enterInit));
+      }
+      window.setTimeout(() => {
+        if (!isSearchRoute(location.hash)) {
+          window.location.hash = `#/search/${encodeURIComponent(title)}`;
+        }
+      }, 50);
+    };
+
+    window.requestAnimationFrame(startSearch);
   }
 
   /**
@@ -903,15 +1172,19 @@
     }
     const root = ensureRoot();
     positionRoot(input);
-    currentMetas = metas;
-    activeIndex = -1;
+    const hadItems = currentMetas.length > 0 && root.classList.contains('open');
     if (!metas.length) {
+      if (hadItems) return;
+      currentMetas = [];
+      activeIndex = -1;
       root.innerHTML = `<div class="mss-empty">Keine Treffer</div>`;
       root.classList.add('open');
       return;
     }
+    currentMetas = metas;
+    activeIndex = -1;
     const section = opts?.recent
-      ? `<div class="mss-section">Zuletzt</div>`
+      ? `<div class="mss-section">History</div>`
       : '';
     root.innerHTML =
       section +
@@ -919,25 +1192,42 @@
         .map((meta) => {
           const type = String(meta.type || 'movie');
           const year = meta.releaseInfo || meta.year || '';
-          const poster = meta.poster
-            ? `<img class="mss-poster" src="${esc(meta.poster)}" alt="" loading="lazy" />`
-            : `<div class="mss-poster"></div>`;
-          return `<button type="button" class="mss-item" role="option" data-id="${esc(meta.id)}" data-type="${esc(type)}">
-          ${poster}
-          <span class="mss-meta">
-            <span class="mss-title">${esc(meta.name || meta.id)}</span>
-            <span class="mss-sub">${esc(type)}${year ? ` · ${esc(year)}` : ''}</span>
-          </span>
-        </button>`;
+          const remove = opts?.recent
+            ? `<button type="button" class="mss-remove" data-remove-id="${esc(meta.id)}" aria-label="Remove">×</button>`
+            : '';
+          return `<div class="mss-item" role="option" data-id="${esc(meta.id)}" data-type="${esc(type)}">
+          <button type="button" class="mss-pick">
+            <span class="mss-meta">
+              <span class="mss-title">${esc(meta.name || meta.id)}</span>
+              <span class="mss-sub">${esc(type)}${year ? ` · ${esc(year)}` : ''}</span>
+            </span>
+          </button>
+          ${remove}
+        </div>`;
         })
         .join('');
     root.classList.add('open');
-    root.querySelectorAll('.mss-item').forEach((btn, i) => {
-      btn.addEventListener('mouseenter', () => setActiveIndex(i, { scroll: false }));
+    root.querySelectorAll('.mss-remove').forEach((btn) => {
+      btn.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
       btn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        openMeta({
+        const id = btn.getAttribute('data-remove-id');
+        const next = removeRecent(id);
+        if (next.length) render(input, next, { recent: true });
+        else hide();
+      });
+    });
+    root.querySelectorAll('.mss-item').forEach((btn, i) => {
+      btn.addEventListener('mouseenter', () => setActiveIndex(i, { scroll: false }));
+      btn.addEventListener('click', (event) => {
+        if (event.target.closest('.mss-remove')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        applySuggestionAndSearch(input, {
           id: btn.getAttribute('data-id'),
           type: btn.getAttribute('data-type'),
           name: currentMetas[i]?.name,
@@ -945,14 +1235,6 @@
           year: currentMetas[i]?.releaseInfo || currentMetas[i]?.year,
         });
       });
-      const thumb = btn.querySelector('img.mss-poster');
-      if (thumb) {
-        thumb.addEventListener('error', () => {
-          const placeholder = document.createElement('div');
-          placeholder.className = 'mss-poster';
-          thumb.replaceWith(placeholder);
-        });
-      }
     });
   }
 
@@ -960,6 +1242,10 @@
    * @param {HTMLInputElement} input
    */
   async function onQuery(input) {
+    if (isAddonSearchContext(input)) {
+      hide();
+      return;
+    }
     if (suppressUntilUserInput) {
       hide();
       return;
@@ -967,13 +1253,27 @@
     const query = String(input.value || '').trim();
     activeInput = input;
     if (query.length < MIN_QUERY) {
-      const recent = loadRecent();
-      if (recent.length) render(input, recent, { recent: true });
-      else hide();
+      showRecentsIfEmpty(input);
+      lastTypedQuery = '';
+      lastNetworkMetas = [];
       return;
     }
+    const qNorm = normalizeQuery(query);
+    const slug = imdbSlug(query);
+    const cached = cacheGet(slug);
+    if (cached) {
+      render(input, rankMetas(cached, query));
+    } else if (lastTypedQuery && qNorm.startsWith(lastTypedQuery) && lastNetworkMetas.length) {
+      const local = rankMetas(
+        lastNetworkMetas.filter((meta) => isPrefixHit(query, meta)),
+        query
+      );
+      if (local.length) render(input, local);
+    }
     const gen = ++requestGen;
-    const metas = await searchCinemeta(query);
+    if (searchAbort) searchAbort.abort();
+    searchAbort = new AbortController();
+    const metas = await searchTitles(query, searchAbort.signal);
     if (gen !== requestGen || activeInput !== input) return;
     render(input, metas);
   }
@@ -991,6 +1291,15 @@
       if (open) {
         event.preventDefault();
         hide();
+      }
+      return;
+    }
+
+    if (event.key === 'Enter') {
+      if (open && items.length && activeIndex >= 0 && currentMetas[activeIndex]) {
+        event.preventDefault();
+        event.stopPropagation();
+        applySuggestionAndSearch(input, currentMetas[activeIndex]);
       }
       return;
     }
@@ -1015,18 +1324,24 @@
    */
   function bindInput(input) {
     if (!input || boundInputs.has(input)) return;
+    if (isAddonSearchContext(input)) return;
     boundInputs.add(input);
     input.addEventListener('pointerdown', (event) => {
       if (!event.isTrusted) return;
       allowSuggestionsFromUser();
+      showRecentsIfEmpty(input);
     });
     input.addEventListener('input', () => {
       if (suppressUntilUserInput) {
         hide();
         return;
       }
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => onQuery(input), DEBOUNCE_MS);
+      if (DEBOUNCE_MS > 0) {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => onQuery(input), DEBOUNCE_MS);
+      } else {
+        onQuery(input);
+      }
     });
     input.addEventListener('keydown', (event) => {
       if (
@@ -1054,16 +1369,13 @@
       }
       const q = String(input.value || '').trim();
       if (q.length >= MIN_QUERY) onQuery(input);
-      else {
-        const recent = loadRecent();
-        if (recent.length) render(input, recent, { recent: true });
-      }
+      else showRecentsIfEmpty(input);
     });
   }
 
   function scan() {
     document.querySelectorAll(SEARCH_INPUT_SEL).forEach((el) => {
-      if (el instanceof HTMLInputElement) bindInput(el);
+      if (el instanceof HTMLInputElement && !isAddonSearchContext(el)) bindInput(el);
     });
     if (suppressUntilUserInput) {
       if (isSearchRoute()) keepSearchClosed();
@@ -1096,6 +1408,10 @@
   let lastRouteHash = location.hash || '';
 
   function onSearchRouteTransition(prev, next) {
+    if (isInstalledAddonsRoute(next)) {
+      hide();
+      return;
+    }
     if (isDetailRoute(prev) && isSearchRoute(next)) {
       suppressSuggestionsOnce();
       return;
@@ -1145,10 +1461,20 @@
   document.addEventListener(
     'pointerdown',
     (event) => {
-      if (!suppressUntilUserInput) return;
       if (!event.isTrusted) return;
-      if (isSearchCloseButton(event.target) || isSearchInput(event.target) || isSearchBarTarget(event.target)) {
-        allowSuggestionsFromUser();
+      if (!(isSearchCloseButton(event.target) || isSearchInput(event.target) || isSearchBarTarget(event.target))) {
+        return;
+      }
+      if (suppressUntilUserInput) allowSuggestionsFromUser();
+      const bar = event.target instanceof Element
+        ? event.target.closest('[class*="search-bar-container"], [class*="search-bar"]')
+        : null;
+      const input =
+        (event.target instanceof HTMLInputElement && isSearchInput(event.target)
+          ? event.target
+          : bar && bar.querySelector('input'));
+      if (input instanceof HTMLInputElement && !isAddonSearchContext(input)) {
+        showRecentsIfEmpty(input);
       }
     },
     true

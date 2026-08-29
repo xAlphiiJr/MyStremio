@@ -341,11 +341,15 @@ impl MainWindow {
                             .ok();
                         continue;
                     }
-                    // Ratings fan-out is slow (many HTTP calls) — never block the IPC loop.
-                    if value.get("method").and_then(|method| method.as_str())
-                        == Some("get-title-ratings")
+                    // HTTP fan-out (ratings, intro submit, AniSkip, layout) must not
+                    // block the WebView IPC loop — a hung IntroDB POST used to time out
+                    // every other custom-api call, including the submit itself.
+                    if value
+                        .get("method")
+                        .and_then(|method| method.as_str())
+                        .is_some_and(custom_api::is_slow_http_method)
                     {
-                        custom_api::enqueue_title_ratings(value, web_tx_web.clone());
+                        custom_api::enqueue_slow_request(value, web_tx_web.clone());
                         continue;
                     }
                     if let Some(response) = custom_api::handle_request(&value) {

@@ -1,7 +1,8 @@
 //! Multi-source title/episode ratings with deep links for the Meta ratings bar.
 //!
-//! Scores come from Aggregator, Cinemeta, MDBList, TMDB, Trakt, Jikan, and (episodes)
-//! TVMaze. Each rating may include a `url` pointing at the real source page.
+//! Scores come from Aggregator, Cinemeta, MDBList, TMDB, Trakt, Jikan, TVMaze
+//! (show + episode), and Cinemeta TVDB (`meta.rating` / `videos[].rating`).
+//! Each rating may include a `url` pointing at the real source page.
 
 use super::api_keys;
 use reqwest::blocking::Client;
@@ -14,6 +15,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const AGGREGATOR_BASE: &str = "https://rating-aggregator.elfhosted.com";
+const IMDB_RATINGS_ADDON: &str = "https://imdbratings.kgenovz.com";
 const CINEMETA_BASE: &str = "https://v3-cinemeta.strem.io/meta";
 const TRAKT_BASE: &str = "https://api.trakt.tv";
 const JIKAN_BASE: &str = "https://api.jikan.moe/v4";
@@ -1046,48 +1048,89 @@ fn fetch_cinemeta_title(
     if let Some(v) = imdb_score {
         insert_rating(out, "imdb", "IMDb", "score", &format!("{v:.1}"));
     }
+    if kind == "series" {
+        apply_cinemeta_series_tvdb(meta, out);
+    }
     meta.get("videos")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default()
 }
 
-/// The only verified source for a real IMDb episode score.
+/// Series-level TVDB score from Cinemeta `meta.rating` (same field as `videos[].rating`).
 ///
-/// Cinemeta serves an episode's own `tt` under the `movie` type
-/// (`tt1480055` → `"imdbRating":"8.9"`, matching IMDb). The composite
-/// `tt…:s:e` form is not accepted (404), so the episode `tt` has to come from
-/// TMDB `external_ids` or Trakt `ids.imdb`.
-fn fetch_cinemeta_episode_imdb(
+/// Cinemeta often has only `tvdb_id` and no series score — then no chip is added.
+/// Never invent a series score from episode averages.
+fn apply_cinemeta_series_tvdb(meta: &Value, out: &mut Map<String, Value>) {
+    let Some(score) = parse_score_10(meta.get("rating")) else {
+        return;
+    };
+    insert_rating(out, "tvdb", "TVDB", "score", &format!("{score:.1}"));
+    if let Some(tvdb_id) = meta.get("tvdb_id").and_then(json_u32) {
+        set_rating_url(
+            out,
+            "tvdb",
+            &format!("https://thetvdb.com/dereferrer/series/{tvdb_id}"),
+        );
+    }
+}
+
+/// IMDb score from the public IMDb Ratings addon (`stream/movie/{folgen-tt}`).
+///
+/// Same host and lookup the addon uses for an episode `tt` (title.ratings). TMDB
+/// already supplied that `tt` via `external_ids`; we do not ask `series/{show}:s:e`
+/// (IMDb calendar ≠ Cinemeta/TMDB for shows like Naruto).
+fn parse_imdb_ratings_addon_score(text: &str) -> Option<f64> {
+    for raw in text.lines() {
+        let line = clean_rating_line(raw.trim());
+        if line.is_empty() || line.chars().all(|c| c == '─' || c == '-') {
+            continue;
+        }
+        if let Some(caps) = capture_after_label(&line, "imdb") {
+            if let Ok(v) = caps.parse::<f64>() {
+                if v > 0.0 && v <= 10.0 {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Fill the episode IMDb chip from the episode's own `tt`. Does not insert a series score.
+fn fetch_episode_imdb_score(
     client: &Client,
     episode_imdb: &str,
     out: &mut Map<String, Value>,
     failures: &Failures,
 ) -> bool {
-    let url = format!("{CINEMETA_BASE}/movie/{episode_imdb}.json");
-    // This is the only route to an IMDb per-episode score and Cinemeta answers 504
-    // often enough to matter, so one immediate retry instead of losing the chip.
-    let payload = match get_json(client, &url, default_headers(), failures) {
-        Some(payload) => payload,
-        None => match get_json(client, &url, default_headers(), failures) {
-            Some(payload) => payload,
-            None => return false,
-        },
+    let Some(ep) = normalize_imdb_id(episode_imdb) else {
+        return false;
     };
-    let meta = payload.get("meta").unwrap_or(&payload);
-    let imdb_score = meta
-        .get("imdbRating")
-        .and_then(|v| {
-            v.as_f64().or_else(|| {
-                v.as_str()
-                    .and_then(|s| s.trim().replace(',', ".").parse::<f64>().ok())
-            })
-        })
-        .filter(|v| *v > 0.0 && *v <= 10.0);
-    if let Some(v) = imdb_score {
-        // Prefer episode IMDb over show-level.
+    let url = format!("{IMDB_RATINGS_ADDON}/stream/movie/{ep}.json");
+    let Some(payload) = get_json(client, &url, default_headers(), failures) else {
+        return false;
+    };
+    let Some(streams) = payload.get("streams").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    for stream in streams {
+        let desc = stream.get("description").and_then(|v| v.as_str()).unwrap_or("");
+        let name = stream.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let Some(v) = parse_imdb_ratings_addon_score(&format!("{desc}\n{name}")) else {
+            continue;
+        };
         out.remove("imdb");
         insert_rating(out, "imdb", "IMDb", "score", &format!("{v:.1}"));
+        if let Some(ext) = stream
+            .get("externalUrl")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            set_rating_url(out, "imdb", ext);
+        } else {
+            set_rating_url(out, "imdb", &format!("https://www.imdb.com/title/{ep}/"));
+        }
         return true;
     }
     false
@@ -1934,6 +1977,42 @@ fn tvmaze_absolute_index(
 ///
 /// The absolute index is only used as a join when TVMaze knows exactly as many episodes
 /// as Cinemeta; otherwise the index would point at a different episode.
+/// TVmaze show-level score from `/lookup/shows?imdb=`.
+///
+/// The lookup payload already carries `rating.average` and the show URL; no extra hop.
+fn apply_tvmaze_show_rating(show: &Value, ids: &mut ResolvedIds, out: &mut Map<String, Value>) {
+    if ids.title.is_empty() {
+        if let Some(name) = show.get("name").and_then(|v| v.as_str()) {
+            ids.title = name.to_string();
+        }
+    }
+    if let Some(score) = parse_score_10(show.get("rating").and_then(|v| v.get("average"))) {
+        insert_rating(out, "tvmaze", "TVmaze", "score", &format!("{score:.1}"));
+        if let Some(url) = show
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| s.starts_with("https://"))
+        {
+            set_rating_url(out, "tvmaze", url);
+        }
+    }
+}
+
+fn fetch_tvmaze_show_rating(
+    client: &Client,
+    imdb_id: &str,
+    ids: &mut ResolvedIds,
+    out: &mut Map<String, Value>,
+    failures: &Failures,
+) {
+    let lookup = format!("{TVMAZE_BASE}/lookup/shows?imdb={imdb_id}");
+    let Some(show) = get_json_optional(client, &lookup, default_headers(), failures) else {
+        return;
+    };
+    apply_tvmaze_show_rating(&show, ids, out);
+}
+
 fn fetch_tvmaze_episode_meta(
     client: &Client,
     imdb_id: &str,
@@ -2570,9 +2649,8 @@ pub fn get_title_ratings(
         let mut imdb_from_episode = false;
         if let Some(ep_imdb) = ids.episode_imdb.clone() {
             if normalize_imdb_id(&ep_imdb).is_some() {
-                out.remove("imdb");
                 imdb_from_episode =
-                    fetch_cinemeta_episode_imdb(&client, &ep_imdb, &mut out, &failures);
+                    fetch_episode_imdb_score(&client, &ep_imdb, &mut out, &failures);
             }
         }
 
@@ -2623,8 +2701,7 @@ pub fn get_title_ratings(
                     merge_ratings(&mut out, local);
                     if let Some(ep_imdb) = fresh_ep_imdb {
                         if !imdb_from_episode {
-                            out.remove("imdb");
-                            imdb_from_episode = fetch_cinemeta_episode_imdb(
+                            imdb_from_episode = fetch_episode_imdb_score(
                                 &client,
                                 &ep_imdb,
                                 &mut out,
@@ -2716,6 +2793,25 @@ pub fn get_title_ratings(
             } else {
                 None
             };
+            let tvmaze_h = if kind == "series" {
+                let client_tv = client.clone();
+                let id_tv = id.clone();
+                let fail_tv = failures.clone();
+                let mut ids_tv = ids.clone();
+                Some(scope.spawn(move || {
+                    let mut local = Map::new();
+                    fetch_tvmaze_show_rating(
+                        &client_tv,
+                        &id_tv,
+                        &mut ids_tv,
+                        &mut local,
+                        &fail_tv,
+                    );
+                    (local, ids_tv)
+                }))
+            } else {
+                None
+            };
             let retype_h = retype.map(|corrected| {
                 let client_cin = client.clone();
                 let id_cin = id.clone();
@@ -2772,6 +2868,12 @@ pub fn get_title_ratings(
                 merge_ratings(&mut out, local);
             }
             if let Some(handle) = jikan_h {
+                if let Ok((local, extra)) = handle.join() {
+                    merge_ratings(&mut out, local);
+                    merge_ids(&mut ids, extra);
+                }
+            }
+            if let Some(handle) = tvmaze_h {
                 if let Ok((local, extra)) = handle.join() {
                     merge_ratings(&mut out, local);
                     merge_ids(&mut ids, extra);
@@ -2941,6 +3043,63 @@ mod tests {
         let cache = ratings_cache().lock().expect("ratings cache");
         let entry = cache.get("episode-thin-ok").expect("stored episode");
         assert_eq!(entry.ttl, CACHE_TTL);
+    }
+
+    #[test]
+    fn parse_imdb_ratings_addon_score_reads_episode_tt_payload() {
+        let score = parse_imdb_ratings_addon_score(
+            "────────────────\n⭐ IMDb: 8.9/10\n (81,271 votes)\n────────────────",
+        );
+        assert_eq!(score, Some(8.9));
+        assert!(parse_imdb_ratings_addon_score("⭐ TMDb : 8.7/10").is_none());
+    }
+
+    #[test]
+    fn episode_imdb_chip_from_addon_payload() {
+        let mut out = Map::new();
+        let payload = json!({
+            "streams": [{
+                "name": "IMDb Rating",
+                "description": "⭐ IMDb: 8.9/10",
+                "externalUrl": "https://www.imdb.com/title/tt1480055/"
+            }]
+        });
+        let streams = payload.get("streams").and_then(|v| v.as_array()).unwrap();
+        let stream = &streams[0];
+        let desc = stream.get("description").and_then(|v| v.as_str()).unwrap();
+        let v = parse_imdb_ratings_addon_score(desc).expect("score");
+        insert_rating(&mut out, "imdb", "IMDb", "score", &format!("{v:.1}"));
+        set_rating_url(
+            &mut out,
+            "imdb",
+            stream.get("externalUrl").and_then(|u| u.as_str()).unwrap(),
+        );
+        assert_eq!(out.get("imdb").and_then(|c| c.get("value")).and_then(|v| v.as_str()), Some("8.9"));
+        assert_eq!(
+            out.get("imdb").and_then(|c| c.get("url")).and_then(|v| v.as_str()),
+            Some("https://www.imdb.com/title/tt1480055/")
+        );
+    }
+
+    #[test]
+    fn episode_out_has_no_imdb_without_an_episode_score() {
+        let mut out = Map::new();
+        insert_rating(&mut out, "imdb", "IMDb", "score", "9.3");
+        insert_rating(&mut out, "tmdb", "TMDB", "percent", "86%");
+        for key in [
+            "imdb",
+            "tmdb",
+            "trakt",
+            "rt",
+            "metacritic",
+            "mcusers",
+            "mal",
+            "letterboxd",
+        ] {
+            out.remove(key);
+        }
+        assert!(!out.contains_key("imdb"));
+        assert!(parse_imdb_ratings_addon_score("").is_none());
     }
 
     #[test]
@@ -3584,5 +3743,70 @@ mod tests {
         apply_cinemeta_episode_from_videos(&videos, 2, 5, 0, &mut ids, &mut out);
         assert!(out.contains_key("tvdb"));
         assert!(out.get("tvdb").and_then(|v| v.get("url")).is_none());
+    }
+
+    #[test]
+    fn cinemeta_series_rating_is_a_tvdb_chip_with_series_link() {
+        let meta = json!({
+            "name": "Game of Thrones",
+            "imdbRating": "9.2",
+            "rating": "8.4",
+            "tvdb_id": 121361
+        });
+        let mut out = Map::new();
+        apply_cinemeta_series_tvdb(&meta, &mut out);
+        assert_eq!(
+            out.get("tvdb").and_then(|v| v.get("value")),
+            Some(&json!("8.4"))
+        );
+        assert_eq!(
+            out.get("tvdb").and_then(|v| v.get("label")),
+            Some(&json!("TVDB"))
+        );
+        assert!(!out.contains_key("imdb"), "series TVDB must not become IMDb");
+        assert_eq!(
+            out.get("tvdb")
+                .and_then(|v| v.get("url"))
+                .and_then(|v| v.as_str()),
+            Some("https://thetvdb.com/dereferrer/series/121361")
+        );
+    }
+
+    #[test]
+    fn cinemeta_series_without_rating_has_no_tvdb_chip() {
+        let meta = json!({
+            "imdbRating": "9.2",
+            "tvdb_id": 121361
+        });
+        let mut out = Map::new();
+        apply_cinemeta_series_tvdb(&meta, &mut out);
+        assert!(!out.contains_key("tvdb"));
+    }
+
+    #[test]
+    fn tvmaze_show_rating_is_a_series_chip() {
+        let show = json!({
+            "name": "Game of Thrones",
+            "url": "https://www.tvmaze.com/shows/82/game-of-thrones",
+            "rating": { "average": 8.9 }
+        });
+        let mut ids = ResolvedIds::default();
+        let mut out = Map::new();
+        apply_tvmaze_show_rating(&show, &mut ids, &mut out);
+        assert_eq!(ids.title, "Game of Thrones");
+        assert_eq!(
+            out.get("tvmaze").and_then(|v| v.get("value")),
+            Some(&json!("8.9"))
+        );
+        assert_eq!(
+            out.get("tvmaze").and_then(|v| v.get("label")),
+            Some(&json!("TVmaze"))
+        );
+        assert_eq!(
+            out.get("tvmaze")
+                .and_then(|v| v.get("url"))
+                .and_then(|v| v.as_str()),
+            Some("https://www.tvmaze.com/shows/82/game-of-thrones")
+        );
     }
 }
