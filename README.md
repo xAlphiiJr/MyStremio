@@ -152,6 +152,11 @@ Built in plugin that adds a cast section directly into the player. For TV shows 
 
 Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) designed for anime. If enabled you can access the different shaders directly from the player. You can pick the shader quality in the plugin settings.
 
+#### 🌙 Sleep Timer Plugin
+
+Built in Sleep Timer with the options to Shutdown, Sleep or Close. Can be set as countdown, a certain time or until the end of the video.
+
+
 ---
 
 
@@ -177,6 +182,14 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 
 
 ## 🛠️ Patch Notes
+
+### 2.4.4
+- **Intro Skip** — Autoskip countdown can now be customized in the Intro Skip plugin settings
+- **Sleep Timer** — New plugin to set Sleep timers
+- **Picture Settings** — Optimized dim settings and added reset Buttons to all sliders
+- **Player Control Bar** — Fixed highlighting bug
+- **App recovery** — After pc sleep MyStremio automatically reconnects to streaming Servers
+
 
 ### 2.4.3
 
@@ -206,16 +219,6 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 - **Auto Skip** — Changed from instantly skipping segments to a 10 sec timer which can be canceled
 - **Player Scroll Wheel** — Scrolling inside Cast no longer changes volume
 - **Subtitles** — Fixed an issue where the custom subtitle settings won't get saved correctly for the next stream/episode
-
-### 2.3.8
-
-- **Download badges** — README shows GitHub release download counts
-- **Picture Settings** — Master Dim / tone no longer dims subtitles
-- **Skip Intro** — Skip button auto-hides after 10s with a countdown; after that it follows the control bar
-- **Horizontal Navigation** — Board catalog chevrons/scroll moved to a toggleable plugin (default on); Continue Watching chevrons always stay
-- **Addon Toggle** — Disable installed addons without uninstalling; they stay listed but contribute no catalogs/streams in MyStremio
-- **Quick Settings** — Are now part of the settings menu bar
-
 
 
 ---
