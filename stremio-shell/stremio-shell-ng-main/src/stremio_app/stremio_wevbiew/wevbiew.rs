@@ -1,7 +1,7 @@
 use crate::stremio_app::constants::SERVER_IPC_KEY;
 use crate::stremio_app::custom_api::{
     build_early_storage_restore_script, build_enabled_plugins_refresh_script,
-    prepare_webview_user_data_before_environment, webview_user_data_dir,
+    prepare_webview_user_data_before_environment, request_power_resume, webview_user_data_dir,
 };
 use crate::stremio_app::ipc;
 use native_windows_gui::{self as nwg, PartialUi};
@@ -19,7 +19,8 @@ use urlencoding::decode;
 use webview2::Controller;
 use winapi::shared::windef::HWND;
 use winapi::um::winuser::{
-    GetClientRect, VK_F7, WM_APPCOMMAND, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_SETFOCUS,
+    GetClientRect, VK_F7, WM_APPCOMMAND, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_POWERBROADCAST,
+    WM_SETFOCUS,
 };
 
 const APPCOMMAND_MEDIA_NEXTTRACK: u32 = 11;
@@ -27,6 +28,9 @@ const APPCOMMAND_MEDIA_PREVIOUSTRACK: u32 = 12;
 const APPCOMMAND_MEDIA_PLAY_PAUSE: u32 = 14;
 const APPCOMMAND_MEDIA_PLAY: u32 = 46;
 const APPCOMMAND_MEDIA_PAUSE: u32 = 47;
+const PBT_APMRESUMECRITICAL: usize = 6;
+const PBT_APMRESUMESUSPEND: usize = 7;
+const PBT_APMRESUMEAUTOMATIC: usize = 18;
 
 use super::constants::{WARNING_URL, WHITELISTED_HOSTS};
 use super::ui_scale::apply_ui_scale;
@@ -416,7 +420,7 @@ impl PartialUi for WebView {
         // handler ids equal or smaller than 0xFFFF are reserved by NWG
         let handler_id = 0x10000;
         let controller_clone = data.controller.clone();
-        nwg::bind_raw_event_handler(&parent, handler_id, move |hwnd, msg, _w, l| {
+        nwg::bind_raw_event_handler(&parent, handler_id, move |hwnd, msg, w, l| {
             if msg == WM_SETFOCUS {
                 controller_clone.get().and_then(|controller| {
                     controller
@@ -426,6 +430,13 @@ impl PartialUi for WebView {
             } else if msg == WM_DPICHANGED || msg == WM_DISPLAYCHANGE {
                 if let Some(controller) = controller_clone.get() {
                     apply_ui_scale(controller, hwnd);
+                }
+            } else if msg == WM_POWERBROADCAST {
+                match w as usize {
+                    PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND | PBT_APMRESUMECRITICAL => {
+                        request_power_resume();
+                    }
+                    _ => {}
                 }
             } else if msg == WM_APPCOMMAND {
                 let cmd = ((l >> 16) & 0xFFF) as u32;

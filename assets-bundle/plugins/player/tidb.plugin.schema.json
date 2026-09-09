@@ -70,5 +70,14 @@
     "key": "anonymous_usage_reporting",
     "label": "Anonymous usage reporting",
     "type": "toggle"
+  },
+  {
+    "defaultValue": "10",
+    "description": "Seconds to wait before AutoSkip jumps over a segment. Default 10.",
+    "key": "autoskip_countdown_seconds",
+    "label": "AutoSkip delay (seconds)",
+    "placeholder": "10",
+    "type": "input",
+    "inputType": "number"
   }
 ]

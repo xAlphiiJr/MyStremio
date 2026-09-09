@@ -24,12 +24,17 @@
       display: none !important;
     }
 
+    html body [class*="player-container"] [class*="control-bar-container"] {
+      overflow: visible !important;
+    }
+
     html body [class*="player-container"] [class*="control-bar-container"] [class*="control-bar-buttons-container"] {
       align-items: center !important;
       display: flex !important;
       flex-direction: row !important;
       gap: 0.25rem !important;
       background: ${PLAYER_GLASS_BG} !important;
+      background-color: ${PLAYER_GLASS_BG} !important;
       border-radius: 20px !important;
       box-shadow: ${PLAYER_GLASS_SHADOW} !important;
       backdrop-filter: none !important;
@@ -38,9 +43,26 @@
       margin-bottom: 10px !important;
       min-height: 52px !important;
       padding: 0 0.4rem !important;
+      overflow: visible !important;
     }
 
-    html body [class*="player-container"] [class*="control-bar-button"]:hover:not(.disabled) {
+    html body [class*="player-container"] [class*="control-bar-buttons-container"]:hover,
+    html body [class*="player-container"] [class*="control-bar-buttons-container"]:active,
+    html body [class*="player-container"] [class*="control-bar-buttons-container"]:focus-within {
+      background: ${PLAYER_GLASS_BG} !important;
+      background-color: ${PLAYER_GLASS_BG} !important;
+    }
+
+    html body [class*="player-container"] [class*="control-bar-buttons-menu-container"],
+    html body [class*="player-container"] [class*="control-bar-buttons-menu-container"]:hover,
+    html body [class*="player-container"] [class*="control-bar-buttons-menu-container"]:active,
+    html body [class*="player-container"] [class*="control-bar-buttons-menu-container"]:focus-within {
+      background: transparent !important;
+      background-color: transparent !important;
+      box-shadow: none !important;
+    }
+
+    html body [class*="player-container"] [class*="control-bar-button-"]:hover:not(.disabled) {
       background: rgba(255, 255, 255, 0.12) !important;
     }
 

@@ -111,4 +111,7 @@ impl RPCResponse {
     pub fn window_resumed() -> String {
         Self::response_message(Some(json!(["mystremio-window-resumed"])))
     }
+    pub fn streaming_server_ready() -> String {
+        Self::response_message(Some(json!(["mystremio-streaming-server-ready"])))
+    }
 }

@@ -45,6 +45,8 @@ pub struct MainWindow {
     pub requested_window_chrome: Arc<Mutex<Option<String>>>,
     /// Pending WebView2 DefaultBackgroundColor transparency (MPV punch-through).
     pub requested_webview_transparent: Arc<Mutex<Option<bool>>>,
+    /// Pending allowlisted power action: "sleep" | "close" | "shutdown" | "restart".
+    pub requested_power: Arc<Mutex<Option<String>>>,
     pub saved_window_style: RefCell<WindowStyle>,
     #[nwg_resource]
     pub embed: nwg::EmbedResource,
@@ -105,6 +107,15 @@ pub struct MainWindow {
     #[nwg_control]
     #[nwg_events(OnNotice: [Self::on_apply_ui_scale_notice] )]
     pub apply_ui_scale_notice: nwg::Notice,
+    #[nwg_control]
+    #[nwg_events(OnNotice: [Self::on_power_action_notice] )]
+    pub power_action_notice: nwg::Notice,
+    #[nwg_control]
+    #[nwg_events(OnNotice: [Self::on_power_resume_notice] )]
+    pub power_resume_notice: nwg::Notice,
+    #[nwg_control]
+    #[nwg_events(OnNotice: [Self::on_streaming_server_ready_notice] )]
+    pub streaming_server_ready_notice: nwg::Notice,
 }
 
 impl MainWindow {
@@ -292,6 +303,7 @@ impl MainWindow {
         let window_chrome_sender = self.window_chrome_notice.sender();
         let webview_background_sender = self.webview_background_notice.sender();
         let toggle_pip_sender = self.toggle_pip_notice.sender();
+        let power_action_sender = self.power_action_notice.sender();
         let (pip_response_tx, pip_response_rx) = flume::bounded::<bool>(1);
         custom_api::register_pip_response_sender(pip_response_tx);
         let (ui_scale_tx, ui_scale_rx) = flume::unbounded::<()>();
@@ -302,6 +314,14 @@ impl MainWindow {
                 apply_ui_scale_sender.notice();
             }
         });
+        let (power_resume_tx, power_resume_rx) = flume::unbounded::<()>();
+        custom_api::register_power_resume_sender(power_resume_tx);
+        let power_resume_notice_sender = self.power_resume_notice.sender();
+        thread::spawn(move || {
+            while power_resume_rx.recv().is_ok() {
+                power_resume_notice_sender.notice();
+            }
+        });
         let quit_sender = self.quit_notice.sender();
         let hide_splash_sender = self.hide_splash_notice.sender();
         let focus_sender = self.focus_notice.sender();
@@ -310,6 +330,7 @@ impl MainWindow {
         let requested_borderless = self.requested_borderless.clone();
         let requested_window_chrome = self.requested_window_chrome.clone();
         let requested_webview_transparent = self.requested_webview_transparent.clone();
+        let requested_power = self.requested_power.clone();
         thread::spawn(move || loop {
             let Ok(raw) = web_rx.recv() else {
                 break;
@@ -335,6 +356,39 @@ impl MainWindow {
                                     "stremioCustom": true,
                                     "id": id,
                                     "result": active,
+                                })
+                                .to_string(),
+                            )
+                            .ok();
+                        continue;
+                    }
+                    if value.get("method").and_then(|method| method.as_str())
+                        == Some("power-action")
+                    {
+                        let id = value
+                            .get("id")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+                        let action = value
+                            .get("params")
+                            .and_then(|params| params.get("action"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let allowed = matches!(
+                            action.as_str(),
+                            "sleep" | "close" | "shutdown" | "restart"
+                        );
+                        if allowed {
+                            *requested_power.lock().unwrap() = Some(action);
+                            power_action_sender.notice();
+                        }
+                        web_tx_web
+                            .send(
+                                serde_json::json!({
+                                    "stremioCustom": true,
+                                    "id": id,
+                                    "result": allowed,
                                 })
                                 .to_string(),
                             )
@@ -705,6 +759,42 @@ impl MainWindow {
         ) {
             apply_ui_scale(controller, hwnd);
         }
+    }
+    fn on_power_action_notice(&self) {
+        let action = self
+            .requested_power
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        let Some(action) = action else {
+            return;
+        };
+        match action.as_str() {
+            "close" => {
+                self.save_window_settings();
+                nwg::stop_thread_dispatch();
+            }
+            "sleep" | "shutdown" | "restart" => {
+                if let Err(err) = crate::stremio_app::power_actions::apply(&action) {
+                    eprintln!("Power action {action} failed: {err}");
+                }
+            }
+            _ => {}
+        }
+    }
+    fn on_power_resume_notice(&self) {
+        self.server
+            .recover_after_resume(self.streaming_server_ready_notice.sender());
+    }
+    fn on_streaming_server_ready_notice(&self) {
+        if let Ok(web_channel) = self.webview.channel.try_borrow() {
+            if let Some((web_tx, _)) = web_channel.as_ref() {
+                web_tx.send(RPCResponse::streaming_server_ready()).ok();
+            }
+        }
+        self.webview.execute_script(
+            r#"try{window.__stremioCustomOnStreamingServerReady&&window.__stremioCustomOnStreamingServerReady();}catch(e){}"#,
+        );
     }
     fn on_toggle_topmost(&self) {
         if let Some(hwnd) = self.window.handle.hwnd() {

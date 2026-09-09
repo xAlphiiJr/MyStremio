@@ -1,0 +1,54 @@
+[
+  {
+    "key": "running",
+    "type": "toggle",
+    "label": "Timer running",
+    "description": "Turn on to start the sleep timer. Turn off to cancel.",
+    "defaultValue": false
+  },
+  {
+    "key": "remaining",
+    "type": "input",
+    "label": "Remaining",
+    "description": "Time left while the timer is running. Idle when it is off.",
+    "defaultValue": "Idle"
+  },
+  {
+    "key": "action",
+    "type": "select",
+    "label": "Action",
+    "defaultValue": "sleep",
+    "options": [
+      { "value": "sleep", "label": "Sleep" },
+      { "value": "close", "label": "Close" },
+      { "value": "shutdown", "label": "Shutdown" }
+    ]
+  },
+  {
+    "key": "trigger",
+    "type": "select",
+    "label": "When",
+    "defaultValue": "countdown",
+    "options": [
+      { "value": "countdown", "label": "Countdown" },
+      { "value": "clock", "label": "Clock" },
+      { "value": "episode", "label": "End of episode" }
+    ]
+  },
+  {
+    "key": "hours",
+    "type": "input",
+    "inputType": "number",
+    "label": "Hours",
+    "description": "Countdown duration hours, or clock hour (0–23).",
+    "defaultValue": "0"
+  },
+  {
+    "key": "minutes",
+    "type": "input",
+    "inputType": "number",
+    "label": "Minutes",
+    "description": "Countdown duration minutes, or clock minute (0–59).",
+    "defaultValue": "30"
+  }
+]

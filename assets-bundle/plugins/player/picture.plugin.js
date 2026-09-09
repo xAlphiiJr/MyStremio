@@ -1,7 +1,7 @@
 /**
  * @name Picture Settings
- * @description Player picture controls: Master Dim plus Contrast / Brightness / Gamma / Saturation (mpv)
- * @version 2.2.0
+ * @description Player picture controls: Dim plus Contrast / Brightness / Gamma / Saturation
+ * @version 2.4.0
  * @author MyStremio
  * @category player
  */
@@ -10,9 +10,13 @@
 (function () {
   'use strict';
 
-  const PLUGIN_VERSION = '2.2.0';
+  const PLUGIN_VERSION = '2.4.0';
   const PLUGIN_REF = 'player/picture.plugin.js';
   const LEGACY_PLUGIN_REF = 'player/brightness.plugin.js';
+  const RESET_ICON_PATHS = [
+    'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8',
+    'M3 3v5h5',
+  ];
 
   /**
    * @returns {boolean}
@@ -34,7 +38,7 @@
   const STORAGE_KEY = 'stremio-custom-player-brightness-eq';
   const LEGACY_STORAGE_KEY = 'stremio-custom-player-brightness';
   const ICON_SIZE = '2.0rem';
-  const PANEL_VERSION = '10';
+  const PANEL_VERSION = '11';
   const SLIDER_ACTIVE_CLASS = 'mystremio-brightness-slider-active';
 
   /**
@@ -106,29 +110,56 @@
   }
 
   /**
-   * Maps Master Dim (0–100) to a detail-preserving “smartphone dim” curve.
-   * Uses a squared falloff so mid-dim keeps more midtones; at Dim 0 ≈ brightness −72,
-   * gamma +32 (shadow lift), mild contrast −8 and saturation −12.
-   * Prefer gamma recovery over crushing brightness alone (mpv brightness is a hard offset).
+   * Master Dim (100 = no dim) → Contrast / Brightness / Gamma / Saturation.
+   * Values from the night-dim table; linear between the 10-step knots. Saturation stays 0.
    *
    * @param {number} dim
    * @returns {{ brightness: number, contrast: number, gamma: number, saturation: number }}
    */
   function dimCurve(dim) {
-    const t = 1 - clampInt(dim, 0, 100, 100) / 100;
-    const t2 = t * t;
+    const knots = [
+      { dim: 100, contrast: 0, brightness: 0, gamma: 0 },
+      { dim: 90, contrast: -1, brightness: -2, gamma: -4 },
+      { dim: 80, contrast: -1, brightness: -4, gamma: -8 },
+      { dim: 70, contrast: -2, brightness: -6, gamma: -12 },
+      { dim: 60, contrast: -2, brightness: -8, gamma: -16 },
+      { dim: 50, contrast: -3, brightness: -10, gamma: -20 },
+      { dim: 40, contrast: -3, brightness: -12, gamma: -24 },
+      { dim: 30, contrast: -3, brightness: -14, gamma: -28 },
+      { dim: 20, contrast: -4, brightness: -15, gamma: -32 },
+      { dim: 10, contrast: -4, brightness: -17, gamma: -36 },
+      { dim: 0, contrast: -5, brightness: -20, gamma: -40 },
+    ];
+    const d = clampInt(dim, 0, 100, 100);
+    if (d >= knots[0].dim) {
+      return { contrast: 0, brightness: 0, gamma: 0, saturation: 0 };
+    }
+    if (d <= knots[knots.length - 1].dim) {
+      const last = knots[knots.length - 1];
+      return {
+        contrast: last.contrast,
+        brightness: last.brightness,
+        gamma: last.gamma,
+        saturation: 0,
+      };
+    }
+    let hi = 0;
+    while (hi < knots.length - 1 && knots[hi + 1].dim >= d) hi += 1;
+    const upper = knots[hi];
+    const lower = knots[hi + 1];
+    const span = upper.dim - lower.dim;
+    const t = span === 0 ? 0 : (upper.dim - d) / span;
+    const mix = (a, b) => Math.round(a + (b - a) * t);
     return {
-      brightness: Math.round(-55 * t - 17 * t2),
-      contrast: Math.round(-8 * t),
-      gamma: Math.round(14 * t + 18 * t2),
-      saturation: Math.round(-12 * t),
+      contrast: mix(upper.contrast, lower.contrast),
+      brightness: mix(upper.brightness, lower.brightness),
+      gamma: mix(upper.gamma, lower.gamma),
+      saturation: 0,
     };
   }
 
   /**
-   * Resolves the mpv props that should be applied for the current state.
-   * Master Dim writes the dim curve unless the corresponding fine slider was moved
-   * (manual flag). Fine sliders write the same props absolutely until Reset.
+   * Master Dim writes the dim curve unless the corresponding fine slider was moved.
    *
    * @param {EqState} s
    * @returns {{ brightness: number, contrast: number, gamma: number, saturation: number }}
@@ -236,28 +267,24 @@
   }
 
   /**
-   * Pushes resolved tone via video-only `vf` (not global equalizer props).
+   * Fine EQ via video-only `vf`. Dim drives the four EQ knobs unless a fine slider is manual.
    *
    * @param {EqState} [s]
    */
   function applyTone(s) {
+    const next = s || state;
     ensureSubtitlesUnblended();
-    // Neutralize legacy global EQ so softsubs never inherit picture tone.
     sendMpvSetProp('brightness', 0);
     sendMpvSetProp('contrast', 0);
     sendMpvSetProp('gamma', 0);
     sendMpvSetProp('saturation', 0);
-    const props = resolveMpvProps(s || state);
+    const props = resolveMpvProps(next);
     const neutral =
       props.brightness === 0 &&
       props.contrast === 0 &&
       props.gamma === 0 &&
       props.saturation === 0;
-    if (neutral) {
-      sendMpvSetProp('vf', '');
-      return;
-    }
-    sendMpvSetProp('vf', buildVideoEqFilter(props));
+    sendMpvSetProp('vf', neutral ? '' : buildVideoEqFilter(props));
   }
 
   /**
@@ -270,8 +297,6 @@
     sendMpvSetProp('gamma', 0);
     sendMpvSetProp('saturation', 0);
     sendMpvSetProp('vf', '');
-    // MPV no longer matches `state`; drop the cached signature so the next
-    // ensureAll() re-applies instead of short-circuiting on re-entry.
     lastAppliedSig = '';
   }
 
@@ -373,10 +398,26 @@
       stopEvent(event);
       resetAll(true);
     });
+    panel.querySelectorAll('[data-eq-reset]').forEach((btn) => {
+      btn.addEventListener('click', (event) => {
+        stopEvent(event);
+        const key = btn.getAttribute('data-eq-reset');
+        if (key) resetOne(key, true);
+      });
+    });
     panel.querySelector('[data-mystremio-brightness-close]')?.addEventListener('click', (event) => {
       stopEvent(event);
       closePanel();
     });
+  }
+
+  /**
+   * @param {EqState} s
+   * @returns {string}
+   */
+  function toneSignature(s) {
+    const props = resolveMpvProps(s);
+    return JSON.stringify({ dim: s.dim, ...props });
   }
 
   /**
@@ -388,7 +429,6 @@
   function onSliderInput(key, rawValue) {
     if (key === 'dim') {
       state.dim = clampInt(rawValue, 0, 100, 100);
-      // Master reasserts the dim curve unless the user already overrode brightness.
       if (!state.brightnessManual) {
         state.brightness = dimCurve(state.dim).brightness;
       }
@@ -396,7 +436,6 @@
       syncPanelFromState();
       return;
     }
-
     const value = clampInt(rawValue, -100, 100, 0);
     if (key === 'brightness') {
       state.brightness = value;
@@ -417,11 +456,38 @@
     syncPanelFromState();
   }
 
+  function resetIconHtml() {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${RESET_ICON_PATHS[0]}"></path><path d="${RESET_ICON_PATHS[1]}"></path></svg>`;
+  }
+
+  function eqResetButton(key, label) {
+    return `<button type="button" class="mystremio-eq-reset" data-eq-reset="${key}" aria-label="Reset ${label}">${resetIconHtml()}</button>`;
+  }
+
   function persistAndApply() {
     state = normalizeState(state);
     writeStoredState(state);
     applyTone(state);
-    lastAppliedSig = JSON.stringify(resolveMpvProps(state));
+    lastAppliedSig = toneSignature(state);
+  }
+
+  /**
+   * @param {string} key
+   * @param {boolean} persist
+   */
+  function resetOne(key, persist) {
+    if (key === 'dim') {
+      state.dim = DEFAULT_STATE.dim;
+    } else if (key === 'contrast' || key === 'brightness' || key === 'gamma' || key === 'saturation') {
+      state[key] = DEFAULT_STATE[key];
+      state[`${key}Manual`] = false;
+    } else {
+      return;
+    }
+    if (persist) writeStoredState(state);
+    applyTone(state);
+    lastAppliedSig = toneSignature(state);
+    syncPanelFromState();
   }
 
   /**
@@ -431,7 +497,7 @@
     state = { ...DEFAULT_STATE };
     if (persist) writeStoredState(state);
     resetMpvTone();
-    lastAppliedSig = JSON.stringify(resolveMpvProps(state));
+    lastAppliedSig = toneSignature(state);
     syncPanelFromState();
   }
 
@@ -632,19 +698,32 @@
         align-items: center;
         gap: 0.35rem;
       }
-      #${PANEL_ID} .mystremio-brightness-reset {
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        background: rgba(255, 255, 255, 0.08);
-        color: rgba(255, 255, 255, 0.85);
-        font-size: 0.68rem;
-        font-weight: 600;
-        line-height: 1;
+      #${PANEL_ID} .mystremio-brightness-reset,
+      #${PANEL_ID} .mystremio-eq-reset {
+        border: none;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.62);
         cursor: pointer;
-        padding: 0.28rem 0.45rem;
+        padding: 0;
         border-radius: 6px;
+        width: 1.15rem;
+        height: 1.15rem;
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
       }
-      #${PANEL_ID} .mystremio-brightness-reset:hover {
-        background: rgba(255, 255, 255, 0.14);
+      #${PANEL_ID} .mystremio-brightness-reset svg,
+      #${PANEL_ID} .mystremio-eq-reset svg {
+        width: 0.92rem;
+        height: 0.92rem;
+        display: block;
+        pointer-events: none;
+      }
+      #${PANEL_ID} .mystremio-brightness-reset:hover,
+      #${PANEL_ID} .mystremio-eq-reset:hover {
+        background: rgba(255, 255, 255, 0.12);
+        color: rgba(255, 255, 255, 0.95);
       }
       #${PANEL_ID} .mystremio-brightness-close {
         border: none;
@@ -667,7 +746,7 @@
       }
       #${PANEL_ID} .mystremio-eq-row {
         display: grid;
-        grid-template-columns: 4.6rem 1fr 2.2rem;
+        grid-template-columns: 4.4rem 1fr 2.1rem 1.15rem;
         align-items: center;
         gap: 0.4rem;
         min-height: 1.55rem;
@@ -775,6 +854,7 @@
   function syncPanelFromState() {
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
+
     const props = resolveMpvProps(state);
 
     /** @type {Array<{ key: string, value: number, label: string, fill: number }>} */
@@ -838,7 +918,7 @@
       <div class="mystremio-brightness-header">
         <span class="mystremio-brightness-title">Picture Settings</span>
         <div class="mystremio-brightness-header-actions">
-          <button type="button" class="mystremio-brightness-reset" data-mystremio-brightness-reset>Reset</button>
+          <button type="button" class="mystremio-brightness-reset" data-mystremio-brightness-reset aria-label="Reset all">${resetIconHtml()}</button>
           <button type="button" class="mystremio-brightness-close" data-mystremio-brightness-close aria-label="Close">×</button>
         </div>
       </div>
@@ -846,26 +926,31 @@
         <span class="mystremio-eq-label">Dim</span>
         <input type="range" min="0" max="100" step="1" value="100" data-eq-key="dim" aria-label="Dim" />
         <span class="mystremio-eq-value" data-eq-value="dim">100%</span>
+        ${eqResetButton('dim', 'Dim')}
       </div>
       <div class="mystremio-eq-row">
         <span class="mystremio-eq-label">Contrast</span>
         <input type="range" min="-100" max="100" step="1" value="0" data-eq-key="contrast" aria-label="Contrast" />
         <span class="mystremio-eq-value" data-eq-value="contrast">0</span>
+        ${eqResetButton('contrast', 'Contrast')}
       </div>
       <div class="mystremio-eq-row">
         <span class="mystremio-eq-label">Brightness</span>
         <input type="range" min="-100" max="100" step="1" value="0" data-eq-key="brightness" aria-label="Brightness" />
         <span class="mystremio-eq-value" data-eq-value="brightness">0</span>
+        ${eqResetButton('brightness', 'Brightness')}
       </div>
       <div class="mystremio-eq-row">
         <span class="mystremio-eq-label">Gamma</span>
         <input type="range" min="-100" max="100" step="1" value="0" data-eq-key="gamma" aria-label="Gamma" />
         <span class="mystremio-eq-value" data-eq-value="gamma">0</span>
+        ${eqResetButton('gamma', 'Gamma')}
       </div>
       <div class="mystremio-eq-row">
         <span class="mystremio-eq-label">Saturation</span>
         <input type="range" min="-100" max="100" step="1" value="0" data-eq-key="saturation" aria-label="Saturation" />
         <span class="mystremio-eq-value" data-eq-value="saturation">0</span>
+        ${eqResetButton('saturation', 'Saturation')}
       </div>
     `;
 
@@ -1098,7 +1183,7 @@
 
     ensureButton();
     if (!isPlayerRoute()) return;
-    const sig = JSON.stringify(resolveMpvProps(state));
+    const sig = toneSignature(state);
     if (sig !== lastAppliedSig) {
       lastAppliedSig = sig;
       applyTone(state);
@@ -1239,7 +1324,7 @@
       window.setTimeout(() => {
         state = readStoredState();
         applyTone(state);
-        lastAppliedSig = JSON.stringify(resolveMpvProps(state));
+        lastAppliedSig = toneSignature(state);
         syncPanelFromState();
       }, 120);
       bindChromeIdleWatcher();

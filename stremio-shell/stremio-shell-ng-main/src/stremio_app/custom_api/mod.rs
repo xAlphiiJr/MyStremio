@@ -26,6 +26,7 @@ use storage::{
 static REGISTERED_SCHEMAS: OnceLock<Mutex<storage::RegisteredSchemas>> = OnceLock::new();
 static PIP_RESPONSE_TX: OnceLock<Mutex<Option<flume::Sender<bool>>>> = OnceLock::new();
 static UI_SCALE_APPLY_TX: OnceLock<Mutex<Option<flume::Sender<()>>>> = OnceLock::new();
+static POWER_RESUME_TX: OnceLock<Mutex<Option<flume::Sender<()>>>> = OnceLock::new();
 const RATINGS_WORKERS: usize = 8;
 
 struct RatingsJob {
@@ -139,8 +140,22 @@ pub fn register_ui_scale_apply_sender(sender: flume::Sender<()>) {
     let _ = UI_SCALE_APPLY_TX.set(Mutex::new(Some(sender)));
 }
 
+pub fn register_power_resume_sender(sender: flume::Sender<()>) {
+    let _ = POWER_RESUME_TX.set(Mutex::new(Some(sender)));
+}
+
 pub fn request_ui_scale_apply() {
     if let Some(lock) = UI_SCALE_APPLY_TX.get() {
+        if let Ok(guard) = lock.lock() {
+            if let Some(sender) = guard.as_ref() {
+                sender.send(()).ok();
+            }
+        }
+    }
+}
+
+pub fn request_power_resume() {
+    if let Some(lock) = POWER_RESUME_TX.get() {
         if let Ok(guard) = lock.lock() {
             if let Some(sender) = guard.as_ref() {
                 sender.send(()).ok();
@@ -550,6 +565,10 @@ pub fn handle_request(message: &Value) -> Option<String> {
             mark_ui_scale_user_bind(normalized);
             request_ui_scale_apply();
             json!(normalized)
+        }
+        "recover-streaming-server" => {
+            request_power_resume();
+            json!(true)
         }
         _ => return None,
     };

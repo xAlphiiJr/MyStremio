@@ -114,6 +114,19 @@
     }
   }
 
+  function maybeHandleStreamingServerReadyMessage(data) {
+    try {
+      const args = Array.isArray(data?.args) ? data.args : null;
+      if (!args || args[0] !== 'mystremio-streaming-server-ready') return false;
+      if (typeof window.__stremioCustomOnStreamingServerReady === 'function') {
+        window.__stremioCustomOnStreamingServerReady();
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function hookShellMessages() {
     if (window.__stremioCustomShellMessagesHooked) return;
     window.__stremioCustomShellMessagesHooked = true;
@@ -127,6 +140,7 @@
             return;
           }
           maybeHandleWindowResumedMessage(data);
+          maybeHandleStreamingServerReadyMessage(data);
         } catch (_) {}
       });
     }
@@ -142,6 +156,7 @@
           return;
         }
         if (maybeHandleWindowResumedMessage(data)) return;
+        if (maybeHandleStreamingServerReadyMessage(data)) return;
       } catch (_) {}
       if (typeof original === 'function') original.call(this, ev);
     };
@@ -320,6 +335,7 @@
   const DEFAULT_DISABLED_PLUGIN_PATTERNS = [
     /slash[-_ ]?to[-_ ]?search/i,
     /anime4k/i,
+    /sleep[-_ ]?timer/i,
   ];
   const DYNAMIC_HERO_PLUGIN = 'interface/hero-div.plugin.js';
   const DYNAMIC_HERO_ENABLED_KEY = 'mystremio_dynamic_hero_enabled_v1';
@@ -1733,6 +1749,47 @@
 
   window.__stremioCustomOnWindowResumed = onWindowResumed;
 
+  let streamingServerRecoverAt = 0;
+  let pageHiddenAt = 0;
+
+  /**
+   * Re-bind the local EngineFS URL after sleep/resume. Does not reload video.
+   */
+  async function reconnectStreamingServerUi() {
+    const now = Date.now();
+    if (now - streamingServerRecoverAt < 4000) return;
+    streamingServerRecoverAt = now;
+    for (let i = 0; i < 10; i += 1) {
+      try {
+        const res = await fetch('http://127.0.0.1:11470/settings', { cache: 'no-store' });
+        if (res.ok) break;
+      } catch (_) {}
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    try {
+      window.core?.dispatch?.({
+        action: 'StreamingServer',
+        args: { action: 'Reload' },
+      });
+    } catch (_) {}
+    try {
+      document.dispatchEvent(new CustomEvent('stremio-custom-streaming-server-ready'));
+    } catch (_) {}
+  }
+
+  window.__stremioCustomOnStreamingServerReady = reconnectStreamingServerUi;
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      pageHiddenAt = Date.now();
+      return;
+    }
+    if (pageHiddenAt && Date.now() - pageHiddenAt >= 30000) {
+      invoke('recover-streaming-server', {}, 20000).catch(() => {});
+    }
+    pageHiddenAt = 0;
+  });
+
   function injectPlaybackGuard() {
     if (document.getElementById('stremio-custom-playback-guard')) return;
     const script = document.createElement('script');
@@ -1798,6 +1855,7 @@
       '__stremioHoverTimestampsUnload',
       '__stremioTidbSuspend',
       '__stremioAnime4kSuspend',
+      '__stremioSleepTimerUnload',
     ];
     for (const name of hooks) {
       try {
@@ -1811,7 +1869,8 @@
       'mystremio-brightness-overlay-lock',
       'mystremio-picture-overlay-lock',
       'mystremio-cast-overlay-lock',
-      'tidb-contribute-overlay-lock'
+      'tidb-contribute-overlay-lock',
+      'mystremio-sleep-overlay-lock'
     );
   }
 

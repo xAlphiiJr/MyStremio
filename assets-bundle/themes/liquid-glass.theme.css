@@ -763,7 +763,8 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
     align-items: center;
     display: flex;
     flex-direction: row;
-    background: rgba(70, 70, 70, 0.22) !important;
+    background: rgba(42, 42, 46, 0.58) !important;
+    background-color: rgba(42, 42, 46, 0.58) !important;
     border-radius: 20px !important;
     box-shadow:
         0 8px 32px rgba(0, 0, 0, 0.2),
@@ -777,9 +778,35 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
     margin-top: 5px !important;
     min-height: 50px !important;
     padding: 0 0.35rem !important;
+    overflow: visible !important;
 }
 
-[class*="player-container"] [class*="control-bar-container"] [class*="control-bar-button"]:hover:not(.disabled) {
+[class*="player-container"] [class*="control-bar-container"] [class*="control-bar-buttons-container"]:hover,
+[class*="player-container"] [class*="control-bar-container"] [class*="control-bar-buttons-container"]:active,
+[class*="player-container"] [class*="control-bar-container"] [class*="control-bar-buttons-container"]:focus-within {
+    background: rgba(42, 42, 46, 0.58) !important;
+    background-color: rgba(42, 42, 46, 0.58) !important;
+    box-shadow:
+        0 8px 32px rgba(0, 0, 0, 0.2),
+        0 4px 16px rgba(0, 0, 0, 0.1),
+        inset 0 1px 0 rgba(255, 255, 255, 0.15),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
+}
+
+[class*="player-container"] [class*="control-bar-container"] [class*="control-bar-buttons-menu-container"],
+[class*="player-container"] [class*="control-bar-container"] [class*="control-bar-buttons-menu-container"]:hover,
+[class*="player-container"] [class*="control-bar-container"] [class*="control-bar-buttons-menu-container"]:active,
+[class*="player-container"] [class*="control-bar-container"] [class*="control-bar-buttons-menu-container"]:focus-within,
+.control-bar-container-xsWA7 .control-bar-buttons-container-SWhkU .control-bar-buttons-menu-container-M6L0_,
+.control-bar-container-xsWA7 .control-bar-buttons-container-SWhkU .control-bar-buttons-menu-container-M6L0_:hover,
+.control-bar-container-xsWA7 .control-bar-buttons-container-SWhkU .control-bar-buttons-menu-container-M6L0_:active,
+.control-bar-container-xsWA7 .control-bar-buttons-container-SWhkU .control-bar-buttons-menu-container-M6L0_:focus-within {
+    background: transparent !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+}
+
+[class*="player-container"] [class*="control-bar-container"] [class*="control-bar-button-"]:hover:not(.disabled) {
     background: rgba(255, 255, 255, 0.1) !important;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15) !important;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
@@ -2149,7 +2176,8 @@ body.ghost-clicking #heroLoadingScreen {
     align-items: center;
     display: flex;
     flex-direction: row;
-    background: rgba(70, 70, 70, 0.22) !important;
+    background: rgba(42, 42, 46, 0.58) !important;
+    background-color: rgba(42, 42, 46, 0.58) !important;
     border-radius: 20px !important;
     box-shadow:
         0 8px 32px rgba(0, 0, 0, 0.2),
@@ -2162,6 +2190,14 @@ body.ghost-clicking #heroLoadingScreen {
     margin-bottom: 15px !important;
     margin-top: 5px !important;
     height: 50px !important;
+    overflow: visible !important;
+}
+
+.control-bar-container-xsWA7 .control-bar-buttons-container-SWhkU:hover,
+.control-bar-container-xsWA7 .control-bar-buttons-container-SWhkU:active,
+.control-bar-container-xsWA7 .control-bar-buttons-container-SWhkU:focus-within {
+    background: rgba(42, 42, 46, 0.58) !important;
+    background-color: rgba(42, 42, 46, 0.58) !important;
 }
 
 .slider-container-nJz5F .track-gItfW {

@@ -28,6 +28,7 @@
   const OVERLAY_LOCK_CLASS = 'mystremio-anime4k-overlay-lock';
   const CONTRIBUTE_BTN_ID = 'tidb-contribute-btn';
   const CAST_BTN_ID = 'mystremio-cast-overlay-btn';
+  const SLEEP_BTN_ID = 'mystremio-sleep-timer-btn';
   const ICON_SIZE = '2.0rem';
   const PANEL_VERSION = '2';
 
@@ -239,17 +240,18 @@
   }
 
   /**
-   * Build an mpv `glsl-shaders` path list for Windows (`;` separators).
-   *
-   * @param {string[]} files
-   * @param {string} dir
-   * @returns {string}
+   * Shared GLSL chain for Anime4K (and any later shader layers).
    */
-  function buildShaderChain(files, dir) {
-    if (!files.length || !dir) return '';
-    return files
-      .map((name) => `${dir}\\${name}`.replace(/\//g, '\\'))
-      .join(';');
+  function ensureGlslComposer() {
+    if (window.StremioCustomGlsl) return window.StremioCustomGlsl;
+    window.StremioCustomGlsl = {
+      layers: { anime4k: [] },
+      apply() {
+        const files = (this.layers.anime4k || []).filter(Boolean);
+        sendMpvSetProp('glsl-shaders', files.join(';'));
+      },
+    };
+    return window.StremioCustomGlsl;
   }
 
   /**
@@ -259,20 +261,23 @@
    */
   async function applyShaders() {
     if (suspended) return;
+    const composer = ensureGlslComposer();
     const active = isPluginEnabled() && mode !== 'Off';
     if (!active) {
-      sendMpvSetProp('glsl-shaders', '');
+      composer.layers.anime4k = [];
+      composer.apply();
       return;
     }
     const dir = await resolveShadersDir();
     if (!dir) {
       console.warn(`${LOG_PREFIX} shadersPath unavailable; cannot apply Anime4K.`);
-      sendMpvSetProp('glsl-shaders', '');
+      composer.layers.anime4k = [];
+      composer.apply();
       return;
     }
     const files = shadersForMode(mode, quality);
-    const chain = buildShaderChain(files, dir);
-    sendMpvSetProp('glsl-shaders', chain);
+    composer.layers.anime4k = files.map((name) => `${dir}\\${name}`.replace(/\//g, '\\'));
+    composer.apply();
     console.info(`${LOG_PREFIX} Applied mode ${mode} / quality ${quality} (${files.length} shaders).`);
   }
 
@@ -600,6 +605,18 @@
   }
 
   /**
+   * Menu button, or Sleep Timer when that plugin is mounted to the right of Anime4K.
+   *
+   * @param {Element} container
+   * @returns {Element|null}
+   */
+  function getAnime4kRightAnchor(container) {
+    const sleep = document.getElementById(SLEEP_BTN_ID);
+    if (sleep && container.contains(sleep)) return sleep;
+    return container.querySelector('[class*="control-bar-buttons-menu-button"]');
+  }
+
+  /**
    * Places the Anime4K button before the menu (after Cast/Contribute when present).
    *
    * @param {Element} button
@@ -607,7 +624,7 @@
    */
   function placeAnime4kButton(button, container) {
     if (!button || !container) return;
-    const menuButton = container.querySelector('[class*="control-bar-buttons-menu-button"]');
+    const menuButton = getAnime4kRightAnchor(container);
     const cast = document.getElementById(CAST_BTN_ID);
     const contribute = document.getElementById(CONTRIBUTE_BTN_ID);
     const after =
@@ -636,7 +653,7 @@
    */
   function isAnime4kButtonPlaced(button, container) {
     if (!button || !container || !container.contains(button)) return false;
-    const menuButton = container.querySelector('[class*="control-bar-buttons-menu-button"]');
+    const menuButton = getAnime4kRightAnchor(container);
     const cast = document.getElementById(CAST_BTN_ID);
     const contribute = document.getElementById(CONTRIBUTE_BTN_ID);
     if (cast && container.contains(cast)) return button.previousElementSibling === cast;
@@ -1083,7 +1100,9 @@
       clearTimeout(applyTimer);
       applyTimer = null;
     }
-    sendMpvSetProp('glsl-shaders', '');
+    const composer = ensureGlslComposer();
+    composer.layers.anime4k = [];
+    composer.apply();
     removePlayerUi();
     stopLayoutObserver();
     stopChromeIdleWatcher();

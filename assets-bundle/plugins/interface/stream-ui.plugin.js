@@ -63,6 +63,8 @@
     LV: 'LV', EE: 'EE',
   };
   const FLAG_CODE_RE = new RegExp(`\\b(${Object.keys(FLAG_CODE_MAP).join('|')})\\b`, 'g');
+  const FLAG_META_NEIGHBOR_RE =
+    /^(?:\d{3,4}p|UHD|4K|8K|HDR10\+?|HDR|DV|DoVi|HLG|WEB-?DL|WEBRip|WEBrip|WEB|Blu-?Ray|BluRay|BDRip|BRRip|HDTV|REMUX|DVDRip|HDRip|AMZN|NF|DSNP|ATVP|HULU|PCOK|x264|x265|h\.?264|h\.?265|HEVC|AVC|AV1|XviD|AAC|DDP?5\.?1|Atmos|TrueHD|DTS(?:-HD)?|AC3|EAC3|FLAC|Opus|MULTI|DUAL|DUB(?:BED)?|SUB(?:S|BED)?|REPACK|PROPER|INTERNAL|S\d{1,2}E\d{1,3})$/i;
   let flagDecorating = false;
 
   /**
@@ -76,19 +78,95 @@
   }
 
   /**
-   * Replaces UPPERCASE ISO2 tokens with flag emoji (skips size units like 30 GB).
-   * Case-sensitive so English words like "in"/"at" are never rewritten.
+   * @param {string} token
+   * @returns {boolean}
+   */
+  function isFlagMetaNeighbor(token) {
+    const raw = String(token || '').trim();
+    if (!raw) return false;
+    if (FLAG_META_NEIGHBOR_RE.test(raw)) return true;
+    if (/^\d+(?:\.\d+)?(?:GB|MB|TB|KB)$/i.test(raw)) return true;
+    const upper = raw.toUpperCase();
+    return raw === upper && Boolean(FLAG_CODE_MAP[upper]);
+  }
+
+  /**
+   * Previous whitespace/delimiter-separated token before `offset`.
+   * @param {string} full
+   * @param {number} offset
+   * @returns {string}
+   */
+  function tokenBefore(full, offset) {
+    const slice = full.slice(0, offset).replace(/[\s|\/•·,\[\](){}<>~+\-_.]+$/g, '');
+    const parts = slice.split(/[\s|\/•·,\[\](){}<>~+\-_.]+/);
+    return parts[parts.length - 1] || '';
+  }
+
+  /**
+   * Next whitespace/delimiter-separated token after `end`.
+   * @param {string} full
+   * @param {number} end
+   * @returns {string}
+   */
+  function tokenAfter(full, end) {
+    const slice = full.slice(end).replace(/^[\s|\/•·,\[\](){}<>~+\-_.]+/g, '');
+    const parts = slice.split(/[\s|\/•·,\[\](){}<>~+\-_.]+/);
+    return parts[0] || '';
+  }
+
+  /**
+   * True when an UPPERCASE ISO2 token is a stream language/country tag, not title text.
+   * @param {string} full
+   * @param {number} offset
+   * @param {string} match
+   * @returns {boolean}
+   */
+  function isLanguageTagContext(full, offset, match) {
+    const end = offset + match.length;
+    if ((match === 'GB' || match === 'MB' || match === 'TB' || match === 'KB') && offset > 0) {
+      const before = full.slice(Math.max(0, offset - 4), offset);
+      if (/\d\s*$/.test(before) || /\d$/.test(before)) return false;
+    }
+
+    if (full.trim() === match) return true;
+
+    const beforeChar = offset > 0 ? full[offset - 1] : '';
+    const afterChar = end < full.length ? full[end] : '';
+    if (
+      (beforeChar === '(' && afterChar === ')') ||
+      (beforeChar === '[' && afterChar === ']') ||
+      (beforeChar === '{' && afterChar === '}')
+    ) {
+      return true;
+    }
+
+    if (/[A-Za-z]/.test(beforeChar) || /[A-Za-z]/.test(afterChar)) return false;
+    if (beforeChar === '.' && offset >= 2 && /[A-Za-z]/.test(full[offset - 2])) return false;
+    if (afterChar === '.' && end + 1 < full.length && /[A-Za-z]/.test(full[end + 1])) {
+      const nextTok = tokenAfter(full, end);
+      if (!isFlagMetaNeighbor(nextTok)) return false;
+    }
+
+    const prevToken = tokenBefore(full, offset);
+    const nextToken = tokenAfter(full, end);
+    if (isFlagMetaNeighbor(prevToken) || isFlagMetaNeighbor(nextToken)) return true;
+
+    const leftDelim = offset === 0 || /[\s|\/•·,\[({~]/.test(beforeChar);
+    const rightDelim = end === full.length || /[\s|\/•·,\])\}~]/.test(afterChar);
+    if (leftDelim && rightDelim && !prevToken && !nextToken) return true;
+    return false;
+  }
+
+  /**
+   * Replaces UPPERCASE ISO2 tokens with flag emoji when they look like stream tags.
+   * Skips title runs (`NO.TIME.TO.DIE`, `IT Chapter Two`) and size units (`30 GB`).
    * @param {string} text
    * @returns {string}
    */
   function replaceLanguageCodesWithFlags(text) {
     return String(text || '').replace(FLAG_CODE_RE, (match, code, offset, full) => {
-      const upper = String(code);
-      if ((upper === 'GB' || upper === 'MB' || upper === 'TB' || upper === 'KB') && offset > 0) {
-        const before = full.slice(Math.max(0, offset - 4), offset);
-        if (/\d\s*$/.test(before) || /\d$/.test(before)) return match;
-      }
-      const country = FLAG_CODE_MAP[upper];
+      if (!isLanguageTagContext(full, offset, match)) return match;
+      const country = FLAG_CODE_MAP[String(code)];
       return country ? countryToFlag(country) || match : match;
     });
   }

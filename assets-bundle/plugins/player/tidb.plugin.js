@@ -31,6 +31,10 @@
 	const USE_INTRODB_SETTING = "use_introdb";
 	const USE_ANISKIP_SETTING = "use_aniskip";
 	const ANALYTICS_SETTING = "anonymous_usage_reporting";
+	const AUTOSKIP_COUNTDOWN_SETTING = "autoskip_countdown_seconds";
+	const DEFAULT_AUTOSKIP_COUNTDOWN_SEC = 10;
+	const MIN_AUTOSKIP_COUNTDOWN_SEC = 3;
+	const MAX_AUTOSKIP_COUNTDOWN_SEC = 30;
 	const PLUGIN_USER_AGENT = "MyStremio Intro Skip Plugin";
 	const SUBMIT_TARGET_THEINTRODB = "theintrodb";
 	const SUBMIT_TARGET_INTRODB = "introdb";
@@ -982,6 +986,12 @@
 		return fallback;
 	}
 
+	function normalizeAutoSkipCountdown(value) {
+		const parsed = Number(String(value ?? "").trim().replace(",", "."));
+		if (!Number.isFinite(parsed)) return DEFAULT_AUTOSKIP_COUNTDOWN_SEC;
+		return Math.min(MAX_AUTOSKIP_COUNTDOWN_SEC, Math.max(MIN_AUTOSKIP_COUNTDOWN_SEC, Math.round(parsed)));
+	}
+
 	function getVideoDurationMs(video) {
 		const playbackDuration = window.StremioCustomPlayback?.getDuration?.();
 		if (Number.isFinite(playbackDuration) && playbackDuration > 0) {
@@ -1445,6 +1455,7 @@
 			this.useIntroDb = true;
 			this.useAniSkip = true;
 			this.analyticsEnabled = true;
+			this.autoSkipCountdownSec = DEFAULT_AUTOSKIP_COUNTDOWN_SEC;
 			this.theme = "glass";
 			this.segmentButtonVisibility = Object.fromEntries(SEGMENT_TYPES.map((type) => [type, true]));
 			this.onTimeUpdate = null;
@@ -1611,6 +1622,16 @@
 				}
 
 				schema.push({
+					key: AUTOSKIP_COUNTDOWN_SETTING,
+					type: "input",
+					inputType: "number",
+					label: "AutoSkip delay (seconds)",
+					description: `Seconds to wait before AutoSkip jumps over a segment (${MIN_AUTOSKIP_COUNTDOWN_SEC}–${MAX_AUTOSKIP_COUNTDOWN_SEC}). Default ${DEFAULT_AUTOSKIP_COUNTDOWN_SEC}.`,
+					placeholder: String(DEFAULT_AUTOSKIP_COUNTDOWN_SEC),
+					defaultValue: String(DEFAULT_AUTOSKIP_COUNTDOWN_SEC)
+				});
+
+				schema.push({
 					key: ANALYTICS_SETTING,
 					type: "toggle",
 					label: "Anonymous usage reporting",
@@ -1666,6 +1687,7 @@
 			this.userApiKey = normalizeTheIntroDbApiKey(await this.getSetting(TIDB_API_KEY_SETTING));
 			this.introDbApiKey = normalizeIntroDbApiKey(await this.getSetting(INTRODB_API_KEY_SETTING));
 			this.analyticsEnabled = normalizeToggleValue(await this.getSetting(ANALYTICS_SETTING));
+			this.autoSkipCountdownSec = normalizeAutoSkipCountdown(await this.getSetting(AUTOSKIP_COUNTDOWN_SETTING));
 			if (this.analyticsEnabled) initAnalyticsOnce();
 
 			const visibility = {};
@@ -1811,7 +1833,6 @@
 				if (existingKey === segKey || segmentsOverlap(this._displayedSegment, seg)) {
 					this.updateSkipButtonSegment(existing, seg);
 					this.syncSkipButtonChromeVisibility();
-					this.syncAutoSkipCountdown();
 					return;
 				}
 			}
@@ -3178,17 +3199,13 @@
 			return true;
 		}
 
-		getAutoSkipCountdownLabel(segment) {
-			const name = (SEGMENT_SUBMIT_LABELS[segment?.type] || segment?.type || "segment").toLowerCase();
-			const remaining = Math.max(0, Math.ceil((Number(this._skipGraceUntil || 0) - Date.now()) / 1000));
-			return `Skipping ${name} in ${remaining}…`;
+		getAutoSkipCountdownMs() {
+			return normalizeAutoSkipCountdown(this.autoSkipCountdownSec) * 1000;
 		}
 
-		syncAutoSkipCountdown() {
-			const btn = document.getElementById(ACTIVE_BTN_ID);
-			const label = btn?.querySelector(".tidb-skip-label");
-			if (!btn || !label || !this._autoSkipPending || !this.activeSegment) return;
-			label.textContent = this.getAutoSkipCountdownLabel(this.activeSegment);
+		getSkippingLabel(segment) {
+			const name = SEGMENT_SUBMIT_LABELS[segment?.type] || capitalize(segment?.type || "segment");
+			return `Skipping ${name}`;
 		}
 
 		cancelPendingAutoSkip(segment) {
@@ -3246,7 +3263,7 @@
 					overflow: hidden;
 					isolation: isolate;
 				}
-				/* Elevated opacity sweep L→R over the 10s grace window. */
+				/* Elevated opacity sweep L→R over the AutoSkip / grace window. */
 				.tidb-skip-btn.tidb-skip-grace::after {
 					content: "";
 					position: absolute;
@@ -3255,7 +3272,7 @@
 					background: rgba(255, 255, 255, 0.22);
 					pointer-events: none;
 					z-index: 0;
-					animation: tidb-skip-opacity-sweep 10s linear forwards;
+					animation: tidb-skip-opacity-sweep var(--tidb-skip-grace-ms, 10000ms) linear forwards;
 				}
 				.tidb-skip-btn.tidb-skip-grace > * {
 					position: relative;
@@ -3338,7 +3355,6 @@
 				|| segmentsOverlap(this._displayedSegment, segment))) {
 				this.updateSkipButtonSegment(existing, segment);
 				this.syncSkipButtonChromeVisibility();
-				this.syncAutoSkipCountdown();
 				return;
 			}
 
@@ -3360,11 +3376,13 @@
 
 			const autoSkip = this.isAutoSkipPendingFor(segment);
 			this._autoSkipPending = autoSkip;
-			this._skipGraceUntil = Date.now() + 10000;
+			const graceMs = this.getAutoSkipCountdownMs();
+			this._skipGraceUntil = Date.now() + graceMs;
+			skipBtn.style.setProperty("--tidb-skip-grace-ms", `${graceMs}ms`);
 			const labelEl = document.createElement("span");
 			labelEl.className = "tidb-skip-label";
 			labelEl.textContent = autoSkip
-				? this.getAutoSkipCountdownLabel(segment)
+				? this.getSkippingLabel(segment)
 				: (SEGMENT_LABELS[segmentType] || "Skip Segment");
 
 			icon.src = "https://www.svgrepo.com/show/471906/skip-forward.svg";
@@ -3446,15 +3464,9 @@
 			// 10s grace: stay visible even if control bar hides; autoskip seeks at deadline.
 			this._skipBtnHovered = false;
 			this._skipGraceSegmentKey = segmentKey;
-			this._skipGraceUntil = Date.now() + 10000;
-			if (autoSkip) {
-				labelEl.textContent = this.getAutoSkipCountdownLabel(segment);
-			}
+			this._skipGraceUntil = Date.now() + graceMs;
 			this.clearSkipGraceTimer();
 			this.clearSkipCountdownTimer();
-			if (autoSkip) {
-				this._skipCountdownTimer = setInterval(() => this.syncAutoSkipCountdown(), 250);
-			}
 			this._skipGraceTimer = setTimeout(() => {
 				this._skipGraceTimer = null;
 				if (this._autoSkipPending) {
@@ -3464,7 +3476,7 @@
 				}
 				skipBtn.classList.remove("tidb-skip-grace");
 				this.syncSkipButtonChromeVisibility();
-			}, 10000);
+			}, graceMs);
 			this.startSkipChromeWatcher();
 			this.syncSkipButtonChromeVisibility();
 		}
