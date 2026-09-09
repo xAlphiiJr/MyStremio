@@ -96,7 +96,6 @@ The StreamUI plugin offers a clean and modern sidebar with folders to pick strea
 ---
 
 
-
 ### ⚙️ Settings
 
 MyStremio comes with a few custom settings including Favorite Languages, Plugins and Buffering.
@@ -121,7 +120,6 @@ In the Stremio settings you will find the **MyStremio** section. These include s
 - **Discord** Rich Presence by [REVENGE977](https://github.com/REVENGE977/) enhances the native Discord integration and shows additional info.
 
 ---
-
 
 
 ### 📺 Player
@@ -168,7 +166,6 @@ Additionally you can pick which addons can contribute metadata for your streams.
 MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay installed but stop contributing catalogs/streams in this desktop client. This only works locally!
 
 ---
-
 
 
 ### 💡 Planned Features
