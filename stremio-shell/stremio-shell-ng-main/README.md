@@ -1,3 +1,5 @@
+> **UPSTREAM leftover** from [Stremio/stremio-shell-ng](https://github.com/Stremio/stremio-shell-ng). MyStremio packaging lives in this repo's root `README.md`, `package-release.ps1`, and `setup/MyStremio.iss`.
+
 ## Stremio shell: new gen
 
 A Windows-only shell using WebView2 and MPV

@@ -785,6 +785,13 @@ impl MainWindow {
     fn on_power_resume_notice(&self) {
         self.server
             .recover_after_resume(self.streaming_server_ready_notice.sender());
+        self.webview.wake_after_resume();
+        if let Some(hwnd) = self.window.handle.hwnd() {
+            self.webview.fit_to_window(Some(hwnd));
+        }
+        self.webview.set_visible(true);
+        self.player.recover_after_resume();
+        self.wake_webview_after_show();
     }
     fn on_streaming_server_ready_notice(&self) {
         if let Ok(web_channel) = self.webview.channel.try_borrow() {
@@ -818,6 +825,8 @@ impl MainWindow {
             saved_style.set_active(hwnd);
         }
         self.tray.tray_show_hide.set_checked(self.window.visible());
+        self.server
+            .recover_after_resume(self.streaming_server_ready_notice.sender());
         self.wake_webview_after_show();
         self.transmit_window_state_change();
         self.transmit_window_visibility_change();

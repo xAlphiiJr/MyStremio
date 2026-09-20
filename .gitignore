@@ -1,6 +1,8 @@
 .tmp/
 .tmp_*.txt
 backups/
+**/__pycache__/
+*.pyc
 
 stremio-shell/stremio-shell-ng-main/target/
 stremio-shell/stremio-shell-ng-main/libmpv-2.dll
@@ -12,5 +14,7 @@ release/*.zip
 /*.exe
 /*.dll
 server.js
+
+stremio-shell/stremio-shell-ng-main/webui/mystremio-preboot.js
 
 .env

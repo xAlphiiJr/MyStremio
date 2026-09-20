@@ -10,7 +10,7 @@ mod theintrodb_proxy;
 use crate::stremio_app::discord_presence;
 use paths::{
     bundled_plugins_dir, bundled_root, bundled_themes_dir, ensure_asset_dirs,
-    ensure_webview_user_data_dir, plugins_dir, themes_dir,
+    ensure_webview_user_data_dir, is_allowed_open_folder, plugins_dir, themes_dir,
 };
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
@@ -18,7 +18,8 @@ use storage::{
     clear_registered_schema, get_plugin_config, get_plugin_setting, get_registered_schema,
     list_plugin_files, list_theme_files, load_registered_schemas, read_asset_metadata,
     read_plugin_source, read_theme_css, read_autoskip_settings, read_player_volume,
-    read_ui_scale_percent, read_user_preferences, register_plugin_schema, save_autoskip_settings,
+    read_ui_scale_percent, read_user_preferences_public, register_plugin_schema,
+    save_autoskip_settings,
     save_player_volume, save_plugin_setting, save_ui_scale_percent, save_user_preferences,
     mark_ui_scale_user_bind,
 };
@@ -230,8 +231,10 @@ pub fn handle_request(message: &Value) -> Option<String> {
                 .get("path")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            if !folder.is_empty() {
+            if is_allowed_open_folder(folder) {
                 open::that(folder).ok();
+            } else if !folder.is_empty() {
+                eprintln!("[MyStremio] refused open-folder outside allowlisted dirs: {folder}");
             }
             json!(true)
         }
@@ -249,7 +252,7 @@ pub fn handle_request(message: &Value) -> Option<String> {
             let relative_path = params.get("path").and_then(|v| v.as_str()).unwrap_or("");
             json!(read_asset_metadata(relative_path))
         }
-        "get-user-preferences" => json!(read_user_preferences()),
+        "get-user-preferences" => json!(read_user_preferences_public()),
         "save-user-preferences" => {
             save_user_preferences(&params);
             json!(true)

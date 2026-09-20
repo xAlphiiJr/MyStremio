@@ -533,19 +533,43 @@ fn walk_files_inner(root: &Path, current: &Path, extension: &str, files: &mut Ve
     }
 }
 
+fn is_safe_relative_asset(relative_path: &str) -> bool {
+    let normalized = relative_path.replace('\\', "/");
+    if normalized.is_empty() || Path::new(relative_path).is_absolute() {
+        return false;
+    }
+    !normalized.split('/').any(|segment| {
+        segment.is_empty() || segment == "." || segment == ".." || segment.contains(':')
+    })
+}
+
+fn is_path_inside(root: &Path, candidate: &Path) -> bool {
+    let Ok(root) = fs::canonicalize(root) else {
+        return false;
+    };
+    let candidate = match fs::canonicalize(candidate) {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+    candidate.starts_with(&root)
+}
+
 pub fn resolve_asset_path(relative_path: &str) -> Option<PathBuf> {
     let normalized = relative_path.replace('\\', "/");
-    if normalized.is_empty() {
+    if !is_safe_relative_asset(&normalized) {
         return None;
     }
 
-    let direct = plugins_dir().join(&normalized);
-    if direct.exists() {
+    let plugins = plugins_dir();
+    let themes = themes_dir();
+
+    let direct = plugins.join(&normalized);
+    if direct.exists() && is_path_inside(&plugins, &direct) {
         return Some(direct);
     }
 
-    let theme_direct = themes_dir().join(&normalized);
-    if theme_direct.exists() {
+    let theme_direct = themes.join(&normalized);
+    if theme_direct.exists() && is_path_inside(&themes, &theme_direct) {
         return Some(theme_direct);
     }
 
@@ -553,17 +577,67 @@ pub fn resolve_asset_path(relative_path: &str) -> Option<PathBuf> {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())?;
 
-    for file in walk_files(&plugins_dir(), PLUGIN_EXT) {
+    for file in walk_files(&plugins, PLUGIN_EXT) {
         if file.ends_with(&file_name) {
-            return Some(plugins_dir().join(&file));
+            let path = plugins.join(&file);
+            if is_path_inside(&plugins, &path) {
+                return Some(path);
+            }
         }
     }
 
-    for file in walk_files(&themes_dir(), THEME_EXT) {
+    for file in walk_files(&themes, THEME_EXT) {
         if file.ends_with(&file_name) {
-            return Some(themes_dir().join(&file));
+            let path = themes.join(&file);
+            if is_path_inside(&themes, &path) {
+                return Some(path);
+            }
         }
     }
 
     None
+}
+
+pub fn is_allowed_open_folder(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    let candidate = PathBuf::from(path);
+    if !candidate.is_dir() {
+        return false;
+    }
+    let Ok(canon) = fs::canonicalize(&candidate) else {
+        return false;
+    };
+    let roots = [
+        app_data_dir(),
+        bundled_root(),
+        bundled_plugins_dir(),
+        bundled_themes_dir(),
+        bundled_root().join("shaders"),
+    ];
+    roots.iter().any(|root| {
+        fs::canonicalize(root)
+            .ok()
+            .is_some_and(|root| canon.starts_with(&root))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_asset_path_rejects_traversal() {
+        assert!(resolve_asset_path("../secret.plugin.js").is_none());
+        assert!(resolve_asset_path("foo/../../bar.plugin.js").is_none());
+        assert!(resolve_asset_path(r"C:\Windows\notepad.exe").is_none());
+        assert!(resolve_asset_path("").is_none());
+    }
+
+    #[test]
+    fn open_folder_rejects_empty_and_files() {
+        assert!(!is_allowed_open_folder(""));
+        assert!(!is_allowed_open_folder(r"C:\Windows\System32\cmd.exe"));
+    }
 }

@@ -83,10 +83,26 @@ fn main() {
         }
 
         if !copied {
-            panic!(
-                "Missing {}. Run: npm run prepare (from stremio-custom-shell) or place libmpv-2_x64.zip in the project root.",
-                archive
-            );
+            if env::var("MYSTREMIO_SKIP_LIBMPV").ok().as_deref() == Some("1") {
+                println!("cargo:warning=MYSTREMIO_SKIP_LIBMPV=1; skipping libmpv copy (CI/link-only)");
+            } else {
+                panic!(
+                    "Missing {}. Run: npm run prepare (from stremio-custom-shell) or place libmpv-2_x64.zip in the project root.",
+                    archive
+                );
+            }
+        }
+    }
+
+    let preboot_src = PathBuf::from("assets/custom_preboot.js");
+    let preboot_dst = PathBuf::from("webui/mystremio-preboot.js");
+    println!("cargo:rerun-if-changed=assets/custom_preboot.js");
+    if preboot_src.exists() {
+        if let Some(parent) = preboot_dst.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Err(err) = fs::copy(&preboot_src, &preboot_dst) {
+            println!("cargo:warning=Could not generate webui/mystremio-preboot.js: {err}");
         }
     }
 }

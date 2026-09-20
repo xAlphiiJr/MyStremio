@@ -1,7 +1,7 @@
 /**
  * @name Anime4K
  * @description Upscale anime with Anime4K GLSL shaders (mpv gpu-next). Mode via player control-bar button.
- * @version 1.3.0
+ * @version 1.3.1
  * @author bloc97; adapted by MyStremio
  * @credit Shaders by bloc97/Anime4K (https://github.com/bloc97/Anime4K)
  * @category player
@@ -11,7 +11,7 @@
 (function () {
   'use strict';
 
-  const PLUGIN_VERSION = '1.3.0';
+  const PLUGIN_VERSION = '1.3.1';
   const PLUGIN_ID = 'anime4k';
   const PLUGIN_REF = 'player/anime4k.plugin.js';
   const LOG_PREFIX = '[Anime4K]';
@@ -243,11 +243,14 @@
    * Shared GLSL chain for Anime4K (and any later shader layers).
    */
   function ensureGlslComposer() {
-    if (window.StremioCustomGlsl) return window.StremioCustomGlsl;
+    const prev = window.StremioCustomGlsl;
     window.StremioCustomGlsl = {
-      layers: { anime4k: [] },
+      layers: {
+        dim: prev?.layers?.dim || [],
+        anime4k: prev?.layers?.anime4k || [],
+      },
       apply() {
-        const files = (this.layers.anime4k || []).filter(Boolean);
+        const files = [...(this.layers.dim || []), ...(this.layers.anime4k || [])].filter(Boolean);
         sendMpvSetProp('glsl-shaders', files.join(';'));
       },
     };

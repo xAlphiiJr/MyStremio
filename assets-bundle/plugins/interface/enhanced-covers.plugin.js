@@ -2,7 +2,7 @@
  * @name EnhancedCovers
  * @description Widens the cover images in the Continue Watching section using background images with logo overlay.
  * @updateUrl none
- * @version 26.0.6
+ * @version 26.0.9
  * @author Fxy / MrBlu03 · adapted for MyStremio
  */
 
@@ -58,10 +58,12 @@
 
   // Inject CSS to widen the poster containers - only in continue-watching-row
   function injectStyles() {
-    if (document.getElementById("enhanced-covers-styles")) return;
-
-    const style = document.createElement("style");
-    style.id = "enhanced-covers-styles";
+    let style = document.getElementById("enhanced-covers-styles");
+    if (!style) {
+      style = document.createElement("style");
+      style.id = "enhanced-covers-styles";
+      (document.head || document.documentElement).appendChild(style);
+    }
     style.textContent = `
       /* Only target Continue Watching row using exact class */
       [class*="continue-watching-row"] [class*="meta-item-container"] {
@@ -167,7 +169,6 @@
         position: relative;
       }
     `;
-    document.head.appendChild(style);
   }
 
   // Extract IMDB ID from various URL formats

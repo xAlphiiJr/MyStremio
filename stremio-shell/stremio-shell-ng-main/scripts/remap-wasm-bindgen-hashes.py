@@ -11,9 +11,17 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WEBUI_HASH = "eb5752673c6ac87e7137a6c3cca21a6980028cf9"
-WORKER = ROOT / "webui" / WEBUI_HASH / "scripts" / "worker.js"
-DEST_WASM = ROOT / "webui" / WEBUI_HASH / "binaries" / "stremio_core_web_bg.wasm"
+
+
+def discover_hashed_webui(webui_dir: Path) -> Path:
+    matches = [
+        child
+        for child in webui_dir.iterdir()
+        if child.is_dir() and (child / "scripts" / "worker.js").is_file()
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(f"Expected one hashed webui bundle under {webui_dir}, found {[m.name for m in matches]}")
+    return matches[0]
 
 
 def collect_hashed(text: str) -> dict[str, list[str]]:
@@ -113,14 +121,18 @@ def main(argv: list[str]) -> int:
         if len(argv) > 2
         else new_js_path.with_name("stremio_core_web_bg.wasm")
     )
+    hashed = discover_hashed_webui(ROOT / "webui")
+    worker = hashed / "scripts" / "worker.js"
+    dest_wasm = hashed / "binaries" / "stremio_core_web_bg.wasm"
+
     if not new_js_path.is_file():
         raise SystemExit(f"Missing {new_js_path}")
     if not new_wasm_path.is_file():
         raise SystemExit(f"Missing {new_wasm_path}")
-    if not WORKER.is_file():
-        raise SystemExit(f"Missing {WORKER}")
+    if not worker.is_file():
+        raise SystemExit(f"Missing {worker}")
 
-    old_js = WORKER.read_text(encoding="utf-8", errors="strict")
+    old_js = worker.read_text(encoding="utf-8", errors="strict")
     new_js = new_js_path.read_text(encoding="utf-8", errors="strict")
     mapping = build_mapping(old_js, new_js)
     print(f"Remapping {len(mapping)} hashed symbol(s)")
@@ -139,11 +151,12 @@ def main(argv: list[str]) -> int:
     if "hb881961d1559463a" in patched:
         raise RuntimeError("Old crash symbol still present in worker.js")
 
-    WORKER.write_text(patched, encoding="utf-8", newline="")
-    DEST_WASM.write_bytes(new_wasm_path.read_bytes())
-    md5 = hashlib.md5(DEST_WASM.read_bytes()).hexdigest()
-    print(f"Wrote {WORKER}")
-    print(f"Wrote {DEST_WASM} md5={md5}")
+    worker.write_text(patched, encoding="utf-8", newline="")
+    dest_wasm.parent.mkdir(parents=True, exist_ok=True)
+    dest_wasm.write_bytes(new_wasm_path.read_bytes())
+    md5 = hashlib.md5(dest_wasm.read_bytes()).hexdigest()
+    print(f"Wrote {worker}")
+    print(f"Wrote {dest_wasm} md5={md5}")
     return 0
 
 

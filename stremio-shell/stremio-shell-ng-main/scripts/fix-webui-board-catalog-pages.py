@@ -16,21 +16,7 @@ LOAD_RANGE_NEEDLE = (
     'return[E({model:"board",action:t}),a]'
 )
 
-# Minimal hook (v1) already shipped in some builds — upgrade in place.
-HOOK_V1 = (
-    'i.useEffect(function(){window.__mystremioBoardLoadNextPage=function(n){'
-    'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadNextPage",args:n}},"board")};'
-    'return function(){try{delete window.__mystremioBoardLoadNextPage}catch(_){}}},[e]);'
-)
-
-# Sync row filter without Continue Watching exclusion (v2).
-SYNC_ROWS_FILTER_V2 = (
-    'var rows=[].slice.call(board.querySelectorAll(\'[class*="meta-row-container"]\')).filter(function(r){'
-    'return String(r.className||"").indexOf("placeholder")<0;'
-    '});'
-)
-
-# Sync row filter excluding Continue Watching + placeholders (v3).
+# Sync row filter excluding Continue Watching + placeholders.
 SYNC_ROWS_FILTER_V3 = (
     'var rows=[].slice.call(board.querySelectorAll(\'[class*="meta-row-container"]\')).filter(function(r){'
     'var cn=String(r.className||"");'
@@ -129,74 +115,12 @@ HOOK_V2 = (
     '},[e,mystremioBumpReveal]);'
 )
 
-# Insert LoadVisibleRange into an already-patched HOOK_V2 without rebuilding from stock.
-LOAD_VISIBLE_RANGE_INSERT_NEEDLE = (
-    'window.__mystremioBoardLoadNextPage=function(n){'
-    'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadNextPage",args:n}},"board")'
-    '};'
-)
-LOAD_VISIBLE_RANGE_INSERT = (
-    LOAD_VISIBLE_RANGE_INSERT_NEEDLE
-    + 'window.__mystremioBoardLoadVisibleRange=function(range){'
-    'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadRange",'
-    'args:range||{start:0,end:4}}},"board")'
-    '};'
-)
-
-# Remove aggressive mount autoload LoadRange {0,12}; keep hook only (scroll-progressive).
-LOAD_VISIBLE_STRIP_AUTOLOAD_NEEDLE = (
-    'window.__mystremioBoardLoadVisibleRange=function(range){'
-    'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadRange",'
-    'args:range||{start:0,end:8}}},"board")'
-    '};'
-    'try{e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadRange",'
-    'args:{start:0,end:12}}},"board")}catch(_){}'
-    'window.__mystremioBoardResolveCatalogIndex=function(title){'
-)
-LOAD_VISIBLE_STRIP_AUTOLOAD = (
-    'window.__mystremioBoardLoadVisibleRange=function(range){'
-    'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadRange",'
-    'args:range||{start:0,end:4}}},"board")'
-    '};'
-    'window.__mystremioBoardResolveCatalogIndex=function(title){'
-)
-# Also strip if default end was already 8 with autoload using start:0,end:12 only.
-LOAD_VISIBLE_STRIP_AUTOLOAD_NEEDLE_ALT = (
-    'try{e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadRange",'
-    'args:{start:0,end:12}}},"board")}catch(_){}'
-)
-LOAD_VISIBLE_RANGE_CLEANUP_NEEDLE = (
-    'try{delete window.__mystremioBoardLoadNextPage}catch(_){}'
-    'try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}'
-)
-LOAD_VISIBLE_RANGE_CLEANUP = (
-    'try{delete window.__mystremioBoardLoadNextPage}catch(_){}'
-    'try{delete window.__mystremioBoardLoadVisibleRange}catch(_){}'
-    'try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}'
-)
-
 LOAD_RANGE_REPLACEMENT = (
     'a=i.useCallback(function(t){e.transport.dispatch({action:"CatalogsWithExtra",'
     'args:{action:"LoadRange",args:t}},"board")},[]);'
     'var mystremioRevealState=i.useState(0),mystremioBumpReveal=mystremioRevealState[1];'
     + HOOK_V2
     + 'return[E({model:"board",action:t}),a]'
-)
-
-# Prior shipped hook without RequestRender / useState — upgrade in place.
-HOOK_V2_LEGACY_PREFIX = (
-    'a=i.useCallback(function(t){e.transport.dispatch({action:"CatalogsWithExtra",'
-    'args:{action:"LoadRange",args:t}},"board")},[]);'
-    'i.useEffect(function(){'
-    'function mystremioCatalogLabel'
-)
-HOOK_V2_LEGACY_CLEANUP = (
-    'return function(){'
-    'try{delete window.__mystremioBoardLoadNextPage}catch(_){}'
-    'try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}'
-    'try{delete window.__mystremioBoardSyncCatalogIndices}catch(_){}'
-    '}'
-    '},[e]);'
 )
 
 # Ensure HOOK_V2 / LOAD_RANGE_REPLACEMENT are single strings (not tuples).
@@ -208,16 +132,6 @@ SLICE_NEEDLE = ".slice(0,I.CATALOG_PREVIEW_SIZE)"
 SLICE_REPLACEMENT = (
     ".slice(0,(window.__mystremioBoardReveal&&window.__mystremioBoardReveal"
     "[mystremioCatalogIndex])||I.CATALOG_PREVIEW_SIZE)"
-)
-# When a previous build removed the slice entirely, re-insert the reveal form.
-SLICE_REMOVED_NEEDLE = (
-    'meta-items-container"]},_.isValidElementType(n)?N.map(function(e,t){'
-    "return r.createElement(n,E(E({},e)"
-)
-SLICE_REMOVED_REPLACEMENT = (
-    'meta-items-container"]},_.isValidElementType(n)?N.slice(0,(window.__mystremioBoardReveal'
-    "&&window.__mystremioBoardReveal[mystremioCatalogIndex])||10).map(function(e,t){"
-    "return r.createElement(n,E(E({},e)"
 )
 REVEAL_SLICE_MARKER = (
     "window.__mystremioBoardReveal&&window.__mystremioBoardReveal[mystremioCatalogIndex]"
@@ -270,100 +184,28 @@ def patch_file(path: Path) -> int:
     text = path.read_text(encoding="utf-8", errors="strict")
     original = text
     changed = 0
+    missing = 0
 
-    if LOAD_VISIBLE_STRIP_AUTOLOAD_NEEDLE in text:
-        text = text.replace(LOAD_VISIBLE_STRIP_AUTOLOAD_NEEDLE, LOAD_VISIBLE_STRIP_AUTOLOAD, 1)
-        changed += 1
-        print(f"Removed Board LoadRange mount autoload (scroll-progressive) in {path}")
-    elif LOAD_VISIBLE_STRIP_AUTOLOAD_NEEDLE_ALT in text:
-        text = text.replace(LOAD_VISIBLE_STRIP_AUTOLOAD_NEEDLE_ALT, "", 1)
-        changed += 1
-        print(f"Stripped Board LoadRange {{0,12}} autoload dispatch in {path}")
-        if "args:range||{start:0,end:8}" in text:
-            text = text.replace(
-                "args:range||{start:0,end:8}",
-                "args:range||{start:0,end:4}",
-                1,
-            )
-            changed += 1
-    elif "window.__mystremioBoardLoadVisibleRange" in text:
-        print(f"Board LoadVisibleRange hook already present in {path}")
-    elif LOAD_VISIBLE_RANGE_INSERT_NEEDLE in text:
-        text = text.replace(LOAD_VISIBLE_RANGE_INSERT_NEEDLE, LOAD_VISIBLE_RANGE_INSERT, 1)
-        changed += 1
-        print(f"Inserted Board LoadVisibleRange hook in {path}")
-        if LOAD_VISIBLE_RANGE_CLEANUP_NEEDLE in text:
-            text = text.replace(LOAD_VISIBLE_RANGE_CLEANUP_NEEDLE, LOAD_VISIBLE_RANGE_CLEANUP, 1)
-            changed += 1
-            print(f"Updated Board hook cleanup for LoadVisibleRange in {path}")
-
-    GET_COUNT_NEEDLE = (
-        'window.__mystremioBoardResolveCatalogIndex=function(title){'
-    )
-    GET_COUNT_INSERT = (
-        'window.__mystremioBoardGetCatalogItemCount=function(n){'
-        'return e.transport.getState("board").then(function(state){'
-        'var cat=state&&state.catalogs&&state.catalogs[n];'
-        'if(!cat||!cat.content)return 0;'
-        'if(cat.content.type==="Ready"&&Array.isArray(cat.content.content))'
-        'return cat.content.content.length;'
-        'return 0;'
-        '})'
-        '};'
-        'window.__mystremioBoardResolveCatalogIndex=function(title){'
-    )
-    if "window.__mystremioBoardGetCatalogItemCount" in text:
-        print(f"Board GetCatalogItemCount hook already present in {path}")
-    elif GET_COUNT_NEEDLE in text:
-        text = text.replace(GET_COUNT_NEEDLE, GET_COUNT_INSERT, 1)
-        changed += 1
-        print(f"Inserted Board GetCatalogItemCount hook in {path}")
-        cleanup_count_needle = (
-            'try{delete window.__mystremioBoardLoadVisibleRange}catch(_){}'
-            'try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}'
-        )
-        cleanup_count = (
-            'try{delete window.__mystremioBoardLoadVisibleRange}catch(_){}'
-            'try{delete window.__mystremioBoardGetCatalogItemCount}catch(_){}'
-            'try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}'
-        )
-        if (
-            "delete window.__mystremioBoardGetCatalogItemCount" not in text
-            and cleanup_count_needle in text
-        ):
-            text = text.replace(cleanup_count_needle, cleanup_count, 1)
-            changed += 1
-            print(f"Updated Board hook cleanup for GetCatalogItemCount in {path}")
-
-    if "window.__mystremioBoardSyncCatalogIndices" in text:
-        print(f"Board catalog index sync hook already present in {path}")
-    elif HOOK_V1 in text:
-        text = text.replace(HOOK_V1, HOOK_V2, 1)
-        changed += 1
-        print(f"Upgraded Board LoadNextPage hook to v2 in {path}")
+    if (
+        "window.__mystremioBoardLoadNextPage" in text
+        and "window.__mystremioBoardSyncCatalogIndices" in text
+        and "window.__mystremioBoardRequestRender" in text
+        and "mystremioBumpReveal" in text
+    ):
+        print(f"Board LoadNextPage/sync hooks already present in {path}")
     elif LOAD_RANGE_NEEDLE in text:
         text = text.replace(LOAD_RANGE_NEEDLE, LOAD_RANGE_REPLACEMENT, 1)
         changed += 1
-        print(f"Patched Board LoadNextPage hook (v2) in {path}")
-    elif "window.__mystremioBoardLoadNextPage" in text:
-        print(
-            f"WARNING: Board LoadNextPage present but v2 upgrade needle not found in {path}",
-            file=sys.stderr,
-        )
+        print(f"Patched Board LoadNextPage hook in {path}")
     else:
-        print(f"WARNING: Board LoadRange needle not found in {path}", file=sys.stderr)
+        print(f"ERROR: Board LoadRange needle not found in {path}", file=sys.stderr)
+        missing += 1
 
-    if SYNC_ROWS_FILTER_V2 in text:
-        text = text.replace(SYNC_ROWS_FILTER_V2, SYNC_ROWS_FILTER_V3, 1)
-        changed += 1
-        print(f"Upgraded SyncCatalogIndices to exclude Continue Watching in {path}")
-    elif SYNC_ROWS_FILTER_V3 in text:
+    if SYNC_ROWS_FILTER_V3 in text:
         print(f"SyncCatalogIndices Continue Watching filter already present in {path}")
-    elif "window.__mystremioBoardSyncCatalogIndices" in text:
-        print(
-            f"WARNING: SyncCatalogIndices present but row filter needle not found in {path}",
-            file=sys.stderr,
-        )
+    else:
+        print(f"ERROR: SyncCatalogIndices v3 filter not found in {path}", file=sys.stderr)
+        missing += 1
 
     if REVEAL_SLICE_MARKER in text:
         print(f"MetaRow reveal slice already present in {path}")
@@ -371,48 +213,9 @@ def patch_file(path: Path) -> int:
         text = text.replace(SLICE_NEEDLE, SLICE_REPLACEMENT, 1)
         changed += 1
         print(f"Patched MetaRow preview slice to growing reveal in {path}")
-    elif SLICE_REMOVED_NEEDLE in text:
-        text = text.replace(SLICE_REMOVED_NEEDLE, SLICE_REMOVED_REPLACEMENT, 1)
-        changed += 1
-        print(f"Re-inserted MetaRow reveal slice in {path}")
     else:
-        print(f"WARNING: MetaRow slice needle not found in {path}", file=sys.stderr)
-
-    if "window.__mystremioBoardRequestRender" in text and "mystremioBumpReveal" in text:
-        print(f"Board RequestRender hook already present in {path}")
-    elif HOOK_V2_LEGACY_PREFIX in text:
-        text = text.replace(
-            HOOK_V2_LEGACY_PREFIX,
-            (
-                'a=i.useCallback(function(t){e.transport.dispatch({action:"CatalogsWithExtra",'
-                'args:{action:"LoadRange",args:t}},"board")},[]);'
-                "var mystremioRevealState=i.useState(0),mystremioBumpReveal=mystremioRevealState[1];"
-                "i.useEffect(function(){"
-                "window.__mystremioBoardRequestRender=function(){"
-                "mystremioBumpReveal(function(x){return x+1})"
-                "};"
-                "function mystremioCatalogLabel"
-            ),
-            1,
-        )
-        changed += 1
-        print(f"Upgraded Board hook with RequestRender useState in {path}")
-        if HOOK_V2_LEGACY_CLEANUP in text:
-            text = text.replace(
-                HOOK_V2_LEGACY_CLEANUP,
-                (
-                    "return function(){"
-                    "try{delete window.__mystremioBoardLoadNextPage}catch(_){}"
-                    "try{delete window.__mystremioBoardResolveCatalogIndex}catch(_){}"
-                    "try{delete window.__mystremioBoardSyncCatalogIndices}catch(_){}"
-                    "try{delete window.__mystremioBoardRequestRender}catch(_){}"
-                    "}"
-                    "},[e,mystremioBumpReveal]);"
-                ),
-                1,
-            )
-            changed += 1
-            print(f"Updated Board hook cleanup/deps for RequestRender in {path}")
+        print(f"ERROR: MetaRow slice needle not found in {path}", file=sys.stderr)
+        missing += 1
 
     if PLACEHOLDER_NEEDLE in text:
         text = text.replace(PLACEHOLDER_NEEDLE, PLACEHOLDER_REPLACEMENT, 1)
@@ -421,7 +224,8 @@ def patch_file(path: Path) -> int:
     elif PLACEHOLDER_REPLACEMENT in text:
         print(f"MetaRow placeholders already patched in {path}")
     else:
-        print(f"WARNING: MetaRow placeholder needle not found in {path}", file=sys.stderr)
+        print(f"ERROR: MetaRow placeholder needle not found in {path}", file=sys.stderr)
+        missing += 1
 
     if BOARD_READY_NEEDLE in text:
         text = text.replace(BOARD_READY_NEEDLE, BOARD_READY_REPLACEMENT, 1)
@@ -430,7 +234,8 @@ def patch_file(path: Path) -> int:
     elif "mystremioCatalogIndex:a" in text and 'case"Ready"' in text:
         print(f"Board Ready mystremioCatalogIndex already present in {path}")
     else:
-        print(f"WARNING: Board Ready MetaRow needle not found in {path}", file=sys.stderr)
+        print(f"ERROR: Board Ready MetaRow needle not found in {path}", file=sys.stderr)
+        missing += 1
 
     if BOARD_ERR_NEEDLE in text:
         text = text.replace(BOARD_ERR_NEEDLE, BOARD_ERR_REPLACEMENT, 1)
@@ -439,7 +244,8 @@ def patch_file(path: Path) -> int:
     elif 'message:t.content.content,mystremioCatalogIndex:a' in text:
         print(f"Board Err mystremioCatalogIndex already present in {path}")
     else:
-        print(f"WARNING: Board Err MetaRow needle not found in {path}", file=sys.stderr)
+        print(f"ERROR: Board Err MetaRow needle not found in {path}", file=sys.stderr)
+        missing += 1
 
     if METAROW_PROPS_NEEDLE in text:
         text = text.replace(METAROW_PROPS_NEEDLE, METAROW_PROPS_REPLACEMENT, 1)
@@ -448,7 +254,8 @@ def patch_file(path: Path) -> int:
     elif "mystremioCatalogIndex=e.mystremioCatalogIndex" in text:
         print(f"MetaRow mystremioCatalogIndex prop already present in {path}")
     else:
-        print(f"WARNING: MetaRow props needle not found in {path}", file=sys.stderr)
+        print(f"ERROR: MetaRow props needle not found in {path}", file=sys.stderr)
+        missing += 1
 
     if METAROW_ROOT_NEEDLE in text:
         text = text.replace(METAROW_ROOT_NEEDLE, METAROW_ROOT_REPLACEMENT, 1)
@@ -457,10 +264,13 @@ def patch_file(path: Path) -> int:
     elif '"data-mystremio-catalog-index":"number"==typeof mystremioCatalogIndex' in text:
         print(f"MetaRow root catalog index attribute already present in {path}")
     else:
-        print(f"WARNING: MetaRow root needle not found in {path}", file=sys.stderr)
+        print(f"ERROR: MetaRow root needle not found in {path}", file=sys.stderr)
+        missing += 1
 
     if text != original:
         path.write_text(text, encoding="utf-8", newline="")
+    if missing:
+        return 1
     return 0 if changed or (
         text == original
         and "window.__mystremioBoardSyncCatalogIndices" in text

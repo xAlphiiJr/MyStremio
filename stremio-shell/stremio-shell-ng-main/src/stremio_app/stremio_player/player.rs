@@ -12,11 +12,13 @@ use winapi::shared::windef::HWND;
 
 use crate::stremio_app::stremio_player::{
     CmdVal, InMsg, InMsgArgs, InMsgFn, MpvCmd, PlayerEnded, PlayerEvent, PlayerProprChange,
-    PlayerResponse, PropKey, PropVal,
+    PlayerResponse, PropKey, PropVal, StrProp,
 };
 
 /// Last `glsl-shaders` value applied via `mpv-set-prop` (re-applied after each loadfile).
 static LAST_GLSL_SHADERS: Mutex<String> = Mutex::new(String::new());
+/// Last `glsl-shader-opts` (dim factor) re-applied after each loadfile.
+static LAST_GLSL_SHADER_OPTS: Mutex<String> = Mutex::new(String::new());
 
 /// Last native subtitle style props. React does not re-send unchanged values
 /// after the next `loadfile`, so MPV would otherwise snap back to defaults.
@@ -56,6 +58,27 @@ struct ObserveProperty {
 #[derive(Default)]
 pub struct Player {
     pub channel: ipc::Channel,
+}
+
+impl Player {
+    /// Re-apply the D3D11 VO after sleep / GPU reset so video can paint again.
+    pub fn recover_after_resume(&self) {
+        let Ok(channel) = self.channel.try_borrow() else {
+            return;
+        };
+        let Some((tx, _)) = channel.as_ref() else {
+            return;
+        };
+        if let Ok(payload) = serde_json::to_string(&InMsg(
+            InMsgFn::MpvSetProp,
+            InMsgArgs::StProp(
+                PropKey::Str(StrProp::Vo),
+                PropVal::Str("gpu-next,gpu,".to_string()),
+            ),
+        )) {
+            tx.send(payload).ok();
+        }
+    }
 }
 
 impl PartialUi for Player {
@@ -182,11 +205,24 @@ fn apply_stored_glsl_shaders(mpv: &Mpv) {
     if let Err(error) = mpv.set_property("glsl-shaders", value) {
         eprintln!("cannot re-apply glsl-shaders after loadfile: '{error:#}'");
     }
+    let opts = match LAST_GLSL_SHADER_OPTS.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => String::new(),
+    };
+    if let Err(error) = mpv.set_property("glsl-shader-opts", opts) {
+        eprintln!("cannot re-apply glsl-shader-opts after loadfile: '{error:#}'");
+    }
 }
 
 /// Remember the last `glsl-shaders` string so loadfile can restore it.
 fn remember_glsl_shaders(value: &str) {
     if let Ok(mut guard) = LAST_GLSL_SHADERS.lock() {
+        *guard = value.to_string();
+    }
+}
+
+fn remember_glsl_shader_opts(value: &str) {
+    if let Ok(mut guard) = LAST_GLSL_SHADER_OPTS.lock() {
         *guard = value.to_string();
     }
 }
@@ -442,6 +478,9 @@ fn create_message_thread(
                     };
                     if name_str == "glsl-shaders" {
                         remember_glsl_shaders(&value);
+                    }
+                    if name_str == "glsl-shader-opts" {
+                        remember_glsl_shader_opts(&value);
                     }
                     remember_subtitle_str(&name_str, &value);
                     set_property(name, value, &mpv);

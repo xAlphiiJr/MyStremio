@@ -141,6 +141,65 @@ html {
     transform: none !important;
 }
 
+/* Route pages: stock fade-in blacks the whole screen for ~140ms. */
+#app [class*="board-container"].animation-fade-in,
+#app [class*="discover-container"].animation-fade-in,
+#app [class*="library-container"].animation-fade-in,
+#app [class*="addons-container"].animation-fade-in,
+#app [class*="settings-container"].animation-fade-in,
+#app [class*="search-container"].animation-fade-in,
+#app [class*="calendar"].animation-fade-in {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+}
+
+/* Fade class often sits on a wrapper around the page root. Do not descendant-nuke
+   under board-container — that would also kill board-row catalog fades. */
+#app .animation-fade-in:has(> [class*="board-container"]),
+#app .animation-fade-in:has(> [class*="discover-container"]),
+#app .animation-fade-in:has(> [class*="library-container"]),
+#app .animation-fade-in:has(> [class*="addons-container"]),
+#app .animation-fade-in:has(> [class*="settings-container"]),
+#app .animation-fade-in:has(> [class*="search-container"]),
+#app .animation-fade-in:has(> [class*="calendar"]) {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+}
+
+/* Stock fade lives on content grids/cards, not the page shell. */
+#app [class*="discover-container"] [class*="meta-items-container"].animation-fade-in,
+#app [class*="library-container"] [class*="meta-items-container"].animation-fade-in,
+#app [class*="settings-container"] [class*="settings-content"].animation-fade-in,
+#app [class*="calendar"] [class*="content"].animation-fade-in,
+#app [class*="addons-container"] [class*="addon"].animation-fade-in,
+#app [class*="addons-container"] [class*="addons-content"].animation-fade-in,
+#app [class*="addons-container"] [class*="addons-list-container"].animation-fade-in,
+#app [class*="search-container"] [class*="search-hints"].animation-fade-in,
+#app [class*="search-container"] [class*="search-row"].animation-fade-in {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+}
+
+/* Board tab: rows (including Continue Watching) fade black on mount. */
+#app [class*="board-container"] [class*="board-row"].animation-fade-in,
+#app [class*="board-container"] [class*="continue-watching-row"].animation-fade-in {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+}
+
+/* Installed addons: hide stock list on first paint (custom manager owns this page). */
+[class*="addons-container"] [class*="addons-list-container"],
+[class*="addons-container"] [class*="addons-content"] [class*="message-container"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
 /* Context menu content - handle all class variations */
 .context-menu-portal [class*="context-menu-content"] {
     background: transparent !important;
@@ -297,7 +356,7 @@ html {
 
 /* ========================= NAV BAR / HEADER ========================= */
 
-/* Nav transition clone must never show a ghost search FAB over live UI. */
+/* Persistent nav host must never show a ghost search FAB over live UI. */
 #stremio-custom-nav-transition-host [class*="search-bar"] {
     display: none !important;
 }
@@ -555,6 +614,61 @@ html.mystremio-search-unfocused .horizontal-nav-bar-container-Y_zvK .search-bar-
     z-index: 1 !important;
 }
 
+html.mystremio-persistent-nav #app nav[class*="horizontal-nav-bar"] {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    z-index: 121 !important;
+}
+
+html.mystremio-persistent-nav #app [class*="vertical-nav-bar"] {
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
+#stremio-custom-nav-transition-host [class*="vertical-nav-bar"],
+#stremio-custom-nav-transition-host [class*="vertical-nav-bar-container"] {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 1rem !important;
+    padding: 1rem 1.25rem !important;
+    width: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: transparent !important;
+}
+
+#stremio-custom-nav-transition-host [class*="nav-tab-button-container"],
+#stremio-custom-nav-transition-host [class*="nav-tab-button"] {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    width: auto !important;
+    min-width: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 7px 10px !important;
+    white-space: nowrap !important;
+    border-radius: 999px !important;
+}
+
+#stremio-custom-nav-transition-host svg,
+#stremio-custom-nav-transition-host [class*="icon"] {
+    display: none !important;
+}
+
+#stremio-custom-nav-transition-host .nav-label,
+#stremio-custom-nav-transition-host [class*="label"] {
+    white-space: nowrap !important;
+    overflow: visible !important;
+    width: auto !important;
+    max-width: none !important;
+}
+
 /* hard seam fix between window frame and hero/nav */
 #app,
 #app [class*="main-nav-bars-container"],
@@ -593,17 +707,18 @@ html.mystremio-search-unfocused .horizontal-nav-bar-container-Y_zvK .search-bar-
 
 /* Tabs look */
 #app [class*="nav-tab-button-container"] {
-    background: rgba(70, 70, 70, 0.22) !important;
+    background: rgba(70, 70, 70, 0.45) !important;
     border-radius: 999px !important;
     box-shadow:
         0 10px 36px rgba(0, 0, 0, 0.28),
         0 2px 12px rgba(0, 0, 0, 0.12),
         inset 0 1px 0 rgba(255, 255, 255, 0.15),
         inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
     opacity: 1 !important;
-    transform: translateY(0px) scale(1) !important;
+    transform: none !important;
 }
 
 /* Ensure nav content is flush left */
@@ -1669,15 +1784,6 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
     box-shadow: none !important;
 }
 
-/* Live horizontal nav: fixed stacking ONLY with board tab strip (not detail/player) */
-#app nav[class*="horizontal-nav-bar"]:has([class*="vertical-nav-bar"]) {
-    position: fixed !important;
-    top: 0 !important;
-    left: 0 !important;
-    right: 0 !important;
-    z-index: 121 !important;
-}
-
 /* Meta hover panel – liquid glass (z-index set in plugin; keep under nav @ 121) */
 .meta-hover-panel {
     background: rgba(30, 30, 30, 0.92) !important;
@@ -1784,32 +1890,45 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
     transform: scale(1.05);
 }
 
-.hero-indicators {
+.hero-indicators,
+#app [class*="board-content"] [class*="hero-indicators"] {
     position: absolute;
     bottom: 10px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
+    align-items: center;
+    justify-content: center;
     gap: 8px;
-    z-index: 10;
+    z-index: 11;
+    padding: 6px 8px;
+    overflow: visible !important;
+    box-sizing: content-box;
 }
 
-.hero-indicator {
+.hero-indicator,
+#app [class*="board-content"] [class*="hero-indicators"] > * {
     width: 10px;
     height: 10px;
+    flex: none;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.4);
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: width 0.2s ease, height 0.2s ease, background 0.2s ease;
     border: 1px solid rgba(255, 255, 255, 0.2);
+    transform: none;
 }
 
-.hero-indicator:hover {
+.hero-indicator:hover,
+#app [class*="board-content"] [class*="hero-indicators"] > *:hover {
     background: rgba(255, 255, 255, 0.6);
-    transform: scale(1.2);
+    width: 14px;
+    height: 14px;
+    transform: none;
 }
 
-.hero-indicator.active {
+.hero-indicator.active,
+#app [class*="board-content"] [class*="hero-indicators"] > *.active {
     background: rgba(255, 255, 255, 0.9);
 }
 
@@ -2012,11 +2131,13 @@ body.ghost-clicking #heroLoadingScreen {
 /* Enhanced nav button base styling with smooth transitions */
 #app [class*="nav-tab-button-container"] {
     position: relative !important;
-    overflow: hidden !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    overflow: visible !important;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease !important;
     border-radius: 999px !important;
-    transform: translateZ(0) !important; /* Hardware acceleration */
-    will-change: transform, background-color, box-shadow !important;
+    transform: none !important;
+    will-change: auto !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
 }
 
 /* Smooth hover effects for non-selected tabs */
@@ -2028,17 +2149,20 @@ body.ghost-clicking #heroLoadingScreen {
 
 /* Enhanced selected tab styling with smoother appearance */
 #app [class*="nav-tab-button-container"].selected {
-    background: rgba(70, 70, 70, 0.22) !important;
+    background: rgba(70, 70, 70, 0.55) !important;
     border-radius: 999px !important;
     box-shadow:
         0 10px 36px rgba(0, 0, 0, 0.28),
         0 2px 12px rgba(0, 0, 0, 0.12),
         inset 0 1px 0 rgba(255, 255, 255, 0.15),
         inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 2px solid rgba(255, 255, 255, 0.5) !important;
     opacity: 1 !important;
-    transform: translateY(0px) scale(1) !important;
+    transform: none !important;
+    overflow: visible !important;
+    will-change: auto !important;
 }
 
 /* Smooth nav label animations */
@@ -2633,21 +2757,41 @@ body.ghost-clicking #heroLoadingScreen {
 }
 
 .chip-L3r9A.active-jnhyP {
-    background: rgba(70, 70, 70, 0.22) !important;
+    background: rgba(70, 70, 70, 0.55) !important;
     box-shadow:
         0 2px 8px rgba(0, 0, 0, 0.2),
         inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
+    overflow: visible !important;
+    will-change: auto !important;
 }
 
-.menu-xeE06 .button-DNmYL.selected-S7SeK {
-    background: rgba(70, 70, 70, 0.22) !important;
+.menu-xeE06 .button-DNmYL.selected-S7SeK,
+[class*="selectable-inputs"] [class*="button"].selected,
+[class*="selectable-inputs"] [class*="select-input"][class*="selected"],
+[class*="library-content"] [class*="button"][class*="selected"],
+[class*="settings-content"] [class*="button"][class*="selected"] {
+    background: rgba(70, 70, 70, 0.55) !important;
     box-shadow:
         0 4px 12px rgba(0, 0, 0, 0.3),
         inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.04) !important;
+    overflow: visible !important;
+    will-change: auto !important;
+}
+
+[class*="addon-container"],
+[class*="addons-content"] [class*="selectable-inputs"] [class*="button"],
+[class*="addons-content"] [class*="select-input"] {
+    background: rgba(42, 42, 46, 0.92) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    overflow: visible !important;
+    will-change: auto !important;
 }
 
 .addon-details-modal-container-aBFaQ .cancel-button-zuUX6 {

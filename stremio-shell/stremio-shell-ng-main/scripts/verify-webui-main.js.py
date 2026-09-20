@@ -19,6 +19,8 @@ def verify_main_js(main_js: Path) -> None:
         raise RuntimeError(f"{main_js} is missing DynamicHero null guard patch")
     if b"FALLBACK_TITLES[0]" in data:
         raise RuntimeError(f"{main_js} still references FALLBACK_TITLES[0]")
+    if b"FALLBACK_TITLES.map" in data:
+        raise RuntimeError(f"{main_js} still contains FALLBACK_TITLES.map")
 
     for match in re.finditer(rb"/[^/\n]{0,60}WEBVTT[^/\n]{0,60}/", data):
         snippet = match.group(0)

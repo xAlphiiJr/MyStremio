@@ -77,8 +77,14 @@ if (-not (Test-Path $builtWasm) -or -not (Test-Path $builtJs)) {
 }
 
 # Restore stock worker.js before remapping (idempotent rebuilds).
-$workerRel = "webui\eb5752673c6ac87e7137a6c3cca21a6980028cf9\scripts\worker.js"
-git -C $RepoRoot checkout -- (Join-Path "stremio-shell\stremio-shell-ng-main" $workerRel) 2>$null
+$hashedDir = Get-ChildItem -Path (Join-Path $ProjectRoot "webui") -Directory |
+    Where-Object { Test-Path (Join-Path $_.FullName "scripts\worker.js") } |
+    Select-Object -First 1
+if (-not $hashedDir) {
+    throw "Could not find hashed webui bundle with scripts/worker.js under webui/"
+}
+$workerRel = Join-Path $hashedDir.Name "scripts\worker.js"
+git -C $RepoRoot checkout -- (Join-Path "stremio-shell\stremio-shell-ng-main\webui" $workerRel) 2>$null
 
 $remap = Join-Path $ScriptRoot "remap-wasm-bindgen-hashes.py"
 Write-Host "Remapping worker.js ABI hashes to match new wasm..."
@@ -88,7 +94,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $swPatch = Join-Path $ScriptRoot "patch-webui-sw-revision.py"
-& py -3 $swPatch (Join-Path $ProjectRoot "webui") (Join-Path $ProjectRoot "webui\eb5752673c6ac87e7137a6c3cca21a6980028cf9\scripts\main.js")
+& py -3 $swPatch (Join-Path $ProjectRoot "webui") (Join-Path $hashedDir.FullName "scripts\main.js")
 if ($LASTEXITCODE -ne 0) {
     throw "service-worker revision patch failed with exit code $LASTEXITCODE"
 }

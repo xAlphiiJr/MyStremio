@@ -1,0 +1,134 @@
+{
+  "upstream": {
+    "repo": "https://github.com/Stremio/stremio-web",
+    "cloneInto": ".tmp/stremio-web",
+    "note": "Always patch from a clean stremio-web build when .tmp/stremio-web exists. The webpack content-hash folder is discovered from index.html, not hardcoded."
+  },
+  "patches": [
+    {
+      "id": "language-embeds",
+      "script": "fix-webui-language-embeds.py",
+      "args": ["${mainJs}", "${interfaceLanguages}", "${languageNames}"]
+    },
+    {
+      "id": "language-mojibake",
+      "script": "fix-webui-language-mojibake.py",
+      "args": ["${mainJs}"]
+    },
+    {
+      "id": "shortcut-symbols",
+      "script": "fix-webui-shortcut-symbols.py",
+      "args": ["${mainJs}"]
+    },
+    {
+      "id": "hero-fallback",
+      "script": "fix-webui-hero-fallback.py",
+      "args": ["${mainJs}"],
+      "verify": {
+        "file": "${mainJs}",
+        "mustNotContain": ["FALLBACK_TITLES.map", "FALLBACK_TITLES[0]"]
+      }
+    },
+    {
+      "id": "updater-branding",
+      "script": "fix-webui-updater-branding.py",
+      "args": ["${mainJs}"],
+      "verify": {
+        "file": "${mainJs}",
+        "mustContain": ["A new version of MyStremio is available"]
+      }
+    },
+    {
+      "id": "board-catalog-pages",
+      "script": "fix-webui-board-catalog-pages.py",
+      "args": ["${mainJs}"],
+      "verify": {
+        "file": "${mainJs}",
+        "mustContain": ["__mystremioBoardLoadNextPage", "__mystremioBoardSyncCatalogIndices"]
+      }
+    },
+    {
+      "id": "metarow-keys",
+      "script": "fix-webui-metarow-keys.py",
+      "args": ["${mainJs}"]
+    },
+    {
+      "id": "addon-soft-disable-worker",
+      "script": "patch-webui-addon-soft-disable-worker.py",
+      "args": ["${webui}"],
+      "verify": {
+        "file": "${workerJs}",
+        "mustContain": ["__mystremioAddonSoftDisableWorker"]
+      }
+    },
+    {
+      "id": "metadata-meta-gate-worker",
+      "script": "patch-webui-metadata-meta-gate-worker.py",
+      "args": ["${webui}"]
+    },
+    {
+      "id": "checklist-summary",
+      "script": "fix-webui-checklist-summary.py",
+      "args": ["${mainJs}"],
+      "verify": {
+        "file": "${mainJs}",
+        "mustContain": ["__mystremioTruncateLabelList"]
+      }
+    },
+    {
+      "id": "settings-quick-section",
+      "script": "fix-webui-settings-quick-section.py",
+      "args": ["${mainJs}"],
+      "verify": {
+        "file": "${mainJs}",
+        "mustContain": ["__mystremioQuickSection"]
+      }
+    },
+    {
+      "id": "volume-wheel-max",
+      "script": "patch-webui-volume-wheel-max.py",
+      "args": ["${mainJs}"],
+      "verify": {
+        "file": "${mainJs}",
+        "mustContain": ["__mystremioVolumeWheelMax"]
+      }
+    },
+    {
+      "id": "preload-240",
+      "script": "patch-webui-preload-240.py",
+      "args": ["${mainJs}"],
+      "verify": {
+        "file": "${mainJs}",
+        "mustContain": ["__mystremioPreload240"]
+      }
+    },
+    {
+      "id": "sub-ass-scale",
+      "script": "patch-webui-sub-ass-scale.py",
+      "args": ["${mainJs}"],
+      "verify": {
+        "file": "${mainJs}",
+        "mustContain": ["__mystremioSubAssScale", "__mystremioSubReplay"]
+      }
+    },
+    {
+      "id": "service-worker-revision",
+      "script": "patch-webui-sw-revision.py",
+      "args": ["${webui}", "${mainJs}"]
+    },
+    {
+      "id": "preboot",
+      "script": "patch-webui-preboot.py",
+      "args": ["${webui}", "${preboot}"],
+      "verify": {
+        "file": "${indexHtml}",
+        "mustContain": ["mystremio-preboot.js"]
+      }
+    },
+    {
+      "id": "verify-main-js",
+      "script": "verify-webui-main.js.py",
+      "args": ["${mainJs}"]
+    }
+  ]
+}

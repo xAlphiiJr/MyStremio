@@ -79,5 +79,12 @@
     "placeholder": "10",
     "type": "input",
     "inputType": "number"
+  },
+  {
+    "defaultValue": false,
+    "description": "When on, skipping a credits segment jumps to the end of the episode instead of the marked credits end. Off by default.",
+    "key": "skip_credits_to_end",
+    "label": "Skip credits to episode end",
+    "type": "toggle"
   }
 ]

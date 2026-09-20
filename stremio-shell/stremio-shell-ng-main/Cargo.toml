@@ -1,6 +1,6 @@
 [package]
 name = "mystremio-shell"
-version = "2.4.4"
+version = "2.4.5"
 edition = "2018"
 
 [dependencies]

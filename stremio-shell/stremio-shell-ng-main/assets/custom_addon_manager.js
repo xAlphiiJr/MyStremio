@@ -2262,12 +2262,16 @@
     if (!style) {
       style = document.createElement('style');
       style.id = STYLE_ID;
-      document.head.appendChild(style);
+      (document.head || document.documentElement).appendChild(style);
     }
     style.textContent = `
-      html.${PAGE_CLASS} [class*="addons-container"] [class*="addons-list-container"],
-      html.${PAGE_CLASS} [class*="addons-container"] [class*="message-container"] {
+      /* Hide stock list as soon as React mounts addons-container — do not wait for PAGE_CLASS. */
+      [class*="addons-container"] [class*="addons-list-container"],
+      [class*="addons-container"] [class*="addons-content"] [class*="message-container"] {
         display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
       }
       html.${PAGE_CLASS} nav[class*="horizontal-nav-bar"],
       html.${PAGE_CLASS} #stremio-custom-nav-transition-host {
@@ -2351,11 +2355,11 @@
         min-height: 3rem;
         border-radius: 999px;
         border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(70, 70, 70, 0.22);
+        background: rgba(42, 42, 46, 0.92);
         color: #fff;
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
-        backdrop-filter: var(--backdrop-filter, blur(20px) saturate(180%));
-        -webkit-backdrop-filter: var(--backdrop-filter, blur(20px) saturate(180%));
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
         font: inherit;
         box-sizing: border-box;
         display: inline-flex;
@@ -2481,10 +2485,11 @@
         overflow: visible;
         border-radius: var(--border-radius, 16px);
         border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(70, 70, 70, 0.22);
+        background: rgba(42, 42, 46, 0.92);
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.14);
-        backdrop-filter: var(--backdrop-filter, blur(20px) saturate(180%));
-        -webkit-backdrop-filter: var(--backdrop-filter, blur(20px) saturate(180%));
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        will-change: auto;
       }
       #${ROOT_ID} .mystremio-am-card:last-child { margin-bottom: 0; }
       #${ROOT_ID} .mystremio-am-card:has(.mystremio-am-panel) { z-index: 3; }
@@ -3468,6 +3473,37 @@
     document.documentElement.classList.remove(PAGE_CLASS);
   }
 
+  function hrefLooksLikeInstalledAddons(href) {
+    const raw = String(href || '');
+    if (!raw) return false;
+    let hash = '';
+    if (raw.startsWith('#')) {
+      hash = raw;
+    } else {
+      try {
+        hash = new URL(raw, location.href).hash;
+      } catch (_) {
+        const idx = raw.indexOf('#');
+        hash = idx >= 0 ? raw.slice(idx) : '';
+      }
+    }
+    return /#\/addons\/?(?:\?.*)?$/.test(hash);
+  }
+
+  function pretouchAddonsNav(event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const host = target.closest(
+      'a[href], [class*="nav-tab-button-container"], #stremio-custom-nav-transition-host [class*="nav-tab-button"]',
+    );
+    if (!host) return;
+    const link = host.matches('a[href]') ? host : host.querySelector('a[href]');
+    const href = (link && (link.getAttribute('href') || link.href)) || '';
+    if (!hrefLooksLikeInstalledAddons(href)) return;
+    document.documentElement.classList.add(PAGE_CLASS);
+    ensureStyles();
+  }
+
   function scheduleMount() {
     pretouchInstalledRoute();
     if (domLock) return;
@@ -3486,6 +3522,7 @@
     isInstalledAddonsRoute,
   };
 
+  document.addEventListener('pointerdown', pretouchAddonsNav, true);
   window.addEventListener('hashchange', () => {
     pretouchInstalledRoute();
     scheduleMount();
@@ -3534,6 +3571,7 @@
   });
 
   const boot = () => {
+    ensureStyles();
     const root = document.body || document.documentElement;
     if (!root) {
       window.setTimeout(boot, 200);

@@ -225,24 +225,6 @@
     }
   }
 
-  function restoreAuthProfileFromDisk(authProfile) {
-    if (typeof authProfile !== 'string' || !authProfile.trim()) return false;
-    try {
-      const parsed = JSON.parse(authProfile);
-      if (!parsed?.auth?.key) return false;
-      const existing = localStorage.getItem('profile');
-      if (existing) {
-        const current = JSON.parse(existing);
-        if (current?.auth?.key) return false;
-      }
-      localStorage.setItem('profile', authProfile);
-      document.dispatchEvent(new CustomEvent('stremio-custom-auth-restored'));
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
   let authProfileSyncTimer = null;
   let lastPersistedAuthProfile = '';
 
@@ -931,8 +913,6 @@
       const diskDiscordPresence = preferences?.discordPresence;
       const diskLibrary = preferences?.library;
       const diskOnboarding = preferences?.onboarding;
-      const diskAuthProfile =
-        typeof preferences?.authProfile === 'string' ? preferences.authProfile : '';
       const hasLocalDiscordPrefs =
         localStorage.getItem(DISCORD_KEYS.enabled) != null ||
         localStorage.getItem(DISCORD_KEYS.showPaused) != null ||
@@ -991,8 +971,6 @@
         if (diskOnboarding.tmdbNoticeShown === true) localStorage.setItem(TMDB_NOTICE_KEY, 'true');
         if (diskOnboarding.defaultsApplied === true) localStorage.setItem(DEFAULTS_APPLIED_KEY, 'true');
       }
-      restoreAuthProfileFromDisk(diskAuthProfile);
-
       await loadAutoskipSettings();
 
       const authProfile = readAuthProfileSnapshot();
@@ -1750,7 +1728,6 @@
   window.__stremioCustomOnWindowResumed = onWindowResumed;
 
   let streamingServerRecoverAt = 0;
-  let pageHiddenAt = 0;
 
   /**
    * Re-bind the local EngineFS URL after sleep/resume. Does not reload video.
@@ -1778,17 +1755,6 @@
   }
 
   window.__stremioCustomOnStreamingServerReady = reconnectStreamingServerUi;
-
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      pageHiddenAt = Date.now();
-      return;
-    }
-    if (pageHiddenAt && Date.now() - pageHiddenAt >= 30000) {
-      invoke('recover-streaming-server', {}, 20000).catch(() => {});
-    }
-    pageHiddenAt = 0;
-  });
 
   function injectPlaybackGuard() {
     if (document.getElementById('stremio-custom-playback-guard')) return;

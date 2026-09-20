@@ -32,6 +32,7 @@
 	const USE_ANISKIP_SETTING = "use_aniskip";
 	const ANALYTICS_SETTING = "anonymous_usage_reporting";
 	const AUTOSKIP_COUNTDOWN_SETTING = "autoskip_countdown_seconds";
+	const SKIP_CREDITS_TO_END_SETTING = "skip_credits_to_end";
 	const DEFAULT_AUTOSKIP_COUNTDOWN_SEC = 10;
 	const MIN_AUTOSKIP_COUNTDOWN_SEC = 3;
 	const MAX_AUTOSKIP_COUNTDOWN_SEC = 30;
@@ -1456,6 +1457,7 @@
 			this.useAniSkip = true;
 			this.analyticsEnabled = true;
 			this.autoSkipCountdownSec = DEFAULT_AUTOSKIP_COUNTDOWN_SEC;
+			this.skipCreditsToEnd = false;
 			this.theme = "glass";
 			this.segmentButtonVisibility = Object.fromEntries(SEGMENT_TYPES.map((type) => [type, true]));
 			this.onTimeUpdate = null;
@@ -1632,6 +1634,15 @@
 				});
 
 				schema.push({
+					key: SKIP_CREDITS_TO_END_SETTING,
+					type: "toggle",
+					label: "Skip credits to episode end",
+					description:
+						"When on, skipping a credits segment jumps to the end of the episode instead of the marked credits end. Off by default.",
+					defaultValue: false
+				});
+
+				schema.push({
 					key: ANALYTICS_SETTING,
 					type: "toggle",
 					label: "Anonymous usage reporting",
@@ -1688,6 +1699,10 @@
 			this.introDbApiKey = normalizeIntroDbApiKey(await this.getSetting(INTRODB_API_KEY_SETTING));
 			this.analyticsEnabled = normalizeToggleValue(await this.getSetting(ANALYTICS_SETTING));
 			this.autoSkipCountdownSec = normalizeAutoSkipCountdown(await this.getSetting(AUTOSKIP_COUNTDOWN_SETTING));
+			this.skipCreditsToEnd = normalizeToggleValue(
+				await this.getSetting(SKIP_CREDITS_TO_END_SETTING),
+				false
+			);
 			if (this.analyticsEnabled) initAnalyticsOnce();
 
 			const visibility = {};
@@ -1747,9 +1762,23 @@
 			return `${this.episodeId || "unknown"}:${seg.type}:${seg.start}`;
 		}
 
+		resolveSkipTarget(seg, duration) {
+			if (
+				seg?.type === "credits" &&
+				this.skipCreditsToEnd &&
+				Number.isFinite(duration) &&
+				duration > 0
+			) {
+				return duration;
+			}
+			return seg?.end;
+		}
+
 		tryAutoSkip(video, seg) {
 			if (!this.isPlaybackReadyForSkip()) return false;
-			if (seg.end == null || !Number.isFinite(seg.end)) {
+			const duration = window.StremioCustomPlayback?.getDuration?.() || video?.duration;
+			const target = this.resolveSkipTarget(seg, duration);
+			if (target == null || !Number.isFinite(target)) {
 				return false;
 			}
 
@@ -1760,15 +1789,15 @@
 				return true;
 			}
 
-			if (this.getPlaybackCurrentTime(video) < seg.start || this.getPlaybackCurrentTime(video) >= seg.end) {
+			if (this.getPlaybackCurrentTime(video) < seg.start || this.getPlaybackCurrentTime(video) >= target) {
 				return false;
 			}
 
-			video.currentTime = seg.end;
+			video.currentTime = target;
 			this._autoSkippedKeys.add(skipKey);
 			this.removeActiveButton();
 			this.displayedSegmentType = null;
-			console.log(`${LOG_PREFIX} Auto-skipped ${seg.type}: targetTime=${seg.end}`);
+			console.log(`${LOG_PREFIX} Auto-skipped ${seg.type}: targetTime=${target}`);
 			this.track("auto_skip", {
 				segment: seg.type
 			});
@@ -3451,9 +3480,13 @@
 				});
 				const video = this.getPlaybackVideo();
 				if (video) {
-					video.currentTime = segment.end;
-					this._autoSkippedKeys.add(this.getAutoSkipKey(segment));
-					console.log(`${LOG_PREFIX} Skipping ${segmentType}: targetTime=${segment.end}`);
+					const duration = window.StremioCustomPlayback?.getDuration?.() || video.duration;
+					const target = this.resolveSkipTarget(segment, duration);
+					if (target != null && Number.isFinite(target)) {
+						video.currentTime = target;
+						this._autoSkippedKeys.add(this.getAutoSkipKey(segment));
+						console.log(`${LOG_PREFIX} Skipping ${segmentType}: targetTime=${target}`);
+					}
 				}
 				this.removeActiveButton();
 			};

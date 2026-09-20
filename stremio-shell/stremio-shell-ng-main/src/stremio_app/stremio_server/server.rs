@@ -12,7 +12,7 @@ use std::{
     process::{Command, Stdio},
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use winapi::um::{
     handleapi::CloseHandle,
@@ -41,6 +41,8 @@ pub struct StremioServer {
     /// Skip the crash modal and auto-restart when we killed the process on purpose.
     quiet_restart: Arc<AtomicBool>,
     recovering: Arc<AtomicBool>,
+    pending_retry: Arc<AtomicBool>,
+    last_resume: Arc<Mutex<Option<Instant>>>,
 }
 
 fn terminate_pid(pid: u32) {
@@ -264,13 +266,24 @@ fn spawn_server_thread(
 
 impl StremioServer {
     /**
-     * True when EngineFS on :11470 accepts a TCP connection.
+     * True when EngineFS on :11470 answers HTTP GET /settings.
      */
     pub fn is_engine_reachable() -> bool {
-        let Ok(addr) = ENGINE_HOST.parse() else {
-            return false;
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .no_proxy()
+            .build()
+        {
+            Ok(client) => client,
+            Err(_) => return false,
         };
-        TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok()
+        match client
+            .get(format!("http://{ENGINE_HOST}/settings"))
+            .send()
+        {
+            Ok(response) => response.status().is_success(),
+            Err(_) => false,
+        }
     }
 
     /**
@@ -302,7 +315,16 @@ impl StremioServer {
             ready.notice();
             return;
         }
+        if let Ok(mut last) = self.last_resume.lock() {
+            if let Some(prev) = *last {
+                if prev.elapsed() < Duration::from_secs(2) {
+                    return;
+                }
+            }
+            *last = Some(Instant::now());
+        }
         if self.recovering.swap(true, Ordering::SeqCst) {
+            self.pending_retry.store(true, Ordering::SeqCst);
             return;
         }
         let logs = self.logs.clone();
@@ -312,39 +334,53 @@ impl StremioServer {
         let webui_pid = self.webui_pid.clone();
         let quiet = self.quiet_restart.clone();
         let recovering = self.recovering.clone();
+        let pending_retry = self.pending_retry.clone();
+        let last_resume = self.last_resume.clone();
 
-        thread::spawn(move || {
+        thread::spawn(move || loop {
             thread::sleep(Duration::from_millis(800));
-            if StremioServer::is_engine_reachable() {
-                ready.notice();
-                recovering.store(false, Ordering::SeqCst);
-                drop((logs, crash_sender, ready_rx, server_pid, webui_pid, quiet));
-                return;
-            }
-
-            quiet.store(true, Ordering::SeqCst);
-            if let Some(pid) = take_pid(&server_pid) {
-                terminate_pid(pid);
-            }
-            if let Some(pid) = take_pid(&webui_pid) {
-                terminate_pid(pid);
-            }
-            thread::sleep(Duration::from_millis(400));
-
             if !StremioServer::is_engine_reachable() {
-                spawn_server_thread(logs, crash_sender, ready_rx, server_pid, webui_pid);
-            }
-
-            for _ in 0..50 {
-                if StremioServer::is_engine_reachable() {
-                    break;
+                quiet.store(true, Ordering::SeqCst);
+                if let Some(pid) = take_pid(&server_pid) {
+                    terminate_pid(pid);
                 }
-                thread::sleep(Duration::from_millis(200));
+                if let Some(pid) = take_pid(&webui_pid) {
+                    terminate_pid(pid);
+                }
+                thread::sleep(Duration::from_millis(400));
+
+                if !StremioServer::is_engine_reachable() {
+                    spawn_server_thread(
+                        logs.clone(),
+                        crash_sender,
+                        ready_rx.clone(),
+                        server_pid.clone(),
+                        webui_pid.clone(),
+                    );
+                }
+
+                for _ in 0..50 {
+                    if StremioServer::is_engine_reachable() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(200));
+                }
             }
             ready.notice();
             thread::sleep(Duration::from_secs(3));
             quiet.store(false, Ordering::SeqCst);
             recovering.store(false, Ordering::SeqCst);
+            if pending_retry.swap(false, Ordering::SeqCst) {
+                if let Ok(mut last) = last_resume.lock() {
+                    *last = None;
+                }
+                if recovering.swap(true, Ordering::SeqCst) {
+                    pending_retry.store(true, Ordering::SeqCst);
+                    break;
+                }
+                continue;
+            }
+            break;
         });
     }
 

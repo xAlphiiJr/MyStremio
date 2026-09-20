@@ -203,6 +203,7 @@ stringable!(FpProp);
 pub enum StrProp {
     DemuxerMaxBytes,
     FfmpegVersion,
+    GlslShaderOpts,
     GlslShaders,
     Hwdec,
     InputDefaltBindings,

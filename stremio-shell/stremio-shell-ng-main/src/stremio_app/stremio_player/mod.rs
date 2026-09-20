@@ -3,7 +3,7 @@ pub use player::Player;
 pub mod communication;
 pub use communication::{
     CmdVal, InMsg, InMsgArgs, InMsgFn, MpvCmd, PlayerEnded, PlayerEvent, PlayerProprChange,
-    PlayerResponse, PropKey, PropVal,
+    PlayerResponse, PropKey, PropVal, StrProp,
 };
 #[cfg(test)]
 mod communication_tests;

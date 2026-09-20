@@ -180,12 +180,17 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 
 ## 🛠️ Patch Notes
 
+### 2.4.5
+- **Continue Watching** — Meta-Hover-Panel auf den Landscape-Covern
+- **Navigation** — Pill-Leiste bleibt beim Tab-Wechsel sichtbar
+
 ### 2.4.4
 - **Intro Skip** — Autoskip countdown can now be customized in the Intro Skip plugin settings
 - **Sleep Timer** — New plugin to set Sleep timers
 - **Picture Settings** — Optimized dim settings and added reset Buttons to all sliders
 - **Player Control Bar** — Fixed highlighting bug
-- **App recovery** — After pc sleep MyStremio automatically reconnects to streaming Servers
+- **Sleep / inactivity recovery** — After PC sleep, display-off, or Windows lock, EngineFS, MPV, and WebView come back without a manual reload
+- **Settings safety** — Preferences are saved atomically; a corrupt settings file is backed up instead of silently reset
 
 
 ### 2.4.3
@@ -234,7 +239,7 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 ## 💾 Installation
 
 1. Download the latest installer from this repository's **[Releases](https://github.com/xAlphiiJr/MyStremio/releases/latest)** page.
-2. Run `MyStremioSetup-v2.4.0_x64.exe` (or the latest version).
+2. Run `MyStremioSetup-v<version>_x64.exe` from the latest release.
 3. The installer sets up:
   - App binaries (`mystremio-shell.exe`, streaming server, FFmpeg, libmpv)
   - Bundled plugins and themes
@@ -274,9 +279,9 @@ cd stremio-shell\stremio-shell-ng-main
 .\package-release.ps1
 ```
 
-Output: `release\MyStremioSetup-v2.4.0_x64.exe`
+Output: `release\MyStremioSetup-v<version>_x64.exe`
 
-The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle. To rebuild the Web UI from source, clone [stremio-web](https://github.com/Stremio/stremio-web) into `.tmp/stremio-web`, apply MyStremio patches, then run the build script again.
+The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle (patched output). To rebuild from a clean [stremio-web](https://github.com/Stremio/stremio-web) tree, from `stremio-shell/stremio-shell-ng-main` run `.\scripts\fetch-stremio-web.ps1` then `.\scripts\build-webui.ps1`. See `stremio-shell/stremio-shell-ng-main/webui/UPSTREAM.md`.
 
 ---
 

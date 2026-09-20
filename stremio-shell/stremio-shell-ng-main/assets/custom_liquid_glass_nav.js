@@ -4,40 +4,109 @@
   if (window.__stremioCustomLiquidGlassNav) return;
   window.__stremioCustomLiquidGlassNav = true;
 
-  const cachedNavbars = new Map();
   let fixTimer = null;
   let observer = null;
-  let transitionActive = false;
-  let navClickCaptureBound = false;
+  let started = false;
 
   const NAV_FOCUS_STYLE_ID = 'stremio-custom-nav-focus-style';
   const NAV_TRANSITION_STYLE_ID = 'stremio-custom-nav-transition-style';
   const TRANSITION_HOST_ID = 'stremio-custom-nav-transition-host';
+  const PERSISTENT_NAV_CLASS = 'mystremio-persistent-nav';
 
   function ensureTransitionStyles() {
-    if (document.getElementById(NAV_TRANSITION_STYLE_ID)) return;
-    const style = document.createElement('style');
-    style.id = NAV_TRANSITION_STYLE_ID;
+    let style = document.getElementById(NAV_TRANSITION_STYLE_ID);
+    if (!style) {
+      style = document.createElement('style');
+      style.id = NAV_TRANSITION_STYLE_ID;
+      (document.head || document.documentElement).appendChild(style);
+    }
     style.textContent = `
       #${TRANSITION_HOST_ID} {
         position: fixed;
         top: 0;
-        left: 0;
-        right: 0;
-        z-index: 121;
+        left: 91px;
+        z-index: 122;
         pointer-events: auto;
+        height: var(--horizontal-nav-bar-size, 4.5rem);
+        display: flex;
+        align-items: center;
+        flex-wrap: nowrap;
       }
 
-      #${TRANSITION_HOST_ID} nav[class*="horizontal-nav-bar"] {
-        position: absolute !important;
-        top: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
+      #${TRANSITION_HOST_ID}[hidden] {
+        display: none !important;
       }
 
-      /* Only board-style nav (with tab strip). Detail/player keep absolute-in-flow
-         so meta-preview + streams sidebar retain native top spacing. */
-      #app nav[class*="horizontal-nav-bar"]:has([class*="vertical-nav-bar"]) {
+      #${TRANSITION_HOST_ID} [class*="vertical-nav-bar"],
+      #${TRANSITION_HOST_ID} [class*="vertical-nav-bar-container"] {
+        position: relative !important;
+        left: auto !important;
+        top: auto !important;
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        gap: 1rem !important;
+        background: transparent !important;
+        overflow: visible !important;
+        width: auto !important;
+        height: auto !important;
+        padding: 1rem 1.25rem !important;
+        visibility: visible !important;
+        pointer-events: auto !important;
+      }
+
+      #${TRANSITION_HOST_ID} [class*="nav-tab-button-container"],
+      #${TRANSITION_HOST_ID} [class*="nav-tab-button"] {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: auto !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        height: auto !important;
+        min-height: 0 !important;
+        padding: 7px 10px !important;
+        white-space: nowrap !important;
+        position: relative !important;
+        background: rgba(70, 70, 70, 0.45) !important;
+        border-radius: 999px !important;
+        border: 1px solid rgba(255, 255, 255, 0.04) !important;
+        box-shadow:
+          0 10px 36px rgba(0, 0, 0, 0.28),
+          0 2px 12px rgba(0, 0, 0, 0.12),
+          inset 0 1px 0 rgba(255, 255, 255, 0.15),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
+        visibility: visible !important;
+        pointer-events: auto !important;
+      }
+
+      #${TRANSITION_HOST_ID} [class*="nav-tab-button-container"].selected,
+      #${TRANSITION_HOST_ID} [class*="nav-tab-button"].selected {
+        background: rgba(70, 70, 70, 0.55) !important;
+        border: 2px solid rgba(255, 255, 255, 0.5) !important;
+      }
+
+      #${TRANSITION_HOST_ID} svg,
+      #${TRANSITION_HOST_ID} [class*="icon"] {
+        display: none !important;
+      }
+
+      #${TRANSITION_HOST_ID} .nav-label,
+      #${TRANSITION_HOST_ID} [class*="label"] {
+        display: inline !important;
+        white-space: nowrap !important;
+        overflow: visible !important;
+        width: auto !important;
+        max-width: none !important;
+        font-weight: 600 !important;
+        padding: 0 5px !important;
+        color: var(--primary-accent-color, #fff) !important;
+      }
+
+      html.${PERSISTENT_NAV_CLASS} #app nav[class*="horizontal-nav-bar"] {
         position: fixed !important;
         top: 0 !important;
         left: 0 !important;
@@ -45,17 +114,11 @@
         z-index: 121 !important;
       }
 
-      #app [class*="main-nav-bars-container"] > [class*="vertical-nav-bar"] {
+      html.${PERSISTENT_NAV_CLASS} #app [class*="vertical-nav-bar"] {
         visibility: hidden !important;
         pointer-events: none !important;
       }
-
-      #app nav[class*="horizontal-nav-bar"] [class*="vertical-nav-bar"] {
-        visibility: visible !important;
-        pointer-events: auto !important;
-      }
     `;
-    (document.head || document.documentElement).appendChild(style);
   }
 
   function ensureNavFocusStyles() {
@@ -65,7 +128,9 @@
     style.textContent = `
       #app [class*="nav-tab-button-container"],
       #app [class*="nav-tab-button"],
-      #app [class*="horizontal-nav-bar"] a {
+      #app [class*="horizontal-nav-bar"] a,
+      #${TRANSITION_HOST_ID} [class*="nav-tab-button-container"],
+      #${TRANSITION_HOST_ID} a {
         -webkit-tap-highlight-color: transparent !important;
       }
 
@@ -74,17 +139,11 @@
       #app [class*="nav-tab-button"]:focus,
       #app [class*="nav-tab-button"]:focus-visible,
       #app [class*="horizontal-nav-bar"] a:focus,
-      #app [class*="horizontal-nav-bar"] a:focus-visible {
+      #app [class*="horizontal-nav-bar"] a:focus-visible,
+      #${TRANSITION_HOST_ID} a:focus,
+      #${TRANSITION_HOST_ID} a:focus-visible {
         outline: none !important;
         box-shadow: none !important;
-      }
-
-      #app [class*="nav-tab-button-container"]:active,
-      #app [class*="horizontal-nav-bar"] [class*="nav-tab-button-container"]:active,
-      #app [class*="horizontal-nav-bar"] [class*="nav-tab-button"]:active,
-      #app [class*="horizontal-nav-bar"] a:active {
-        border-color: rgba(255, 255, 255, 0.5) !important;
-        outline: none !important;
       }
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -110,9 +169,11 @@
     });
   }
 
-  function wireCloneLinks(root) {
+  function wireHostLinks(root) {
     if (!root) return;
     root.querySelectorAll('a[href^="#"]').forEach((link) => {
+      if (link.dataset.scNavHostWired === '1') return;
+      link.dataset.scNavHostWired = '1';
       link.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -123,6 +184,7 @@
 
   function ensureNavClickable() {
     const roots = [
+      document.getElementById(TRANSITION_HOST_ID),
       document.querySelector('[class*="horizontal-nav-bar"]'),
       document.querySelector('[class*="vertical-nav-bar"]'),
       document.querySelector('[class*="main-nav-bars-container"]'),
@@ -130,21 +192,13 @@
     roots.forEach(wireNavLinks);
   }
 
-  function isNavVisible(el) {
-    if (!el || !el.isConnected) return false;
-    const style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden') return false;
-    const rect = el.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
+  function isDetailOrPlayerHash(hash) {
+    const value = String(hash || location.hash || '');
+    return /#\/(?:player|detail|metadetails)\b/i.test(value);
   }
 
-  function isHorizontalNavReady(nav) {
-    return Boolean(
-      nav &&
-      nav.isConnected &&
-      nav.querySelector('[class*="vertical-nav-bar"]') &&
-      isNavVisible(nav)
-    );
+  function isBoardFamilyHash(hash) {
+    return !isDetailOrPlayerHash(hash);
   }
 
   function ensureTransitionHost() {
@@ -157,98 +211,105 @@
     return host;
   }
 
-  function beginNavTransition() {
-    if (transitionActive) return true;
-
-    const nav = document.querySelector('#app nav[class*="horizontal-nav-bar"]');
-    if (!isHorizontalNavReady(nav)) return false;
-
-    const host = ensureTransitionHost();
-    const clone = nav.cloneNode(true);
-    // Never clone the search FAB — a stuck clone covers the live input / detail / player.
-    clone.querySelectorAll('[class*="search-bar"]').forEach((el) => el.remove());
-    wireCloneLinks(clone);
-    host.replaceChildren(clone);
-    transitionActive = true;
-    return true;
-  }
-
-  function endNavTransition() {
+  function hidePersistentHost() {
     const host = document.getElementById(TRANSITION_HOST_ID);
-    if (host) host.replaceChildren();
-    transitionActive = false;
+    if (host) host.hidden = true;
+    document.documentElement.classList.remove(PERSISTENT_NAV_CLASS);
   }
 
-  function tryEndNavTransition() {
-    if (!transitionActive) return;
-    const liveNav = document.querySelector('#app nav[class*="horizontal-nav-bar"]');
-    // End when board nav is ready again OR destination has no board tab strip
-    // (detail/player) — otherwise the clone sticks forever with a ghost magnifier.
-    if (isHorizontalNavReady(liveNav) || !liveNav?.querySelector('[class*="vertical-nav-bar"]')) {
-      endNavTransition();
+  function showPersistentHost() {
+    const host = ensureTransitionHost();
+    host.hidden = false;
+    document.documentElement.classList.add(PERSISTENT_NAV_CLASS);
+    return host;
+  }
+
+  function restyleTabLinks(root) {
+    if (!root) return;
+    root.querySelectorAll('a').forEach((link) => {
+      if (link.closest('[class*="nav-menu-container"]')) return;
+      link.querySelectorAll('svg, [class*="icon"]').forEach((node) => node.remove());
+      const label = link.querySelector('div');
+      if (label) label.className = 'nav-label';
+    });
+  }
+
+  function tabSignature(root) {
+    if (!root) return '';
+    return Array.from(root.querySelectorAll('a[href^="#"]'))
+      .filter((link) => !link.closest('[class*="nav-menu-container"]'))
+      .map((link) => link.getAttribute('href') || '')
+      .join('|');
+  }
+
+  function normalizeTabHash(href) {
+    if (!href) return '';
+    let value = href.startsWith('#') ? href : `#${href}`;
+    if (value === '#' || value === '#/') return '#/';
+    return value.replace(/\/$/, '') || '#/';
+  }
+
+  function hashMatchesTab(tabHref, locHash) {
+    const tab = normalizeTabHash(tabHref);
+    const loc = normalizeTabHash(locHash || location.hash || '#/');
+    if (tab === loc) return true;
+    if (tab === '#/' && (loc === '#/' || loc === '' || /^#\/?(?:\?|$)/.test(locHash || ''))) return true;
+    return loc.startsWith(`${tab}/`) || loc.startsWith(`${tab}?`);
+  }
+
+  function applySelectedFromHash(root) {
+    if (!root) return;
+    const loc = location.hash || '#/';
+    root.querySelectorAll('a[href^="#"]').forEach((link) => {
+      if (link.closest('[class*="nav-menu-container"]')) return;
+      const selected = hashMatchesTab(link.getAttribute('href'), loc);
+      link.classList.toggle('selected', selected);
+      const container = link.closest('[class*="nav-tab-button-container"]');
+      if (container) container.classList.toggle('selected', selected);
+    });
+  }
+
+  function findLiveTabSource() {
+    const nodes = document.querySelectorAll('#app [class*="vertical-nav-bar"]');
+    for (const node of nodes) {
+      if (node.closest(`#${TRANSITION_HOST_ID}`)) continue;
+      if (node.querySelector('a[href^="#"]')) return node;
     }
+    return null;
   }
 
-  function onNavLinkClick(event) {
-    const link = event.target.closest('a[href^="#"]');
-    if (!link) return;
-    if (!link.closest('[class*="horizontal-nav-bar"], [class*="vertical-nav-bar"]')) return;
-
-    const href = link.getAttribute('href');
-    if (!href || href === '#') return;
-    const target = href.startsWith('#') ? href : `#${href}`;
-    if (location.hash === target) return;
-
-    beginNavTransition();
-  }
-
-  function moveNavbar(verticalNavbar, targetParent) {
-    if (!verticalNavbar || !targetParent) return;
-    if (verticalNavbar.parentElement !== targetParent) {
-      targetParent.appendChild(verticalNavbar);
+  function syncPersistentTabs() {
+    if (!isBoardFamilyHash()) {
+      hidePersistentHost();
+      return;
     }
+
+    const host = showPersistentHost();
+    const source = findLiveTabSource();
+    if (!source) {
+      applySelectedFromHash(host);
+      return;
+    }
+
+    const next = source.cloneNode(true);
+    next.querySelectorAll('[class*="search-bar"], [class*="nav-menu-container"]').forEach((el) => el.remove());
+    restyleTabLinks(next);
+    applySelectedFromHash(next);
+
+    const current = host.firstElementChild;
+    if (current && tabSignature(current) === tabSignature(next)) {
+      applySelectedFromHash(current);
+      wireHostLinks(current);
+      return;
+    }
+
+    wireHostLinks(next);
+    host.replaceChildren(next);
   }
 
   function fixAllNavbars() {
-    const verticalNavbars = Array.from(document.querySelectorAll('[class*="vertical-nav-bar"]'));
-
-    verticalNavbars.forEach((verticalNav) => {
-      if (!cachedNavbars.has(verticalNav) || !document.body.contains(cachedNavbars.get(verticalNav))) {
-        cachedNavbars.set(verticalNav, verticalNav.parentElement);
-      }
-      const originalParent = cachedNavbars.get(verticalNav);
-
-      const horizontalNav = verticalNav
-        .closest('[class*="main-nav-bars-container"], [class*="nav-bars-container"]')
-        ?.querySelector('[class*="horizontal-nav-bar"]');
-      const horizontalVisible = isNavVisible(horizontalNav);
-      const originalVisible = isNavVisible(originalParent);
-
-      if (horizontalVisible && horizontalNav) {
-        moveNavbar(verticalNav, horizontalNav);
-        // Only restyle vertical tab links — never touch profile/nav-menu <a> icons
-        // (Settings / Addons / Help), which live as siblings under horizontal-nav.
-        verticalNav.querySelectorAll('a').forEach((link) => {
-          if (link.closest('[class*="nav-menu-container"]')) return;
-          link.querySelector('svg')?.remove();
-          const label = link.querySelector('div');
-          if (label) label.className = 'nav-label';
-        });
-      } else if (!horizontalVisible && originalVisible) {
-        moveNavbar(verticalNav, originalParent);
-      }
-    });
-
+    syncPersistentTabs();
     ensureNavClickable();
-    tryEndNavTransition();
-  }
-
-  function restoreVerticalNavLayout() {
-    cachedNavbars.forEach((originalParent, verticalNav) => {
-      if (!verticalNav?.isConnected || !originalParent?.isConnected) return;
-      moveNavbar(verticalNav, originalParent);
-    });
-    cachedNavbars.clear();
   }
 
   function scheduleFix() {
@@ -259,54 +320,18 @@
     }, 80);
   }
 
-  /**
-   * Prefer the nav container over document.body so board/content churn does not
-   * thrash fixAllNavbars during route transitions.
-   * @returns {Element}
-   */
   function findNavObserveRoot() {
-    return (
-      document.querySelector('[class*="main-nav-bars-container"]') ||
-      document.querySelector('#app nav[class*="horizontal-nav-bar"]')?.parentElement ||
-      document.querySelector('#app') ||
-      document.body
-    );
+    return document.querySelector('#app') || document.body;
   }
 
-  function fixNavOnRouteChange() {
-    // Do not begin a clone on every route change — that stuck the search FAB on
-    // detail/player. Tab clicks still call beginNavTransition via onNavLinkClick.
-    if (/#\/player/.test(location.hash || '')) {
-      endNavTransition();
+  function bindNavObserver() {
+    if (!observer) {
+      observer = new MutationObserver(() => {
+        scheduleFix();
+      });
     } else {
-      tryEndNavTransition();
+      observer.disconnect();
     }
-    scheduleFix();
-    requestAnimationFrame(scheduleFix);
-  }
-
-  function bindNavClickCapture() {
-    if (navClickCaptureBound) return;
-    document.addEventListener('click', onNavLinkClick, true);
-    navClickCaptureBound = true;
-  }
-
-  function unbindNavClickCapture() {
-    if (!navClickCaptureBound) return;
-    document.removeEventListener('click', onNavLinkClick, true);
-    navClickCaptureBound = false;
-  }
-
-  function start() {
-    ensureTransitionStyles();
-    ensureNavFocusStyles();
-    bindNavClickCapture();
-    fixAllNavbars();
-    if (observer) return;
-    // Always debounce — never call fixAllNavbars synchronously on every mutation.
-    observer = new MutationObserver(() => {
-      scheduleFix();
-    });
     const root = findNavObserveRoot();
     if (root) {
       observer.observe(root, {
@@ -316,6 +341,23 @@
         attributeFilter: ['class', 'style'],
       });
     }
+  }
+
+  function fixNavOnRouteChange() {
+    bindNavObserver();
+    requestAnimationFrame(() => {
+      fixAllNavbars();
+    });
+    scheduleFix();
+  }
+
+  function start() {
+    ensureTransitionStyles();
+    ensureNavFocusStyles();
+    fixAllNavbars();
+    bindNavObserver();
+    if (started) return;
+    started = true;
     window.addEventListener('resize', scheduleFix, { passive: true });
     window.addEventListener('hashchange', fixNavOnRouteChange);
     window.addEventListener('hashchange', ensureNavClickable);
@@ -327,15 +369,16 @@
       clearTimeout(fixTimer);
       fixTimer = null;
     }
-    endNavTransition();
+    hidePersistentHost();
+    const host = document.getElementById(TRANSITION_HOST_ID);
+    if (host) host.replaceChildren();
     observer?.disconnect();
     observer = null;
-    unbindNavClickCapture();
+    started = false;
     window.removeEventListener('resize', scheduleFix);
     window.removeEventListener('hashchange', fixNavOnRouteChange);
     window.removeEventListener('hashchange', ensureNavClickable);
     document.removeEventListener('stremio-custom-route-change', fixNavOnRouteChange);
-    restoreVerticalNavLayout();
   }
 
   window.__stremioCustomLiquidGlassNavStart = start;
@@ -351,15 +394,7 @@
       if (theme === 'liquid-glass.theme.css') start();
       return;
     }
-    const root = findNavObserveRoot();
-    if (root) {
-      observer.observe(root, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['class', 'style'],
-      });
-    }
+    bindNavObserver();
   };
 
   document.addEventListener('stremio-custom-bootstrap-ready', () => {

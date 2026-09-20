@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// UPSTREAM leftover from Stremio/stremio-shell-ng. Not used by MyStremio CI or packaging.
 const { readFileSync, writeFileSync } = require('fs');
 
 function getGitVersion() {

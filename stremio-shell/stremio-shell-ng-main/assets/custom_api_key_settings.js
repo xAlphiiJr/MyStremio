@@ -27,7 +27,7 @@
     return (
       normalized.includes('apikey') ||
       normalized.includes('api_key') ||
-      normalized.ends_with('token')
+      normalized.endsWith('token')
     );
   }
 

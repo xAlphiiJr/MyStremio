@@ -109,7 +109,7 @@ foreach ($LibMpv in $LibMpvCandidates) {
     }
 }
 if (-not $LibMpvCopied) {
-    Write-Warning "libmpv-2.dll not found yet. Run 'cargo build --release' first, or copy it manually."
+    throw "libmpv-2.dll not found. Run 'cargo build --release' first, or copy it next to the project / Stremio runtime."
 }
 
 Write-Host "Runtime files prepared in $OutputDir"

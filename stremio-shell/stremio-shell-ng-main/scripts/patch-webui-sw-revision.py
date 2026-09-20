@@ -6,7 +6,16 @@ import re
 import sys
 from pathlib import Path
 
-WEBUI_HASH = "eb5752673c6ac87e7137a6c3cca21a6980028cf9"
+
+def discover_webui_hash(webui_dir: Path) -> str:
+    matches = [
+        child.name
+        for child in webui_dir.iterdir()
+        if child.is_dir() and (child / "scripts" / "main.js").is_file()
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(f"Expected one hashed webui bundle under {webui_dir}, found {matches}")
+    return matches[0]
 
 
 def md5_hex(path: Path) -> str:
@@ -42,40 +51,39 @@ def _patch_entry(text: str, relative_url: str, revision: str, label: str) -> str
 
 
 def patch_service_worker(service_worker: Path, main_js: Path) -> None:
+    webui_hash = discover_webui_hash(service_worker.parent)
     text = service_worker.read_text(encoding="utf-8")
     text = _patch_entry(
         text,
-        f"{WEBUI_HASH}/scripts/main.js",
+        f"{webui_hash}/scripts/main.js",
         md5_hex(main_js),
         "main.js",
     )
 
     wasm = (
         service_worker.parent
-        / WEBUI_HASH
+        / webui_hash
         / "binaries"
         / "stremio_core_web_bg.wasm"
     )
-    if wasm.is_file():
-        text = _patch_entry(
-            text,
-            f"{WEBUI_HASH}/binaries/stremio_core_web_bg.wasm",
-            md5_hex(wasm),
-            "core wasm",
-        )
-    else:
-        print(f"WARNING: missing wasm at {wasm}; skipped wasm revision update")
+    if not wasm.is_file():
+        raise RuntimeError(f"Missing wasm at {wasm}")
+    text = _patch_entry(
+        text,
+        f"{webui_hash}/binaries/stremio_core_web_bg.wasm",
+        md5_hex(wasm),
+        "core wasm",
+    )
 
-    worker = service_worker.parent / WEBUI_HASH / "scripts" / "worker.js"
-    if worker.is_file():
-        text = _patch_entry(
-            text,
-            f"{WEBUI_HASH}/scripts/worker.js",
-            md5_hex(worker),
-            "worker.js",
-        )
-    else:
-        print(f"WARNING: missing worker at {worker}; skipped worker revision update")
+    worker = service_worker.parent / webui_hash / "scripts" / "worker.js"
+    if not worker.is_file():
+        raise RuntimeError(f"Missing worker at {worker}")
+    text = _patch_entry(
+        text,
+        f"{webui_hash}/scripts/worker.js",
+        md5_hex(worker),
+        "worker.js",
+    )
 
     service_worker.write_text(text, encoding="utf-8")
 

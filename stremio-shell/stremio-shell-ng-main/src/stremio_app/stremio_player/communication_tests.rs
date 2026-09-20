@@ -1,6 +1,6 @@
 use crate::stremio_app::stremio_player::communication::{
     BoolProp, CmdVal, InMsg, InMsgArgs, InMsgFn, MpvCmd, PlayerEnded, PlayerProprChange, PropKey,
-    PropVal,
+    PropVal, StrProp,
 };
 use libmpv2::{events::PropertyData, mpv_end_file_reason};
 
@@ -147,6 +147,31 @@ fn set_propr_tokens() {
             Token::Tuple { len: 2 },
             Token::Str("pause"),
             Token::Bool(true),
+            Token::TupleEnd,
+            Token::TupleStructEnd,
+        ],
+    );
+}
+
+#[test]
+fn set_glsl_shader_opts_tokens() {
+    assert_tokens(
+        &InMsg(
+            InMsgFn::MpvSetProp,
+            InMsgArgs::StProp(
+                PropKey::Str(StrProp::GlslShaderOpts),
+                PropVal::Str("mystremio-dim/mystremio_dim=0.5".to_string()),
+            ),
+        ),
+        &[
+            Token::TupleStruct {
+                name: "InMsg",
+                len: 2,
+            },
+            Token::Str("mpv-set-prop"),
+            Token::Tuple { len: 2 },
+            Token::Str("glsl-shader-opts"),
+            Token::Str("mystremio-dim/mystremio_dim=0.5"),
             Token::TupleEnd,
             Token::TupleStructEnd,
         ],

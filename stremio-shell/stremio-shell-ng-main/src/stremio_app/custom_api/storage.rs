@@ -4,7 +4,8 @@ use std::{
     collections::{BTreeMap, HashMap},
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Mutex, MutexGuard},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 const PLUGIN_CONFIG_EXT: &str = ".plugin.json";
@@ -15,7 +16,15 @@ const PREFERENCES_FILE: &str = "mystremio-settings.json";
 const AUTOSKIP_FILE: &str = "mystremio-autoskip.json";
 const PLAYER_VOLUME_FILE: &str = "mystremio-player-volume.json";
 
+static PREFERENCES_LOCK: Mutex<()> = Mutex::new(());
+
 pub type RegisteredSchemas = HashMap<String, Value>;
+
+fn lock_preferences() -> MutexGuard<'static, ()> {
+    PREFERENCES_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 pub fn list_plugin_files() -> Vec<String> {
     walk_files(&plugins_dir(), PLUGIN_EXT)
@@ -26,7 +35,14 @@ pub fn list_theme_files() -> Vec<String> {
 }
 
 pub fn read_theme_css(file_name: &str) -> Option<String> {
-    let path = themes_dir().join(file_name);
+    let path = resolve_asset_path(file_name)?;
+    if !path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(THEME_EXT))
+    {
+        return None;
+    }
     fs::read_to_string(path).ok()
 }
 
@@ -35,21 +51,7 @@ pub fn read_plugin_source(file_ref: &str) -> Option<String> {
 }
 
 pub fn read_asset_metadata(relative_path: &str) -> Value {
-    let path = resolve_asset_path(relative_path).or_else(|| {
-        let plugin_path = plugins_dir().join(relative_path);
-        if plugin_path.exists() {
-            Some(plugin_path)
-        } else {
-            let theme_path = themes_dir().join(relative_path);
-            if theme_path.exists() {
-                Some(theme_path)
-            } else {
-                None
-            }
-        }
-    });
-
-    let Some(path) = path else {
+    let Some(path) = resolve_asset_path(relative_path) else {
         return json!(null);
     };
 
@@ -85,50 +87,99 @@ pub fn read_asset_metadata(relative_path: &str) -> Value {
 }
 
 pub fn read_user_preferences() -> Value {
+    let _guard = lock_preferences();
+    read_user_preferences_unlocked()
+}
+
+/// Public IPC view: never returns the stored Stremio session blob.
+pub fn read_user_preferences_public() -> Value {
+    let mut prefs = read_user_preferences();
+    if let Some(obj) = prefs.as_object_mut() {
+        obj.remove("authProfile");
+    }
+    prefs
+}
+
+fn read_user_preferences_unlocked() -> Value {
     let path = preferences_path();
     if !path.exists() {
         return default_preferences();
     }
 
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<Value>(&content).ok())
-        .map(normalize_preferences)
-        .unwrap_or_else(default_preferences)
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) => {
+            eprintln!("[MyStremio] cannot read preferences: {error}");
+            return default_preferences();
+        }
+    };
+
+    match serde_json::from_str::<Value>(&content) {
+        Ok(value) => normalize_preferences(value),
+        Err(error) => {
+            backup_corrupt_preferences(&content);
+            eprintln!(
+                "[MyStremio] preferences file was corrupt ({error}); backed up and reset to defaults"
+            );
+            default_preferences()
+        }
+    }
+}
+
+fn backup_corrupt_preferences(content: &str) {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let backup = preferences_path().with_file_name(format!("{PREFERENCES_FILE}.corrupt-{ts}"));
+    if let Err(error) = fs::write(&backup, content) {
+        eprintln!("[MyStremio] cannot write preferences backup {}: {error}", backup.display());
+    }
+}
+
+fn write_text_atomic(path: &Path, content: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, content)?;
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    fs::rename(&tmp, path)
 }
 
 pub fn save_user_preferences(preferences: &Value) {
+    let _guard = lock_preferences();
     // Many JS callers (persistUserPreferences) omit apiKeys / uiScaleByMonitor /
     // uiScaleAdaptedMonitors. Preserve those from disk whenever the key is absent.
     let mut merged = preferences.clone();
     if let Some(obj) = merged.as_object_mut() {
         if obj.get("apiKeys").is_none() {
-            if let Some(existing_keys) = read_api_keys_from_disk_raw() {
+            if let Some(existing_keys) = read_prefs_field_unlocked("apiKeys") {
                 obj.insert("apiKeys".to_string(), existing_keys);
             }
         }
         if obj.get("uiScaleByMonitor").is_none() {
-            if let Some(existing) = read_ui_scale_by_monitor_from_disk_raw() {
+            if let Some(existing) = read_prefs_field_unlocked("uiScaleByMonitor") {
                 obj.insert("uiScaleByMonitor".to_string(), existing);
             }
         }
         if obj.get("uiScaleAdaptedMonitors").is_none() {
-            if let Some(existing) = read_ui_scale_adapted_monitors_from_disk_raw() {
+            if let Some(existing) = read_prefs_field_unlocked("uiScaleAdaptedMonitors") {
                 obj.insert("uiScaleAdaptedMonitors".to_string(), existing);
             }
         }
     }
     let normalized = normalize_preferences(merged);
-    if let Some(parent) = preferences_path().parent() {
-        let _ = fs::create_dir_all(parent);
-    }
     if let Ok(content) = serde_json::to_string_pretty(&normalized) {
-        let _ = fs::write(preferences_path(), content);
+        if let Err(error) = write_text_atomic(&preferences_path(), &content) {
+            eprintln!("[MyStremio] cannot save preferences: {error}");
+        }
     }
 }
 
-/// Reads `apiKeys` from the preferences file without full normalize (no recursion).
-fn read_api_keys_from_disk_raw() -> Option<Value> {
+fn read_prefs_field_unlocked(field: &str) -> Option<Value> {
     let path = preferences_path();
     if !path.exists() {
         return None;
@@ -136,31 +187,7 @@ fn read_api_keys_from_disk_raw() -> Option<Value> {
     fs::read_to_string(path)
         .ok()
         .and_then(|content| serde_json::from_str::<Value>(&content).ok())
-        .and_then(|value| value.get("apiKeys").cloned())
-}
-
-/// Reads `uiScaleByMonitor` from disk without full normalize (no recursion).
-fn read_ui_scale_by_monitor_from_disk_raw() -> Option<Value> {
-    let path = preferences_path();
-    if !path.exists() {
-        return None;
-    }
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<Value>(&content).ok())
-        .and_then(|value| value.get("uiScaleByMonitor").cloned())
-}
-
-/// Reads `uiScaleAdaptedMonitors` from disk without full normalize (no recursion).
-fn read_ui_scale_adapted_monitors_from_disk_raw() -> Option<Value> {
-    let path = preferences_path();
-    if !path.exists() {
-        return None;
-    }
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<Value>(&content).ok())
-        .and_then(|value| value.get("uiScaleAdaptedMonitors").cloned())
+        .and_then(|value| value.get(field).cloned())
 }
 
 pub fn read_autoskip_settings() -> Value {
@@ -309,17 +336,6 @@ fn repair_data_enrichment_config(config: Value, path: &Path) -> Value {
     {
         // Respect explicit user choice, including an intentionally empty key.
         return config;
-    }
-
-    if let Some(existing) = config
-        .get("tmdbApiKey")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        if looks_like_api_key(existing) {
-            return config;
-        }
     }
 
     let mistaken_path = plugins_dir().join("tmdbApiKey.plugin.json");
@@ -765,6 +781,7 @@ fn collect_early_storage_pairs(prefs: &Value) -> Map<String, Value> {
             ("intro", "stremio-custom-autoskip-intro"),
             ("credits", "stremio-custom-autoskip-credits"),
             ("recap", "stremio-custom-autoskip-recap"),
+            ("preview", "stremio-custom-autoskip-preview"),
         ] {
             if let Some(value) = autoskip.get(id).and_then(|v| v.as_bool()) {
                 put(key, value.to_string());

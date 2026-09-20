@@ -1,13 +1,15 @@
 /**
  * @name Meta Hover Panel
  * @description Rich movie/series info panel on poster hover using Cinemeta metadata.
- * @version 2.1.4
+ * @version 2.2.2
  * @author MyStremio
  * @category Metadata
  */
 
 (function () {
   'use strict';
+
+  const PLUGIN_VERSION = '2.2.2';
 
   const CONFIG = {
     HOVER_DELAY: 450,
@@ -30,6 +32,8 @@
   let activePanel = null;
   let activeAnchor = null;
   let trackedAnchor = null;
+  let trackedMediaKey = null;
+  let lastPointer = { x: 0, y: 0 };
   let showGeneration = 0;
   let moveRaf = null;
   let catalogCache = { at: 0, items: [] };
@@ -316,7 +320,10 @@
       const id = extractImdbFromSource(value);
       if (id) return id;
     }
-    const nodes = [root, ...root.querySelectorAll('img, [data-imdb-id], [data-id]')];
+    const nodes = [
+      root,
+      ...root.querySelectorAll('img, [data-imdb-id], [data-id], [class*="poster-container"], [class*="poster-image-layer"]'),
+    ];
     for (const node of nodes) {
       const attrs = [
         node.getAttribute?.('data-imdb-id'),
@@ -324,6 +331,8 @@
         node.getAttribute?.('src'),
         node.getAttribute?.('data-src'),
         node.getAttribute?.('data-original'),
+        node.style?.backgroundImage,
+        node.getAttribute?.('style'),
       ];
       for (const value of attrs) {
         const id = extractImdbFromSource(value);
@@ -369,7 +378,7 @@
 
     const patterns = [
       /\/(?:detail|metadetails)\/(movie|series)\/([^/?#]+)/i,
-      /\/player\/[^/]+\/[^/]+\/[^/]+\/(movie|series)\/([^/?#]+)/i,
+      /\/player\/(?:[^/?#]+\/)*(movie|series)\/([^/?#]+)/i,
       /\/library\/(movie|series)\/([^/?#]+)/i,
     ];
 
@@ -378,6 +387,12 @@
       if (match) {
         return { type: match[1].toLowerCase(), id: decodeURIComponent(match[2]) };
       }
+    }
+
+    const metahub = href.match(/images\.metahub\.space\/(?:background|poster|logo)\/[^/]+\/(tt\d{7,})/i);
+    if (metahub) {
+      const type = /series|episode|season/i.test(href) ? 'series' : 'movie';
+      return { type, id: metahub[1] };
     }
 
     const imdbMatch = href.match(/tt\d{7,}/i);
@@ -527,8 +542,29 @@
     });
   }
 
+  function isEnhancedCoversNoise(mutation) {
+    const nodes = [];
+    if (mutation.target instanceof Element) nodes.push(mutation.target);
+    mutation.addedNodes.forEach((node) => {
+      if (node instanceof Element) nodes.push(node);
+    });
+    mutation.removedNodes.forEach((node) => {
+      if (node instanceof Element) nodes.push(node);
+    });
+    if (!nodes.length) return false;
+    return nodes.every((el) => {
+      if (el.classList?.contains('enhanced-logo-overlay') || el.closest?.('.enhanced-logo-overlay')) {
+        return true;
+      }
+      if (!el.closest('[class*="continue-watching"]')) return false;
+      if (el.matches?.('img') || mutation.attributeName === 'src') return true;
+      return Boolean(el.matches?.('[class*="poster-image-layer"], [class*="poster-container"]'));
+    });
+  }
+
   function isCatalogMutation(mutations) {
     for (const mutation of mutations) {
+      if (isEnhancedCoversNoise(mutation)) continue;
       const target = mutation.target;
       if (target instanceof Element) {
         if (target.closest('[class*="meta-items-container"], [class*="meta-row-container"], [class*="continue-watching"]')) {
@@ -1611,6 +1647,226 @@
     document.querySelectorAll('#meta-hover-panel-active').forEach((node) => node.remove());
   }
 
+  function getPosterSurface(anchor) {
+    if (!(anchor instanceof Element)) return null;
+    return (
+      anchor.querySelector('[class*="poster-container"]') ||
+      anchor.querySelector('[class*="poster-image-layer"]') ||
+      null
+    );
+  }
+
+  function isContinueWatchingCard(el) {
+    return Boolean(el?.closest?.('[class*="continue-watching-row"]'));
+  }
+
+  function copyHitRect(rect) {
+    return {
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
+  /**
+   * Painted Continue Watching cover. Enhanced Covers can collapse the card
+   * layout box to ~0 while the image still paints — never clamp to card.bottom.
+   *
+   * @param {Element|null} anchor
+   * @returns {{left:number,right:number,top:number,bottom:number,width:number,height:number}|null}
+   */
+  function cwHitRect(anchor) {
+    const live = rebindAnchorIfDetached(anchor);
+    if (!(live instanceof Element)) return null;
+
+    const minSize = 8;
+    const usable = (rect) => rect && rect.width >= minSize && rect.height >= minSize;
+
+    const img = live.querySelector('img[class*="poster-image"]');
+    if (img?.isConnected) {
+      const rect = img.getBoundingClientRect();
+      if (usable(rect)) return copyHitRect(rect);
+    }
+
+    const poster = getPosterSurface(live);
+    if (poster?.isConnected) {
+      const rect = poster.getBoundingClientRect();
+      if (usable(rect)) return copyHitRect(rect);
+    }
+
+    const card = live.getBoundingClientRect();
+    if (card.width < minSize) return null;
+
+    let top = card.top;
+    let bottom = card.top + Math.max((card.width * 9) / 16, 180);
+    const title = live.querySelector('[class*="title-bar-container"], [class*="title-bar"]');
+    if (title) {
+      const titleRect = title.getBoundingClientRect();
+      if (titleRect.top > card.top + 40) {
+        bottom = titleRect.top;
+      }
+    }
+
+    const height = bottom - top;
+    if (height < minSize) return null;
+
+    return {
+      left: card.left,
+      right: card.right,
+      top,
+      bottom,
+      width: card.width,
+      height,
+    };
+  }
+
+  /**
+   * Usable cover rect. Enhanced Covers can leave poster-container at 0 height
+   * in WebView2 even when the image is painted.
+   *
+   * @param {Element|null} anchor
+   * @returns {{left:number,right:number,top:number,bottom:number,width:number,height:number}|null}
+   */
+  function getPosterHitRect(anchor) {
+    const live = rebindAnchorIfDetached(anchor);
+    if (!(live instanceof Element)) return null;
+    if (isContinueWatchingCard(live)) return cwHitRect(live);
+
+    const minSize = 8;
+    const usable = (rect) => rect && rect.width >= minSize && rect.height >= minSize;
+
+    const poster = getPosterSurface(live);
+    if (poster?.isConnected) {
+      const rect = poster.getBoundingClientRect();
+      if (usable(rect)) return rect;
+    }
+
+    const img = live.querySelector('img[class*="poster-image"]');
+    if (img?.isConnected) {
+      const rect = img.getBoundingClientRect();
+      if (usable(rect)) return rect;
+    }
+
+    const card = live.getBoundingClientRect();
+    if (card.width < minSize) return null;
+
+    let top = card.top;
+    let bottom = card.top + Math.max((card.width * 9) / 16, 180);
+    bottom = Math.min(card.bottom, Math.max(bottom, card.top + 80));
+    const height = bottom - top;
+    if (height < minSize) return null;
+
+    return {
+      left: card.left,
+      right: card.right,
+      top,
+      bottom,
+      width: card.width,
+      height,
+    };
+  }
+
+  function panelAnchorRect(anchor) {
+    const hit = getPosterHitRect(anchor);
+    if (hit) return hit;
+    if (anchor instanceof Element) return anchor.getBoundingClientRect();
+    return { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 };
+  }
+
+  /**
+   * Cover geometry only — title-bar siblings stay cold.
+   *
+   * @param {Element|null} anchor
+   * @param {number} x
+   * @param {number} y
+   * @param {number} [pad]
+   * @returns {boolean}
+   */
+  function isPointerOverCwCard(anchor, x, y, pad = 0) {
+    const live = rebindAnchorIfDetached(anchor);
+    if (!(live instanceof Element)) return false;
+    const rect = cwHitRect(live);
+    if (rect && pointInRect(x, y, rect, pad)) return true;
+    const el = document.elementFromPoint(x, y);
+    if (el && (live === el || live.contains(el))) return true;
+    if (el?.closest('[class*="meta-item-container"]') === live) return true;
+    return false;
+  }
+
+  function isPointerOverPoster(anchor, x, y, pad = 0) {
+    if (isContinueWatchingCard(anchor)) {
+      return isPointerOverCwCard(anchor, x, y, pad);
+    }
+    const rect = getPosterHitRect(anchor);
+    if (!rect) return false;
+    return pointInRect(x, y, rect, pad);
+  }
+
+  /**
+   * Hit-test by poster geometry, not elementFromPoint (CW overlays / Enhanced Covers).
+   * Title-bar siblings are not part of the cover rect.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @returns {Element|null}
+   */
+  function cardFromPoint(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const fromEl = el?.closest('[class*="meta-item-container"]');
+    if (fromEl && isContinueWatchingCard(fromEl)) return fromEl;
+
+    const cwCards = document.querySelectorAll(
+      '[class*="continue-watching-row"] [class*="meta-item-container"]',
+    );
+    for (const node of cwCards) {
+      const rect = cwHitRect(node);
+      if (rect && pointInRect(x, y, rect, 0)) return node;
+    }
+
+    const nodes = document.querySelectorAll('[class*="meta-item-container"]');
+    let best = null;
+    let bestArea = Infinity;
+    for (const node of nodes) {
+      if (isContinueWatchingCard(node)) continue;
+      const rect = getPosterHitRect(node);
+      if (!rect || !pointInRect(x, y, rect, 0)) continue;
+      const area = Math.max(1, rect.width * rect.height);
+      if (area < bestArea) {
+        bestArea = area;
+        best = node;
+      }
+    }
+    return best;
+  }
+
+  function mediaKeyFromAnchor(anchor) {
+    if (!(anchor instanceof Element)) return null;
+    const stored = String(anchor.dataset?.metaHoverId || '').toLowerCase();
+    if (stored) return stored;
+    const href = anchor.getAttribute?.('href') || anchor.href || '';
+    const fromHref = parseMediaFromHref(href);
+    if (fromHref?.id) return String(fromHref.id).toLowerCase();
+    return href ? href.toLowerCase() : null;
+  }
+
+  function findAnchorByMediaKey(key) {
+    if (!key) return null;
+    const nodes = document.querySelectorAll('[class*="meta-item-container"]');
+    for (const node of nodes) {
+      if (mediaKeyFromAnchor(node) === key) return node;
+    }
+    return null;
+  }
+
+  function rebindAnchorIfDetached(anchor) {
+    if (anchor?.isConnected) return anchor;
+    const key = trackedMediaKey || mediaKeyFromAnchor(anchor);
+    return findAnchorByMediaKey(key);
+  }
+
   function isAnchorVisible(anchor) {
     if (!anchor?.isConnected) return false;
     const rect = anchor.getBoundingClientRect();
@@ -1623,7 +1879,14 @@
   }
 
   function isHoverIntentActive(anchor) {
-    return Boolean(anchor?.isConnected && trackedAnchor === anchor);
+    if (!isHoverRouteAllowed() || !anchor) return false;
+    const live = rebindAnchorIfDetached(anchor);
+    const key = mediaKeyFromAnchor(live) || trackedMediaKey;
+    if (trackedMediaKey && key && trackedMediaKey !== key) return false;
+    if (isPointerOverHoverTarget(lastPointer.x, lastPointer.y)) return true;
+    // Catalog re-render can drop the poster node for a frame; keep the same media intent.
+    if (trackedMediaKey && (!live || !getPosterSurface(live))) return true;
+    return false;
   }
 
   /**
@@ -1650,14 +1913,10 @@
    * @returns {boolean}
    */
   function isPointerOverHoverTarget(x, y) {
-    const pad = 48;
-    if (activeAnchor?.isConnected && pointInRect(x, y, activeAnchor.getBoundingClientRect(), pad)) {
-      return true;
-    }
-    if (trackedAnchor?.isConnected && pointInRect(x, y, trackedAnchor.getBoundingClientRect(), pad)) {
-      return true;
-    }
-    if (activePanel?.isConnected && pointInRect(x, y, activePanel.getBoundingClientRect(), pad)) {
+    const posterPad = activePanel ? 8 : 0;
+    if (isPointerOverPoster(activeAnchor, x, y, posterPad)) return true;
+    if (isPointerOverPoster(trackedAnchor, x, y, posterPad)) return true;
+    if (activePanel?.isConnected && pointInRect(x, y, activePanel.getBoundingClientRect(), 8)) {
       return true;
     }
     return false;
@@ -1674,20 +1933,21 @@
     return true;
   }
 
-  function isPointerOverAnchor(anchor, x, y) {
-    if (!anchor?.isConnected) return false;
-    return pointInRect(x, y, anchor.getBoundingClientRect(), 0);
-  }
-
   function validateActivePanel(pointer) {
     if (!activePanel) return;
+
+    const live = rebindAnchorIfDetached(activeAnchor);
+    if (live && live !== activeAnchor) {
+      activeAnchor = live;
+      trackedAnchor = live;
+    }
 
     if (!activeAnchor?.isConnected || !isAnchorVisible(activeAnchor)) {
       clearHoverState();
       return;
     }
 
-    if (!isHoverIntentActive(activeAnchor)) {
+    if (!isContinueWatchingCard(activeAnchor) && !isHoverIntentActive(activeAnchor)) {
       clearHoverState();
       return;
     }
@@ -1703,8 +1963,19 @@
       return;
     }
     const generation = ++showGeneration;
-    const stillValid = () =>
-      generation === showGeneration && isHoverIntentActive(anchor) && isHoverRouteAllowed();
+    const stillValid = () => {
+      const live = rebindAnchorIfDetached(anchor);
+      if (live && live !== anchor) {
+        anchor = live;
+        trackedAnchor = live;
+        activeAnchor = live;
+      }
+      return (
+        generation === showGeneration &&
+        isHoverRouteAllowed() &&
+        (isContinueWatchingCard(anchor) || isHoverIntentActive(anchor))
+      );
+    };
 
     removePanel();
     if (!stillValid()) return;
@@ -1716,7 +1987,7 @@
     loading.id = 'meta-hover-panel-active';
     loading.innerHTML = '<div class="meta-hover-panel-loading">Lade Infos…</div>';
     document.body.appendChild(loading);
-    positionPanel(loading, anchor.getBoundingClientRect());
+    positionPanel(loading, panelAnchorRect(anchor));
     activePanel = loading;
 
     const imdbId = await resolveImdbId(media);
@@ -1769,21 +2040,12 @@
     document.body.appendChild(panel);
     loading.remove();
     activePanel = panel;
-    positionPanel(panel, anchor.getBoundingClientRect());
+    positionPanel(panel, panelAnchorRect(anchor));
   }
 
   function getMetaItemAnchor(target) {
     if (!(target instanceof Element)) return null;
-
-    const direct = target.closest('[class*="meta-item-container"]');
-    if (direct) return direct;
-
-    const card = target.closest('[class*="meta-items-container"] > [class*="meta-item"]');
-    if (card) {
-      return card.querySelector('[class*="meta-item-container"]');
-    }
-
-    return null;
+    return target.closest('[class*="meta-item-container"]');
   }
 
   function clearHoverState() {
@@ -1791,26 +2053,51 @@
     clearTimeout(hoverTimer);
     hoverTimer = null;
     trackedAnchor = null;
+    trackedMediaKey = null;
     removePanel();
   }
 
   function scheduleHover(anchor) {
     if (!anchor || !isHoverRouteAllowed()) return;
+    if (!isContinueWatchingCard(anchor) && !isPointerOverPoster(anchor, lastPointer.x, lastPointer.y, 0)) {
+      return;
+    }
+    const nextKey = mediaKeyFromAnchor(anchor);
+    if (trackedMediaKey && nextKey && trackedMediaKey === nextKey && (hoverTimer || activePanel)) {
+      trackedAnchor = anchor;
+      return;
+    }
     trackedAnchor = anchor;
+    trackedMediaKey = nextKey;
     clearTimeout(hoverTimer);
 
     hoverTimer = setTimeout(async () => {
-      if (!isHoverRouteAllowed() || !isHoverIntentActive(anchor)) return;
-      const media = await extractMediaInfo(anchor);
-      if (!isHoverRouteAllowed() || !media || !isHoverIntentActive(anchor)) return;
+      const cw = isContinueWatchingCard(anchor);
+      if (!isHoverRouteAllowed() || (!cw && !isHoverIntentActive(anchor))) return;
+      const live = rebindAnchorIfDetached(anchor) || anchor;
+      const media = await extractMediaInfo(live);
+      if (!isHoverRouteAllowed() || !media) return;
+      if (!isContinueWatchingCard(live) && !isHoverIntentActive(live)) return;
+      if (media.id) trackedMediaKey = String(media.id).toLowerCase();
       if (media.id && /^tt\d{7,}/i.test(String(media.id))) {
         prefetchHoverRatings(media.id, media.type);
       }
-      showPanel(anchor, media);
+      showPanel(live, media);
     }, CONFIG.HOVER_DELAY);
   }
 
+  function handleCwMouseOver(event) {
+    if (!isHoverRouteAllowed()) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const card = target.closest('[class*="meta-item-container"]');
+    if (!card || !isContinueWatchingCard(card)) return;
+    lastPointer = { x: event.clientX, y: event.clientY };
+    scheduleHover(card);
+  }
+
   function handlePointerMove(event) {
+    lastPointer = { x: event.clientX, y: event.clientY };
     if (!isHoverRouteAllowed()) {
       if (activePanel || trackedAnchor || hoverTimer) clearHoverState();
       return;
@@ -1823,8 +2110,20 @@
         return;
       }
 
-      const x = event.clientX;
-      const y = event.clientY;
+      const x = lastPointer.x;
+      const y = lastPointer.y;
+
+      if (isContinueWatchingCard(trackedAnchor)) {
+        if (isPointerOverHoverTarget(x, y)) {
+          if (activePanel) {
+            validateActivePanel({ x, y });
+            repositionActivePanel();
+          }
+          return;
+        }
+        clearHoverState();
+        return;
+      }
 
       // Keep an open panel while the pointer stays over poster or panel area.
       if (activePanel && isPointerOverHoverTarget(x, y)) {
@@ -1833,23 +2132,27 @@
         return;
       }
 
-      const anchor = getMetaItemAnchor(document.elementFromPoint(x, y));
-      if (!anchor) {
-        if (isPointerOverHoverTarget(x, y)) {
+      const card = cardFromPoint(x, y);
+      if (card) {
+        validateActivePanel({ x, y });
+
+        if (activePanel && (activeAnchor === card || mediaKeyFromAnchor(activeAnchor) === mediaKeyFromAnchor(card))) {
+          if (activeAnchor !== card) {
+            activeAnchor = card;
+            trackedAnchor = card;
+          }
+          repositionActivePanel();
           return;
         }
-        clearHoverState();
+
+        scheduleHover(card);
         return;
       }
 
-      validateActivePanel({ x, y });
-
-      if (activePanel && activeAnchor === anchor) {
-        repositionActivePanel();
+      if (isPointerOverHoverTarget(x, y)) {
         return;
       }
-
-      scheduleHover(anchor);
+      clearHoverState();
     });
   }
 
@@ -1876,6 +2179,8 @@
     if (target instanceof Element) {
       if (
         target.closest('[class*="meta-items-container"]') ||
+        target.closest('[class*="continue-watching-row"]') ||
+        target.closest('.mystremio-board-row-scrollport') ||
         target.closest('.meta-hover-panel')
       ) {
         return;
@@ -1886,7 +2191,7 @@
 
   function repositionActivePanel() {
     if (!activePanel || !activeAnchor) return;
-    positionPanel(activePanel, activeAnchor.getBoundingClientRect());
+    positionPanel(activePanel, panelAnchorRect(activeAnchor));
   }
 
   let catalogObserver = null;
@@ -1921,6 +2226,7 @@
     suspendRuntime();
     if (runtimeBound) {
       document.removeEventListener('mousemove', handlePointerMove);
+      document.removeEventListener('mouseover', handleCwMouseOver, true);
       document.removeEventListener('pointerdown', handlePointerDown, true);
       document.removeEventListener('mouseleave', clearHoverState);
       window.removeEventListener('scroll', handleScroll, true);
@@ -1965,15 +2271,20 @@
           clearHoverState();
         }
         mutations.forEach((mutation) => {
+          if (isEnhancedCoversNoise(mutation)) return;
           if (mutation.target instanceof Element) {
             const container = mutation.target.closest('[class*="meta-items-container"], [class*="meta-row-container"]');
-            if (container) clearHoverBindingsIn(container);
+            if (container && !container.closest('[class*="continue-watching-row"]')) {
+              clearHoverBindingsIn(container);
+            }
           }
           mutation.addedNodes.forEach((node) => {
             if (node instanceof Element) {
               const container = node.closest?.('[class*="meta-items-container"], [class*="meta-row-container"]')
                 || (node.matches?.('[class*="meta-items-container"], [class*="meta-row-container"]') ? node : null);
-              if (container) clearHoverBindingsIn(container);
+              if (container && !container.closest('[class*="continue-watching-row"]')) {
+                clearHoverBindingsIn(container);
+              }
             }
           });
         });
@@ -1996,14 +2307,15 @@
   }
 
   function init() {
-    if (window.__MetaHoverPanelLoaded) return;
-    window.__MetaHoverPanelLoaded = true;
+    if (window.__MetaHoverPanelLoaded === PLUGIN_VERSION) return;
+    window.__MetaHoverPanelLoaded = PLUGIN_VERSION;
 
     injectStyles();
 
     if (!runtimeBound) {
       runtimeBound = true;
       document.addEventListener('mousemove', handlePointerMove, { passive: true });
+      document.addEventListener('mouseover', handleCwMouseOver, true);
       document.addEventListener('pointerdown', handlePointerDown, true);
       document.addEventListener('mouseleave', clearHoverState);
       window.addEventListener('scroll', handleScroll, true);

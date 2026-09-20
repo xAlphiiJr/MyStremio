@@ -1,7 +1,7 @@
 /**
  * @name Picture Settings
  * @description Player picture controls: Dim plus Contrast / Brightness / Gamma / Saturation
- * @version 2.4.0
+ * @version 2.5.1
  * @author MyStremio
  * @category player
  */
@@ -10,7 +10,7 @@
 (function () {
   'use strict';
 
-  const PLUGIN_VERSION = '2.4.0';
+  const PLUGIN_VERSION = '2.5.1';
   const PLUGIN_REF = 'player/picture.plugin.js';
   const LEGACY_PLUGIN_REF = 'player/brightness.plugin.js';
   const RESET_ICON_PATHS = [
@@ -37,6 +37,10 @@
   const OVERLAY_LOCK_CLASS = 'mystremio-brightness-overlay-lock';
   const STORAGE_KEY = 'stremio-custom-player-brightness-eq';
   const LEGACY_STORAGE_KEY = 'stremio-custom-player-brightness';
+  const DIM_SHADER_MIGRATED_KEY = 'stremio-custom-migrate-dim-shader-v1';
+  const DIM_SHADER_FILE = 'mystremio-dim.glsl';
+  const DIM_SHADER_PARAM = 'mystremio_dim';
+  const DIM_SHADER_OPTS_KEY = `mystremio-dim/${DIM_SHADER_PARAM}`;
   const ICON_SIZE = '2.0rem';
   const PANEL_VERSION = '11';
   const SLIDER_ACTIVE_CLASS = 'mystremio-brightness-slider-active';
@@ -48,10 +52,10 @@
    * @property {number} brightness Absolute mpv brightness (−100…100), 0 neutral
    * @property {number} gamma Absolute mpv gamma (−100…100), 0 neutral
    * @property {number} saturation Absolute mpv saturation (−100…100), 0 neutral
-   * @property {boolean} brightnessManual Fine Brightness overrides master dim curve
-   * @property {boolean} contrastManual Fine Contrast ignores master coupling
-   * @property {boolean} gammaManual Fine Gamma ignores master coupling
-   * @property {boolean} saturationManual Fine Saturation ignores master coupling
+   * @property {boolean} brightnessManual Fine Brightness was moved by the user
+   * @property {boolean} contrastManual Fine Contrast was moved by the user
+   * @property {boolean} gammaManual Fine Gamma was moved by the user
+   * @property {boolean} saturationManual Fine Saturation was moved by the user
    */
 
   /** @type {EqState} */
@@ -91,10 +95,7 @@
   /** @type {EqState} */
   let state = { ...DEFAULT_STATE };
   let lastAppliedSig = '';
-
-  function isPlayerRoute() {
-    return /#\/player/.test(location.hash || '');
-  }
+  let shadersDir = '';
 
   /**
    * @param {unknown} value
@@ -109,69 +110,47 @@
     return Math.min(max, Math.max(min, Math.round(num)));
   }
 
-  /**
-   * Master Dim (100 = no dim) → Contrast / Brightness / Gamma / Saturation.
-   * Values from the night-dim table; linear between the 10-step knots. Saturation stays 0.
-   *
-   * @param {number} dim
-   * @returns {{ brightness: number, contrast: number, gamma: number, saturation: number }}
-   */
-  function dimCurve(dim) {
-    const knots = [
-      { dim: 100, contrast: 0, brightness: 0, gamma: 0 },
-      { dim: 90, contrast: -1, brightness: -2, gamma: -4 },
-      { dim: 80, contrast: -1, brightness: -4, gamma: -8 },
-      { dim: 70, contrast: -2, brightness: -6, gamma: -12 },
-      { dim: 60, contrast: -2, brightness: -8, gamma: -16 },
-      { dim: 50, contrast: -3, brightness: -10, gamma: -20 },
-      { dim: 40, contrast: -3, brightness: -12, gamma: -24 },
-      { dim: 30, contrast: -3, brightness: -14, gamma: -28 },
-      { dim: 20, contrast: -4, brightness: -15, gamma: -32 },
-      { dim: 10, contrast: -4, brightness: -17, gamma: -36 },
-      { dim: 0, contrast: -5, brightness: -20, gamma: -40 },
-    ];
-    const d = clampInt(dim, 0, 100, 100);
-    if (d >= knots[0].dim) {
-      return { contrast: 0, brightness: 0, gamma: 0, saturation: 0 };
-    }
-    if (d <= knots[knots.length - 1].dim) {
-      const last = knots[knots.length - 1];
-      return {
-        contrast: last.contrast,
-        brightness: last.brightness,
-        gamma: last.gamma,
-        saturation: 0,
-      };
-    }
-    let hi = 0;
-    while (hi < knots.length - 1 && knots[hi + 1].dim >= d) hi += 1;
-    const upper = knots[hi];
-    const lower = knots[hi + 1];
-    const span = upper.dim - lower.dim;
-    const t = span === 0 ? 0 : (upper.dim - d) / span;
-    const mix = (a, b) => Math.round(a + (b - a) * t);
-    return {
-      contrast: mix(upper.contrast, lower.contrast),
-      brightness: mix(upper.brightness, lower.brightness),
-      gamma: mix(upper.gamma, lower.gamma),
-      saturation: 0,
-    };
+  function isPlayerRoute() {
+    return /#\/player/.test(location.hash || '');
   }
 
   /**
-   * Master Dim writes the dim curve unless the corresponding fine slider was moved.
+   * Fine EQ knobs only. Dim is a separate linear GLSL multiply.
    *
    * @param {EqState} s
    * @returns {{ brightness: number, contrast: number, gamma: number, saturation: number }}
    */
   function resolveMpvProps(s) {
-    const curve = dimCurve(s.dim);
     return {
-      brightness: s.brightnessManual ? s.brightness : curve.brightness,
-      contrast: s.contrastManual ? s.contrast : curve.contrast,
-      gamma: s.gammaManual ? s.gamma : curve.gamma,
-      saturation: s.saturationManual ? s.saturation : curve.saturation,
+      brightness: s.brightness,
+      contrast: s.contrast,
+      gamma: s.gamma,
+      saturation: s.saturation,
     };
+  }
+
+  /**
+   * One-shot: previous Dim wrote brightness/contrast/gamma via the night curve.
+   * After the shader migration, zero those unless the user moved a fine slider.
+   *
+   * @param {EqState} s
+   * @returns {EqState}
+   */
+  function migrateDimOffEq(s) {
+    try {
+      if (localStorage.getItem(DIM_SHADER_MIGRATED_KEY) === '1') return s;
+    } catch (_) {
+      return s;
+    }
+    const next = { ...s };
+    if (!next.brightnessManual) next.brightness = 0;
+    if (!next.contrastManual) next.contrast = 0;
+    if (!next.gammaManual) next.gamma = 0;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeState(next)));
+      localStorage.setItem(DIM_SHADER_MIGRATED_KEY, '1');
+    } catch (_) {}
+    return next;
   }
 
   /**
@@ -202,16 +181,16 @@
   function readStoredState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return normalizeState(JSON.parse(raw));
+      if (raw) return migrateDimOffEq(normalizeState(JSON.parse(raw)));
     } catch (_) {}
     try {
       const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
       if (legacy != null && legacy !== '') {
         const dim = clampInt(legacy, 0, 100, 100);
-        return normalizeState({ ...DEFAULT_STATE, dim });
+        return migrateDimOffEq(normalizeState({ ...DEFAULT_STATE, dim }));
       }
     } catch (_) {}
-    return { ...DEFAULT_STATE };
+    return migrateDimOffEq({ ...DEFAULT_STATE });
   }
 
   /**
@@ -267,7 +246,7 @@
   }
 
   /**
-   * Fine EQ via video-only `vf`. Dim drives the four EQ knobs unless a fine slider is manual.
+   * Fine EQ via video-only `vf`. Dim is a linear GLSL multiply (phone brightness).
    *
    * @param {EqState} [s]
    */
@@ -285,6 +264,95 @@
       props.gamma === 0 &&
       props.saturation === 0;
     sendMpvSetProp('vf', neutral ? '' : buildVideoEqFilter(props));
+    applyDimShader(next.dim);
+  }
+
+  function ensureGlslComposer() {
+    const prev = window.StremioCustomGlsl;
+    window.StremioCustomGlsl = {
+      layers: {
+        dim: prev?.layers?.dim || [],
+        anime4k: prev?.layers?.anime4k || [],
+      },
+      apply() {
+        const files = [...(this.layers.dim || []), ...(this.layers.anime4k || [])].filter(Boolean);
+        sendMpvSetProp('glsl-shaders', files.join(';'));
+      },
+    };
+    return window.StremioCustomGlsl;
+  }
+
+  async function resolveShadersDir() {
+    if (shadersDir) return shadersDir;
+    const api = window.StremioCustomAPI || window.StremioEnhancedAPI;
+    try {
+      const paths = await api?.getPaths?.();
+      const fromPaths = String(paths?.shadersPath || '').trim();
+      if (fromPaths) {
+        shadersDir = fromPaths.replace(/[\\/]+$/, '');
+        return shadersDir;
+      }
+    } catch (_) {}
+    try {
+      const bundled = String((await api?.getPaths?.())?.bundledPluginsPath || '');
+      if (bundled) {
+        shadersDir =
+          bundled.replace(/[\\/]+plugins[\\/]*$/i, '').replace(/[\\/]+$/, '') + '\\shaders';
+        return shadersDir;
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  /**
+   * mpv `--glsl-shader-opts` is `basename/param=value` (gpu-next / libplacebo).
+   *
+   * @param {number} factor 0–1
+   * @returns {string}
+   */
+  function dimShaderOpts(factor) {
+    return `${DIM_SHADER_OPTS_KEY}=${factor.toFixed(4)}`;
+  }
+
+  /**
+   * Attach dim hook then set PARAM. Opts before the shader never apply.
+   *
+   * @param {string} dir
+   * @param {number} factor 0–1
+   */
+  function attachDimShader(dir, factor) {
+    const composer = ensureGlslComposer();
+    composer.layers.dim = [`${dir}\\${DIM_SHADER_FILE}`.replace(/\//g, '\\')];
+    composer.apply();
+    sendMpvSetProp('glsl-shader-opts', dimShaderOpts(factor));
+  }
+
+  /**
+   * @param {number} dim 0–100 (100 = no dim)
+   */
+  function applyDimShader(dim) {
+    const composer = ensureGlslComposer();
+    const factor = Math.max(0, Math.min(1, clampInt(dim, 0, 100, 100) / 100));
+    if (factor >= 0.999) {
+      composer.layers.dim = [];
+      composer.apply();
+      sendMpvSetProp('glsl-shader-opts', '');
+      return;
+    }
+    if (shadersDir) {
+      attachDimShader(shadersDir, factor);
+      return;
+    }
+    resolveShadersDir().then((dir) => {
+      if (!dir) {
+        console.warn('[StremioCustom] shadersPath unavailable; cannot apply dim shader.');
+        composer.layers.dim = [];
+        composer.apply();
+        sendMpvSetProp('glsl-shader-opts', '');
+        return;
+      }
+      attachDimShader(dir, factor);
+    });
   }
 
   /**
@@ -297,6 +365,10 @@
     sendMpvSetProp('gamma', 0);
     sendMpvSetProp('saturation', 0);
     sendMpvSetProp('vf', '');
+    const composer = ensureGlslComposer();
+    composer.layers.dim = [];
+    composer.apply();
+    sendMpvSetProp('glsl-shader-opts', '');
     lastAppliedSig = '';
   }
 
@@ -429,9 +501,6 @@
   function onSliderInput(key, rawValue) {
     if (key === 'dim') {
       state.dim = clampInt(rawValue, 0, 100, 100);
-      if (!state.brightnessManual) {
-        state.brightness = dimCurve(state.dim).brightness;
-      }
       persistAndApply();
       syncPanelFromState();
       return;
@@ -855,34 +924,31 @@
     const panel = document.getElementById(PANEL_ID);
     if (!panel) return;
 
-    const props = resolveMpvProps(state);
-
-    /** @type {Array<{ key: string, value: number, label: string, fill: number }>} */
     const rows = [
       { key: 'dim', value: state.dim, label: `${state.dim}%`, fill: state.dim },
       {
         key: 'contrast',
-        value: state.contrastManual ? state.contrast : props.contrast,
-        label: String(state.contrastManual ? state.contrast : props.contrast),
-        fill: bipolarFill(state.contrastManual ? state.contrast : props.contrast),
+        value: state.contrast,
+        label: String(state.contrast),
+        fill: bipolarFill(state.contrast),
       },
       {
         key: 'brightness',
-        value: props.brightness,
-        label: String(props.brightness),
-        fill: bipolarFill(props.brightness),
+        value: state.brightness,
+        label: String(state.brightness),
+        fill: bipolarFill(state.brightness),
       },
       {
         key: 'gamma',
-        value: state.gammaManual ? state.gamma : props.gamma,
-        label: String(state.gammaManual ? state.gamma : props.gamma),
-        fill: bipolarFill(state.gammaManual ? state.gamma : props.gamma),
+        value: state.gamma,
+        label: String(state.gamma),
+        fill: bipolarFill(state.gamma),
       },
       {
         key: 'saturation',
-        value: state.saturationManual ? state.saturation : props.saturation,
-        label: String(state.saturationManual ? state.saturation : props.saturation),
-        fill: bipolarFill(state.saturationManual ? state.saturation : props.saturation),
+        value: state.saturation,
+        label: String(state.saturation),
+        fill: bipolarFill(state.saturation),
       },
     ];
 

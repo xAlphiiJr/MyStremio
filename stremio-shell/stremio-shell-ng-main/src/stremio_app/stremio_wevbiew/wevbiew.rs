@@ -11,16 +11,18 @@ use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::mem;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use url::Url;
 use urlencoding::decode;
 use webview2::Controller;
+use winapi::shared::guiddef::GUID;
 use winapi::shared::windef::HWND;
 use winapi::um::winuser::{
-    GetClientRect, VK_F7, WM_APPCOMMAND, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_POWERBROADCAST,
-    WM_SETFOCUS,
+    RegisterPowerSettingNotification, DEVICE_NOTIFY_WINDOW_HANDLE, GetClientRect, VK_F7,
+    WM_APPCOMMAND, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_POWERBROADCAST, WM_SETFOCUS,
 };
 
 const APPCOMMAND_MEDIA_NEXTTRACK: u32 = 11;
@@ -31,6 +33,41 @@ const APPCOMMAND_MEDIA_PAUSE: u32 = 47;
 const PBT_APMRESUMECRITICAL: usize = 6;
 const PBT_APMRESUMESUSPEND: usize = 7;
 const PBT_APMRESUMEAUTOMATIC: usize = 18;
+const PBT_POWERSETTINGCHANGE: usize = 0x8013;
+const GUID_CONSOLE_DISPLAY_STATE: GUID = GUID {
+    Data1: 0x6fe69556,
+    Data2: 0x704a,
+    Data3: 0x47a0,
+    Data4: [0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47],
+};
+
+fn is_local_webview_origin(uri: &str) -> bool {
+    if uri.is_empty() || uri.starts_with("about:blank") {
+        return true;
+    }
+    let Ok(url) = Url::parse(uri) else {
+        return false;
+    };
+    matches!(url.host_str(), Some("127.0.0.1") | Some("localhost") | Some("::1"))
+}
+
+fn display_power_turned_on(lparam: isize) -> bool {
+    if lparam == 0 {
+        return false;
+    }
+    #[repr(C)]
+    struct PowerBroadcastSetting {
+        power_setting: GUID,
+        data_length: u32,
+        data: u8,
+    }
+    unsafe {
+        let setting = &*(lparam as *const PowerBroadcastSetting);
+        setting.power_setting.Data1 == GUID_CONSOLE_DISPLAY_STATE.Data1
+            && setting.data_length >= 1
+            && setting.data == 1
+    }
+}
 
 use super::constants::{WARNING_URL, WHITELISTED_HOSTS};
 use super::ui_scale::apply_ui_scale;
@@ -97,6 +134,14 @@ impl WebView {
             if let Ok(webview) = controller.get_webview() {
                 webview.execute_script(script, |_| Ok(())).ok();
             }
+        }
+    }
+
+    /// Re-sync WebView2 bounds and compositor after sleep / GPU reset.
+    pub fn wake_after_resume(&self) {
+        if let Some(controller) = self.controller.get() {
+            controller.notify_parent_window_position_changed().ok();
+            controller.put_is_visible(true).ok();
         }
     }
 
@@ -194,26 +239,48 @@ impl PartialUi for WebView {
                         )
                         .ok();
 
-                    // Handle window.open and href
+                    webview
+                        .add_navigation_starting(move |_webview, event| {
+                            let uri = event.get_uri().unwrap_or_default();
+                            if !is_local_webview_origin(&uri) {
+                                eprintln!("[MyStremio] blocked navigation to {uri}");
+                                event.put_cancel(true).ok();
+                            }
+                            Ok(())
+                        })
+                        .ok();
+
+                    // Handle window.open, href, and file drag-drop in one handler.
                     webview.add_new_window_requested(move |_webview, event| {
-                        if let Ok(uri) = event.get_uri() {
-                            if let Ok(url) = Url::parse(&uri) {
-                                let is_whitelisted = url.host().is_some_and(|host| {
-                                    WHITELISTED_HOSTS.iter().any(|whitelisted_host| host.to_string().ends_with(whitelisted_host))
-                                });
-
-                                let final_url = if is_whitelisted {
-                                    url.to_string()
-                                } else {
-                                    format!("{}{}", WARNING_URL, urlencoding::encode(url.as_ref()))
-                                };
-
-                                if let Err(e) = open::that(final_url) {
-                                    eprintln!("Failed to open URL: {e}");
-                                }
+                        let uri = event.get_uri().unwrap_or_default();
+                        let decoded = decode(uri.as_str())
+                            .ok()
+                            .map(Cow::into_owned)
+                            .unwrap_or_else(|| uri.clone());
+                        let is_file = uri.starts_with("file:") || Path::new(&decoded).exists();
+                        if is_file {
+                            tx_drag_drop
+                                .send(ipc::RPCResponse::response_message(Some(json!(["dragdrop", [decoded]]))))
+                                .ok();
+                            event.put_handled(true).ok();
+                            return Ok(());
+                        }
+                        if let Ok(url) = Url::parse(&uri) {
+                            let is_whitelisted = url.host().is_some_and(|host| {
+                                WHITELISTED_HOSTS
+                                    .iter()
+                                    .any(|whitelisted_host| host.to_string().ends_with(whitelisted_host))
+                            });
+                            let final_url = if is_whitelisted {
+                                url.to_string()
+                            } else {
+                                format!("{}{}", WARNING_URL, urlencoding::encode(url.as_ref()))
+                            };
+                            if let Err(e) = open::that(final_url) {
+                                eprintln!("Failed to open URL: {e}");
                             }
                         }
-
+                        event.put_handled(true).ok();
                         Ok(())
                     })?;
 
@@ -224,17 +291,15 @@ impl PartialUi for WebView {
                         };
                     }
                         webview.add_web_message_received(move |_w, msg| {
+                            let source = msg.get_source().unwrap_or_default();
+                            if !is_local_webview_origin(&source) {
+                                eprintln!("[MyStremio] ignored web message from {source}");
+                                return Ok(());
+                            }
                             let msg = msg.try_get_web_message_as_string()?;
                             tx_web.send(msg).ok();
                             Ok(())
-                        }).expect("Cannot add web message received");
-                        webview.add_new_window_requested(move |_w, msg| {
-                            if let Some(file) = msg.get_uri().ok().and_then(|str| {decode(str.as_str()).ok().map(Cow::into_owned)}) {
-                                tx_drag_drop.send(ipc::RPCResponse::response_message(Some(json!(["dragdrop" ,[file]])))).ok();
-                                msg.put_handled(true).ok();
-                            }
-                            Ok(())
-                        }).expect("Cannot add D&D handler");
+                        }).ok();
                         // ContainsFullScreenElement backup intentionally omitted:
                         // custom JS owns win-set-visibility; a second RPC from that
                         // callback raced with the explicit request and cancelled FS.
@@ -247,14 +312,16 @@ impl PartialUi for WebView {
                                 }
                                 Ok(())
                             })
-                            .expect("Cannot add navigation completed");
+                            .ok();
 
                         webview.add_content_loading(move |wv, _| {
-                            wv.execute_script(format!(
+                            if let Err(error) = wv.execute_script(format!(
                                     "window.stremio_server_ipc_key='{}'",
                                     std::env::var(SERVER_IPC_KEY).unwrap_or_default()
                             ).as_str(), |_| Ok(())
-                            ).expect("Cannot add SERVER_IPC_KEY to webview");
+                            ) {
+                                eprintln!("[MyStremio] cannot inject SERVER_IPC_KEY: {error}");
+                            }
 
                             // Fresh disk snapshot each navigation — DocumentCreated script is stale.
                             wv.execute_script(
@@ -324,7 +391,7 @@ impl PartialUi for WebView {
                                 try { if (typeof initShellComm === 'function') initShellComm(); } catch(e) {}
                             }, false)
                             
-                            "##, |_| Ok(())).expect("Cannot add script to webview");
+                            "##, |_| Ok(())).ok();
 
                             for script in [
                                 include_str!("../../../assets/custom_startup_guard.js"),
@@ -362,8 +429,9 @@ impl PartialUi for WebView {
                                 include_str!("../../../assets/custom_search_suggestions.js"),
                                 include_str!("../../../assets/custom_mark_watched.js"),
                             ] {
-                                wv.execute_script(script, |_| Ok(()))
-                                    .expect("Cannot add MyStremio module");
+                                if let Err(error) = wv.execute_script(script, |_| Ok(())) {
+                                    eprintln!("[MyStremio] cannot inject module: {error}");
+                                }
                             }
 
                             wv.execute_script(
@@ -372,7 +440,7 @@ impl PartialUi for WebView {
                             )
                             .ok();
                             Ok(())
-                        }).expect("Cannot add content loading");
+                        }).ok();
 
                         WebView::resize_to_window_bounds(Some(&controller), Some(hwnd));
                         // Community-style: stay visible under splash so Board LoadRange gets
@@ -411,11 +479,27 @@ impl PartialUi for WebView {
         let message = data.message_queue.clone();
         *data.compute.borrow_mut() = Some(thread::spawn(move || loop {
             if let Ok(msg) = rx.recv() {
-                let mut message = message.lock().unwrap();
-                message.push_back(msg);
-                sender.notice();
+                match message.lock() {
+                    Ok(mut queue) => {
+                        queue.push_back(msg);
+                        sender.notice();
+                    }
+                    Err(error) => {
+                        eprintln!("[MyStremio] webview message queue lock failed: {error}");
+                    }
+                }
             }
         }));
+
+        if let Some(hwnd) = parent.hwnd() {
+            unsafe {
+                RegisterPowerSettingNotification(
+                    hwnd as *mut _,
+                    &GUID_CONSOLE_DISPLAY_STATE,
+                    DEVICE_NOTIFY_WINDOW_HANDLE,
+                );
+            }
+        }
 
         // handler ids equal or smaller than 0xFFFF are reserved by NWG
         let handler_id = 0x10000;
@@ -435,6 +519,11 @@ impl PartialUi for WebView {
                 match w as usize {
                     PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND | PBT_APMRESUMECRITICAL => {
                         request_power_resume();
+                    }
+                    PBT_POWERSETTINGCHANGE => {
+                        if display_power_turned_on(l) {
+                            request_power_resume();
+                        }
                     }
                     _ => {}
                 }
@@ -469,8 +558,14 @@ impl PartialUi for WebView {
         if evt == E::OnNotice && handle == self.notice.handle {
             let message_queue = self.message_queue.clone();
             if let Some(controller) = self.controller.get() {
-                let webview = controller.get_webview().expect("Cannot get vebview");
-                let mut message_queue = message_queue.lock().unwrap();
+                let Ok(webview) = controller.get_webview() else {
+                    eprintln!("[MyStremio] cannot get webview for queued messages");
+                    return;
+                };
+                let Ok(mut message_queue) = message_queue.lock() else {
+                    eprintln!("[MyStremio] webview message queue lock failed");
+                    return;
+                };
                 for msg in message_queue.drain(..) {
                     webview.post_web_message_as_string(msg.as_str()).ok();
                 }

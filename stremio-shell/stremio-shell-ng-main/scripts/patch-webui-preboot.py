@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
 PREBOOT_TAG = '<script src="mystremio-preboot.js"></script>'
-MAIN_MARKER = '<script src="eb5752673c6ac87e7137a6c3cca21a6980028cf9/scripts/main.js">'
+MAIN_SCRIPT_RE = re.compile(
+    r'<script src="[0-9a-f]+/scripts/main\.js">',
+    re.IGNORECASE,
+)
 
 
 def patch_index_html(index_html: Path, preboot_js: Path) -> None:
@@ -17,10 +21,11 @@ def patch_index_html(index_html: Path, preboot_js: Path) -> None:
     html = index_html.read_text(encoding="utf-8")
     if PREBOOT_TAG in html:
         print(f"Preboot script tag already present in {index_html}")
-    elif MAIN_MARKER not in html:
-        raise RuntimeError(f"Could not find main.js script tag in {index_html}")
     else:
-        html = html.replace(MAIN_MARKER, f"{PREBOOT_TAG}{MAIN_MARKER}", 1)
+        match = MAIN_SCRIPT_RE.search(html)
+        if not match:
+            raise RuntimeError(f"Could not find main.js script tag in {index_html}")
+        html = html.replace(match.group(0), f"{PREBOOT_TAG}{match.group(0)}", 1)
         index_html.write_text(html, encoding="utf-8")
         print(f"Inserted preboot script tag into {index_html}")
 

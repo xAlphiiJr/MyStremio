@@ -1,29 +1,22 @@
 ﻿# Copies plugins and themes from project sources into the shell release folder.
 # No local AppData fallback is allowed for release safety.
 param(
-    [string]$SourceRoot = "",
+    [Parameter(Mandatory = $true)]
+    [string]$SourceRoot,
     [string]$ReleaseDir = (Join-Path $PSScriptRoot "..\target\x86_64-pc-windows-msvc\release")
 )
 
 $ErrorActionPreference = "Stop"
 
 if (-not $SourceRoot) {
-    $MystremioRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\..\mystremio"))
-    $LegacyRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\..\stremio-custom"))
-    if ((Test-Path (Join-Path $MystremioRoot "plugins")) -or (Test-Path (Join-Path $MystremioRoot "themes"))) {
-        $SourceRoot = $MystremioRoot
-    } elseif ((Test-Path (Join-Path $LegacyRoot "plugins")) -or (Test-Path (Join-Path $LegacyRoot "themes"))) {
-        $SourceRoot = $LegacyRoot
-    } else {
-        $SourceRoot = ""
-    }
+    throw "-SourceRoot is required (folder containing 'plugins' and 'themes', typically the repo assets-bundle)."
 }
 
-$SourceRoot = if ($SourceRoot) { [System.IO.Path]::GetFullPath($SourceRoot) } else { "" }
+$SourceRoot = [System.IO.Path]::GetFullPath($SourceRoot)
 $ReleaseDir = [System.IO.Path]::GetFullPath($ReleaseDir)
 
-$PluginSource = if ($SourceRoot) { Join-Path $SourceRoot "plugins" } else { "" }
-$ThemeSource = if ($SourceRoot) { Join-Path $SourceRoot "themes" } else { "" }
+$PluginSource = Join-Path $SourceRoot "plugins"
+$ThemeSource = Join-Path $SourceRoot "themes"
 $PluginTargets = @(
     (Join-Path $ReleaseDir "plugins")
 )
@@ -34,10 +27,14 @@ $ThemeTargets = @(
 function Copy-TreeIfExists {
     param(
         [string]$Source,
-        [string]$Destination
+        [string]$Destination,
+        [switch]$Required
     )
 
     if (-not (Test-Path $Source)) {
+        if ($Required) {
+            throw "Missing required source: $Source"
+        }
         Write-Warning "Missing source: $Source"
         return
     }
@@ -82,7 +79,7 @@ function Sanitize-PluginConfigs {
                 Write-Host "Sanitized secrets in $($_.Name)"
             }
         } catch {
-            Write-Warning "Could not sanitize $($_.FullName): $_"
+            throw "Could not sanitize $($_.FullName): $_"
         }
     }
 }
@@ -117,100 +114,6 @@ function Assert-NoPluginConfigSecrets {
     if ($findings.Count -gt 0) {
         $lines = ($findings | Sort-Object | ForEach-Object { " - $_" }) -join "`n"
         throw "Build blocked: non-empty API keys detected in plugin configs.`n$lines`nAll keys must be empty in repo assets."
-    }
-}
-
-function Patch-ContextMenuFixPlugin {
-    param([string]$PluginsDir)
-
-    if (-not (Test-Path $PluginsDir)) { return }
-    $pluginPath = Join-Path $PluginsDir "interface\context-menu-fix.plugin.js"
-    if (-not (Test-Path $pluginPath)) { return }
-
-    try {
-        $raw = Get-Content $pluginPath -Raw -Encoding UTF8
-        if (-not $raw) { return }
-
-        $needle = "if (isNavMenu) {"
-        $guard = "return; // Keep profile menu native/clickable"
-        if ($raw -like "*$needle*" -and $raw -notlike "*$guard*") {
-            $replacement = "if (isNavMenu) {`r`n            $guard`r`n        }`r`n`r`n        if (false && isNavMenu) {"
-            $patched = $raw.Replace($needle, $replacement)
-            if ($patched -ne $raw) {
-                Set-Content -Path $pluginPath -Value $patched -Encoding UTF8
-                Write-Host "Patched context-menu-fix plugin to skip profile menu cloning."
-            }
-        }
-    } catch {
-        Write-Warning "Could not patch context-menu-fix plugin: $_"
-    }
-}
-
-function Ensure-StreamUiSchema {
-    param([string]$PluginsDir)
-
-    if (-not (Test-Path $PluginsDir)) { return }
-    $schemaSource = Join-Path (Join-Path $PSScriptRoot "..\..\..\assets-bundle\plugins\interface") "stream-ui.plugin.schema.json"
-    if (-not (Test-Path $schemaSource)) {
-        $schemaSource = Join-Path (Join-Path $PSScriptRoot "..\assets") "stream-ui.plugin.schema.json"
-    }
-    if (-not (Test-Path $schemaSource)) { return }
-    $schemaTargetDir = Join-Path $PluginsDir "interface"
-    if (-not (Test-Path $schemaTargetDir)) {
-        New-Item -ItemType Directory -Path $schemaTargetDir -Force | Out-Null
-    }
-    $schemaTarget = Join-Path $schemaTargetDir "stream-ui.plugin.schema.json"
-
-    try {
-        Copy-Item -Path $schemaSource -Destination $schemaTarget -Force
-        Write-Host "Ensured StreamUI schema in $PluginsDir"
-    } catch {
-        Write-Warning ("Could not copy StreamUI schema to " + $PluginsDir + ": " + $_)
-    }
-}
-
-function Patch-StreamUiPlugin {
-    param([string]$PluginsDir)
-
-    if (-not (Test-Path $PluginsDir)) { return }
-    $pluginPath = Join-Path $PluginsDir "interface\stream-ui.plugin.js"
-    if (-not (Test-Path $pluginPath)) {
-        $pluginPath = Join-Path $PluginsDir "player\stream-ui.plugin.js"
-    }
-    if (-not (Test-Path $pluginPath)) { return }
-
-    try {
-        $raw = Get-Content $pluginPath -Raw -Encoding UTF8
-        if (-not $raw) { return }
-        if ($raw -match "OPEN_STATE_KEY\s*=\s*'sui-open-accordions'") {
-            $patched = $raw
-            $patched = $patched.Replace(
-                "const shouldOpen = open !== false;",
-                "const shouldOpen = open === true;"
-            )
-            # Keep existing modern patch unchanged once present.
-            if ($patched -ne $raw) {
-                Set-Content -Path $pluginPath -Value $patched -Encoding UTF8
-                Write-Host "Updated StreamUI plugin to preserve open groups across list rebuilds."
-            } else {
-                Write-Host "StreamUI plugin already has session accordion memory patch."
-            }
-            return
-        }
-        # Older plugin variants can be patched safely with the legacy replacements below.
-        $patched = $raw.Replace(
-            "acc.className = GROUP + (open ? ' open' : '');",
-            "acc.className = GROUP + ' open';"
-        ).Replace(
-            'aria-expanded="${open ? ''true'' : ''false''}"',
-            'aria-expanded="true"'
-        )
-        if ($patched -ne $raw) {
-            Set-Content -Path $pluginPath -Value $patched -Encoding UTF8
-            Write-Host "Patched legacy StreamUI plugin."
-        }
-    } catch {
-        Write-Warning ("Could not patch StreamUI plugin in " + $PluginsDir + ": " + $_)
     }
 }
 
@@ -264,105 +167,24 @@ function Remove-DeprecatedAssets {
     }
 }
 
-function Patch-DataEnrichmentPlugin {
-    param([string]$PluginsDir)
-
-    if (-not (Test-Path $PluginsDir)) { return }
-    $pluginPath = Join-Path $PluginsDir "metadata\data-enrichment.plugin.js"
-    if (-not (Test-Path $pluginPath)) { return }
-
-    try {
-        $raw = Get-Content $pluginPath -Raw -Encoding UTF8
-        if (-not $raw) { return }
-        $patched = $raw
-
-        $patched = $patched.Replace(
-            "                '[class*=""details-container""]',`r`n                '[class*=""side-drawer""]',`r`n                '[class*=""description-container""]',`r`n                '[class*=""menu-container""]',",
-            "                '[class*=""details-container""]',`r`n                '[class*=""side-drawer""]',"
-        )
-
-        $patched = $patched.Replace(
-            "                if (element) return element;",
-            "                if (element && !element.closest('[class*=""player-container""], [class*=""control-bar-layer""], [class*=""subtitles-menu-container""]')) return element;"
-        )
-
-        if ($patched -ne $raw) {
-            Set-Content -Path $pluginPath -Value $patched -Encoding UTF8
-            Write-Host "Patched data-enrichment mount guards to avoid player UI injection."
-        }
-    } catch {
-        Write-Warning ("Could not patch data-enrichment plugin in " + $PluginsDir + ": " + $_)
-    }
-}
-
-function Patch-LiquidGlassTheme {
-    param([string]$ThemesDir)
-
-    if (-not (Test-Path $ThemesDir)) { return }
-    $themePath = Join-Path $ThemesDir "liquid-glass.theme.css"
-    if (-not (Test-Path $themePath)) { return }
-
-    try {
-        $raw = Get-Content $themePath -Raw -Encoding UTF8
-        if (-not $raw) { return }
-
-        $patched = $raw.Replace(
-            "top: 0.5px !important;",
-            "top: 0 !important;"
-        )
-
-        $seamBlock = @"
-
-/* hard seam fix between window frame and hero/nav */
-#app,
-#app [class*="main-nav-bars-container"],
-#app nav[class*="horizontal-nav-bar"],
-.hero-container {
-    border-top: 0 !important;
-}
-#app::before,
-#app [class*="main-nav-bars-container"]::before,
-#app nav[class*="horizontal-nav-bar"]::before,
-.hero-container::before {
-    display: none !important;
-}
-"@
-        if ($patched -notlike "*hard seam fix between window frame and hero/nav*") {
-            $patched += $seamBlock
-        }
-
-        if ($patched -ne $raw) {
-            Set-Content -Path $themePath -Value $patched -Encoding UTF8
-            Write-Host "Patched Liquid Glass theme top seam styles."
-        }
-    } catch {
-        Write-Warning ("Could not patch liquid-glass theme in " + $ThemesDir + ": " + $_)
-    }
-}
-
-if (-not $PluginSource -or -not (Test-Path $PluginSource)) {
+if (-not (Test-Path $PluginSource)) {
     throw "Plugin source not found. Set -SourceRoot to a project folder containing 'plugins'. Current: $PluginSource"
 }
-if (-not $ThemeSource -or -not (Test-Path $ThemeSource)) {
+if (-not (Test-Path $ThemeSource)) {
     throw "Theme source not found. Set -SourceRoot to a project folder containing 'themes'. Current: $ThemeSource"
 }
 
 Assert-NoPluginConfigSecrets -PluginsDir $PluginSource
 
 foreach ($target in $PluginTargets) {
-    Copy-TreeIfExists -Source $PluginSource -Destination $target
-    Ensure-StreamUiSchema -PluginsDir $target
-    Patch-StreamUiPlugin -PluginsDir $target
-    Patch-DataEnrichmentPlugin -PluginsDir $target
+    Copy-TreeIfExists -Source $PluginSource -Destination $target -Required
     if ($target -eq (Join-Path $ReleaseDir "plugins")) {
         Sanitize-PluginConfigs -PluginsDir $target
-        Patch-ContextMenuFixPlugin -PluginsDir $target
     }
 }
 
 foreach ($target in $ThemeTargets) {
-    Copy-TreeIfExists -Source $ThemeSource -Destination $target
-    Patch-LiquidGlassTheme -ThemesDir $target
+    Copy-TreeIfExists -Source $ThemeSource -Destination $target -Required
 }
 
 for ($i = 0; $i -lt $PluginTargets.Count; $i++) {
@@ -370,7 +192,6 @@ for ($i = 0; $i -lt $PluginTargets.Count; $i++) {
     $themeTarget = $ThemeTargets[$i]
     Remove-DeprecatedAssets -PluginsDir $pluginTarget -ThemesDir $themeTarget
 }
-
 
 $ShellProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ShaderSource = Join-Path $ShellProjectRoot "shaders"
