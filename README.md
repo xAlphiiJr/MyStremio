@@ -181,8 +181,12 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 ## 🛠️ Patch Notes
 
 ### 2.4.5
-- **Continue Watching** — Meta-Hover-Panel auf den Landscape-Covern
-- **Navigation** — Pill-Leiste bleibt beim Tab-Wechsel sichtbar
+- **Meta Hover Panel** — Optimized hover geometry
+- **Navigation** — Snappier page changes
+- **Settings safety** — Preferences are saved atomically; a corrupt settings file is backed up instead of silently reset
+- **Intro Skip** — Added toggle that skips to video end when skipping credits to avoid previews or false credit timestamps
+- **Picture Settings** — Dim bar now utilizes shaders
+- **Sleep/inactivity** — recovery bugs fixed
 
 ### 2.4.4
 - **Intro Skip** — Autoskip countdown can now be customized in the Intro Skip plugin settings
@@ -190,8 +194,6 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 - **Picture Settings** — Optimized dim settings and added reset Buttons to all sliders
 - **Player Control Bar** — Fixed highlighting bug
 - **Sleep / inactivity recovery** — After PC sleep, display-off, or Windows lock, EngineFS, MPV, and WebView come back without a manual reload
-- **Settings safety** — Preferences are saved atomically; a corrupt settings file is backed up instead of silently reset
-
 
 ### 2.4.3
 
@@ -213,14 +215,6 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 - **Data Enrichment** — On tv shows DE now displays episode ratings next to the overall series rating cards
 - **Player start** — Optimized video playback start, reduced rubberbanding
 - **Intro Skip** — Added episode info fallback to fetch segments, often needed for anime with false meta/season/episode info
-
-
-### 2.3.9
-- **Addon Toggle** — Hardened addon toggles and fixed toggles getting overwritten by StreamUI
-- **Cast Overlay** — Now displays episode specific cast members if available
-- **Auto Skip** — Changed from instantly skipping segments to a 10 sec timer which can be canceled
-- **Player Scroll Wheel** — Scrolling inside Cast no longer changes volume
-- **Subtitles** — Fixed an issue where the custom subtitle settings won't get saved correctly for the next stream/episode
 
 
 ---
