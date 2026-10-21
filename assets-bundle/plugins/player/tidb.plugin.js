@@ -14,7 +14,7 @@
 	const LOG_PREFIX = "[IntroSkip]";
 	const CONTRIBUTE_TOAST_ID = "tidb-contribute-toast";
 	const PLUGIN_ID = "tidb";
-	const THEINTRODB_SERVER_URL = "https://api.theintrodb.org/v3";
+	const THEINTRODB_SERVER_URL = "https://api.theintrodb.org/v4";
 	const INTRODB_SERVER_URL = "https://api.introdb.app";
 	const ACTIVE_BTN_ID = "tidb-active-btn";
 	const CONTRIBUTE_BTN_ID = "tidb-contribute-btn";
@@ -670,7 +670,7 @@
 	}
 
 	function parseSubmissionResponse(responseJson) {
-		if (!responseJson || !Array.isArray(responseJson.submissions)) {
+		if (!responseJson || responseJson.ok === false || !Array.isArray(responseJson.submissions)) {
 			return { ok: false, count: 0, statuses: [] };
 		}
 		const submissions = responseJson.submissions;
@@ -979,6 +979,28 @@
 	function isValidTmdbId(value) {
 		const numeric = Number(value);
 		return Number.isInteger(numeric) && numeric >= 1 && numeric <= 10000000;
+	}
+
+	function isValidTvdbId(value) {
+		const numeric = Number(value);
+		return Number.isInteger(numeric) && numeric >= 1 && numeric <= 100000000;
+	}
+
+	/**
+	 * Catalog episode equals the absolute index and not the aired slot.
+	 * @returns {"absolute"|null}
+	 */
+	function theIntroDbDisplayOrder(season, episode, mapped) {
+		if (!mapped) return null;
+		const absolute = Number(mapped.absolute);
+		if (!Number.isInteger(absolute) || absolute < 1 || Number(episode) !== absolute) return null;
+		if (
+			Number(mapped.cinemetaSeason) === Number(season) &&
+			Number(mapped.cinemetaEpisode) === Number(episode)
+		) {
+			return null;
+		}
+		return "absolute";
 	}
 
 	function normalizeToggleValue(value, fallback = true) {
@@ -1482,6 +1504,8 @@
 			this.playbackSeason = null;
 			this.playbackEpisode = null;
 			this.resolvedTmdbId = null;
+			this.resolvedTvdbId = null;
+			this.submitCoords = null;
 			this.contributePanelOpen = false;
 			this.contributeMarkedStartSec = null;
 			this.contributeSelectedSegment = "intro";
@@ -1981,19 +2005,8 @@
 		}
 
 		async validateApiKey() {
-			if (!this.userApiKey) return false;
-			try {
-				const res = await fetch(`${THEINTRODB_SERVER_URL}/user/stats`, {
-					headers: {
-						...this.getTidbHeaders(),
-						Accept: "application/json"
-					},
-					credentials: "omit"
-				});
-				return res.ok;
-			} catch (_) {
-				return false;
-			}
+			// shortcut: v4 has no key-check route, call it when the spec adds one.
+			return Boolean(this.userApiKey);
 		}
 
 		formatSubmitAuthError(apiMessage, provider) {
@@ -2365,31 +2378,14 @@
 			let media = this.parseMediaContext();
 			if (!media) return null;
 
-			if (media.tmdbId && isValidTmdbId(media.tmdbId)) {
-				return media;
-			}
-
-			let tmdbId = null;
-			if (media.submissionImdbId || media.imdbId) {
-				tmdbId = await this.fetchTmdbIdFromMediaApi(media, durationMs);
-			}
-			if (!tmdbId) {
-				tmdbId = await this.fetchTmdbIdViaTmdbFind(
+			if (!(media.tmdbId && isValidTmdbId(media.tmdbId))) {
+				const tvdbId = await this.fetchTvdbIdFromMediaApi(media, durationMs);
+				if (tvdbId) this.resolvedTvdbId = tvdbId;
+				const tmdbId = await this.fetchTmdbIdViaTmdbFind(
 					media.submissionImdbId || media.imdbId,
 					media.type
 				);
-			}
-			if (!tmdbId && media.tmdbId && isValidTmdbId(media.tmdbId)) {
-				const catalogPart = String(this.episodeId || "").split(":")[0];
-				if (extractTmdbIdFromCatalogId(catalogPart)) {
-					tmdbId = Number(media.tmdbId);
-				}
-			}
-			if (tmdbId) {
-				this.resolvedTmdbId = tmdbId;
-				media = this.parseMediaContext();
-			} else {
-				this.resolvedTmdbId = null;
+				if (tmdbId) this.resolvedTmdbId = tmdbId;
 				media = this.parseMediaContext();
 			}
 
@@ -2467,7 +2463,7 @@
 			}
 		}
 
-		parseTmdbIdFromMediaResponse(res) {
+		parseTvdbIdFromMediaResponse(res) {
 			if (res.status === 204) return null;
 			if (!res.ok) return null;
 			return res
@@ -2476,7 +2472,7 @@
 					if (!text) return null;
 					try {
 						const json = JSON.parse(text);
-						return isValidTmdbId(json.tmdb_id) ? Number(json.tmdb_id) : null;
+						return isValidTvdbId(json.tvdb_id) ? Number(json.tvdb_id) : null;
 					} catch (_) {
 						return null;
 					}
@@ -2484,7 +2480,7 @@
 				.catch(() => null);
 		}
 
-		async fetchTmdbIdFromMediaApi(media, durationMs) {
+		async fetchTvdbIdFromMediaApi(media, durationMs) {
 			if (!media) return null;
 			const queryParams = new URLSearchParams();
 			const lookupImdbId = media.submissionImdbId || media.imdbId;
@@ -2492,12 +2488,17 @@
 				queryParams.set("imdb_id", lookupImdbId);
 			} else if (media.tmdbId && isValidTmdbId(media.tmdbId)) {
 				queryParams.set("tmdb_id", String(media.tmdbId));
+			} else if (media.tvdbId && isValidTvdbId(media.tvdbId)) {
+				queryParams.set("tvdb_id", String(media.tvdbId));
 			} else {
 				return null;
 			}
 			if (media.type === "tv") {
 				queryParams.set("season", String(media.season));
 				queryParams.set("episode", String(media.episode));
+				if (this.submitCoords && this.submitCoords.mapping) {
+					queryParams.set("mapping", this.submitCoords.mapping);
+				}
 			}
 
 			const durationAttempts = [];
@@ -2513,8 +2514,8 @@
 					const res = await fetch(`${THEINTRODB_SERVER_URL}/media?${params}`, {
 						headers: this.getTidbHeaders()
 					});
-					const tmdbId = await this.parseTmdbIdFromMediaResponse(res);
-					if (tmdbId) return tmdbId;
+					const tvdbId = await this.parseTvdbIdFromMediaResponse(res);
+					if (tvdbId) return tvdbId;
 				} catch (_) {}
 			}
 			return null;
@@ -2569,30 +2570,37 @@
 		 * Fetch segment data from TheIntroDB for the current episode.
 		 *
 		 * @param {object} query Query parameters for `/media`.
-		 * @returns {Promise<{segments: Record<string, Array<{start: number, end: number|null}>>, tmdbId: number|null}>}
+		 * @returns {Promise<{segments: Record<string, Array<{start: number, end: number|null}>>, tvdbId: number|null}>}
 		 */
 		async fetchTheIntroDbSegments(query) {
 			const durationAttempts = query.durationMs != null ? [null, query.durationMs] : [null];
-			const identity = query.imdbId
-				? { imdbId: query.imdbId, tmdbId: null }
-				: query.tmdbId && isValidTmdbId(query.tmdbId)
-					? { imdbId: null, tmdbId: query.tmdbId }
-					: null;
+			const identity = query.mapping && isValidTvdbId(query.tvdbId)
+				? { kind: "tvdb", id: query.tvdbId }
+				: query.imdbId
+					? { kind: "imdb", id: query.imdbId }
+					: query.tmdbId && isValidTmdbId(query.tmdbId)
+						? { kind: "tmdb", id: query.tmdbId }
+						: isValidTvdbId(query.tvdbId)
+							? { kind: "tvdb", id: query.tvdbId }
+							: null;
 			if (!identity) {
-				return { segments: emptySegments(), tmdbId: null };
+				return { segments: emptySegments(), tvdbId: null };
 			}
 
-			let lastEmpty = { segments: emptySegments(), tmdbId: null };
+			let lastEmpty = { segments: emptySegments(), tvdbId: null };
 			for (const durationMs of durationAttempts) {
 				const params = new URLSearchParams();
-				if (identity.imdbId) {
-					params.set("imdb_id", identity.imdbId);
+				if (identity.kind === "imdb") {
+					params.set("imdb_id", identity.id);
+				} else if (identity.kind === "tmdb") {
+					params.set("tmdb_id", String(identity.id));
 				} else {
-					params.set("tmdb_id", String(identity.tmdbId));
+					params.set("tvdb_id", String(identity.id));
 				}
 				if (query.isTvShow) {
 					params.set("season", String(query.season));
 					params.set("episode", String(query.episode));
+					if (query.mapping) params.set("mapping", query.mapping);
 				}
 				if (durationMs != null) {
 					params.set("duration_ms", String(durationMs));
@@ -2613,24 +2621,27 @@
 				window.clearTimeout(timer);
 
 				if (res.status === 204 || res.status === 404 || !res.ok) {
-					lastEmpty = { segments: emptySegments(), tmdbId: null };
+					lastEmpty = { segments: emptySegments(), tvdbId: null };
 					continue;
 				}
 
 				const json = await res.json();
 				const segments = emptySegments();
-				for (const segmentType of SEGMENT_TYPES) {
-					if (json[segmentType] && json[segmentType].length > 0) {
-						segments[segmentType] = json[segmentType].map((segment) => ({
-							start: segment.start_ms == null ? 0 : segment.start_ms / 1000,
-							end: segment.end_ms == null ? null : segment.end_ms / 1000
-						}));
+				const segmentBody = !Array.isArray(json.episodes) && !Array.isArray(json.versions);
+				if (segmentBody) {
+					for (const segmentType of SEGMENT_TYPES) {
+						if (json[segmentType] && json[segmentType].length > 0) {
+							segments[segmentType] = json[segmentType].map((segment) => ({
+								start: segment.start_ms == null ? 0 : segment.start_ms / 1000,
+								end: segment.end_ms == null ? null : segment.end_ms / 1000
+							}));
+						}
 					}
 				}
 
 				const payload = {
 					segments,
-					tmdbId: isValidTmdbId(json.tmdb_id) ? Number(json.tmdb_id) : null
+					tvdbId: isValidTvdbId(json.tvdb_id) ? Number(json.tvdb_id) : null
 				};
 				if (Object.values(segments).flat().length > 0) return payload;
 				lastEmpty = payload;
@@ -2932,7 +2943,7 @@
 							episode: tmdbEpisode,
 							durationMs
 						})
-						: Promise.resolve({ segments: emptySegments(), tmdbId: null });
+						: Promise.resolve({ segments: emptySegments(), tvdbId: null });
 
 					introDbPromise.then((segs) => {
 						const hit = Object.values(segs || {}).flat().length > 0;
@@ -2946,7 +2957,7 @@
 						console.warn(`${LOG_PREFIX} IntroDB fetch failed:`, error);
 					});
 					theIntroDbPromise.then((payload) => {
-						if (payload && payload.tmdbId) this.resolvedTmdbId = payload.tmdbId;
+						if (payload && isValidTvdbId(payload.tvdbId)) this.resolvedTvdbId = Number(payload.tvdbId);
 						applyIncoming(payload && payload.segments, false);
 					}).catch((error) => {
 						console.warn(`${LOG_PREFIX} TheIntroDB fetch failed:`, error);
@@ -3002,22 +3013,69 @@
 						introEpisode = nextIntroE;
 						tmdbSeason = nextTmdbS;
 						tmdbEpisode = nextTmdbE;
-						if (!coordsChanged) return;
-						if (this.isIntroDbServiceEnabled() && isTvShow && imdbId) {
+						const displayOrder = theIntroDbDisplayOrder(season, episode, mapped);
+						if (!coordsChanged && !displayOrder) return;
+						if (this.isIntroDbServiceEnabled() && isTvShow && imdbId && coordsChanged) {
 							this.fetchIntroDbSegments(imdbId, introSeason, introEpisode).then((segs) => {
 								applyIncoming(segs, true);
 							}).catch(() => {});
 						}
 						if (loadTheIntroDb) {
-							this.fetchTheIntroDbSegments({
-								imdbId,
-								tmdbId: tmdbFromId,
-								isTvShow,
-								season: tmdbSeason,
-								episode: tmdbEpisode,
-								durationMs
-							}).then((payload) => {
-								if (payload && payload.tmdbId) this.resolvedTmdbId = payload.tmdbId;
+							const hasTmdbId = Boolean(tmdbFromId && isValidTmdbId(tmdbFromId));
+							let mediaQuery = null;
+							if (displayOrder) {
+								mediaQuery = {
+									imdbId: isValidTvdbId(this.resolvedTvdbId) ? null : imdbId,
+									tmdbId: null,
+									tvdbId: this.resolvedTvdbId,
+									mapping: displayOrder,
+									isTvShow,
+									season,
+									episode,
+									durationMs
+								};
+								this.submitCoords = {
+									space: "display",
+									season,
+									episode,
+									mapping: displayOrder
+								};
+							} else if (coordsChanged && hasTmdbId) {
+								mediaQuery = {
+									imdbId: null,
+									tmdbId: tmdbFromId,
+									isTvShow,
+									season: tmdbSeason,
+									episode: tmdbEpisode,
+									durationMs
+								};
+								this.submitCoords = {
+									space: "tmdb",
+									season: tmdbSeason,
+									episode: tmdbEpisode,
+									mapping: null
+								};
+							} else if (coordsChanged) {
+								mediaQuery = {
+									imdbId,
+									tmdbId: null,
+									isTvShow,
+									season: introSeason,
+									episode: introEpisode,
+									durationMs
+								};
+								this.submitCoords = {
+									space: "imdb",
+									season: introSeason,
+									episode: introEpisode,
+									mapping: null
+								};
+							}
+							if (!mediaQuery) return;
+							this.fetchTheIntroDbSegments(mediaQuery).then((payload) => {
+								if (!stillThis()) return;
+								if (payload && isValidTvdbId(payload.tvdbId)) this.resolvedTvdbId = Number(payload.tvdbId);
+								if (displayOrder) this.segments = emptySegments();
 								applyIncoming(payload && payload.segments, true);
 							}).catch(() => {});
 						}
@@ -3562,8 +3620,11 @@
 			if (tmdbCandidate) {
 				context.tmdbId = tmdbCandidate;
 			}
+			if (this.resolvedTvdbId && isValidTvdbId(this.resolvedTvdbId)) {
+				context.tvdbId = Number(this.resolvedTvdbId);
+			}
 
-			if (context.imdbId || context.tmdbId) {
+			if (context.imdbId || context.tmdbId || context.tvdbId) {
 				return context;
 			}
 
@@ -3642,14 +3703,40 @@
 			if (media.tmdbId != null && isValidTmdbId(media.tmdbId)) {
 				body.tmdb_id = Number(media.tmdbId);
 			}
-			if (!body.tmdb_id) return null;
-			if (!body.imdb_id && !body.tmdb_id) return null;
+			if (media.tvdbId != null && isValidTvdbId(media.tvdbId)) {
+				body.tvdb_id = Number(media.tvdbId);
+			}
+			const coords = media.type === "tv" ? this.submitCoords : null;
+			if (coords && coords.space === "tmdb" && body.tmdb_id) {
+				delete body.imdb_id;
+				delete body.tvdb_id;
+				body.season = Number(coords.season);
+				body.episode = Number(coords.episode);
+			} else if (coords && coords.space === "imdb" && body.imdb_id) {
+				delete body.tmdb_id;
+				delete body.tvdb_id;
+				body.season = Number(coords.season);
+				body.episode = Number(coords.episode);
+			} else if (coords && coords.mapping && (body.tvdb_id || body.imdb_id)) {
+				body.mapping = coords.mapping;
+				body.season = Number(coords.season);
+				body.episode = Number(coords.episode);
+				if (body.tvdb_id) {
+					delete body.tmdb_id;
+					delete body.imdb_id;
+				} else {
+					delete body.tmdb_id;
+				}
+			} else if (body.tvdb_id && (body.tmdb_id || body.imdb_id)) {
+				delete body.tvdb_id;
+			}
+			if (!body.tvdb_id && !body.tmdb_id && !body.imdb_id) return null;
 			if (media.type === "tv") {
-				if (!isPlausibleSeason(media.season) || !isPlausibleEpisode(media.episode)) {
+				if (body.season == null) body.season = Number(media.season);
+				if (body.episode == null) body.episode = Number(media.episode);
+				if (!isPlausibleSeason(body.season) || !isPlausibleEpisode(body.episode)) {
 					return null;
 				}
-				body.season = Number(media.season);
-				body.episode = Number(media.episode);
 			}
 			if (startSec != null && Number.isFinite(startSec)) {
 				body.start_ms = Math.round(startSec * 1000);
@@ -4275,12 +4362,6 @@
 		async submitToTheIntroDb(segment, startSec, endSec, durationMs, mediaContext) {
 			const body = this.buildSubmissionBody(segment, startSec, endSec, durationMs, mediaContext);
 			if (!body) {
-				const hasTmdbKey = Boolean(
-					(this.getSettingsApi()?.getApiKey
-						? await this.getSettingsApi().getApiKey("tmdb")
-						: null) ||
-						(await this.getSetting("tmdbApiKey"))
-				);
 				const badSeason =
 					mediaContext &&
 					mediaContext.type === "tv" &&
@@ -4290,9 +4371,7 @@
 					label: "TheIntroDB",
 					message: badSeason
 						? "Could not resolve season/episode for this title. Pause playback briefly and try again."
-						: hasTmdbKey
-							? "Could not resolve TMDB ID for this episode (required for TheIntroDB submit). Wait a moment and try again."
-							: "Could not resolve TMDB ID. Add a TMDB API key in Settings > MyStremio > API Keys or use a Cinemeta/IMDB source."
+						: "Could not resolve an IMDb, TMDB, or TVDB id for this title."
 				};
 			}
 
@@ -4645,7 +4724,9 @@
 				seriesImdbId: null,
 				playbackSeason: null,
 				playbackEpisode: null,
-				resolvedTmdbId: null
+				resolvedTmdbId: null,
+				resolvedTvdbId: null,
+				submitCoords: null
 			});
 		}
 

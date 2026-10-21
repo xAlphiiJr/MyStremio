@@ -3,7 +3,7 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYP
 use serde_json::{json, Value};
 use std::time::Duration;
 
-const THEINTRODB_API_BASE: &str = "https://api.theintrodb.org/v3";
+const THEINTRODB_API_BASE: &str = "https://api.theintrodb.org/v4";
 const USER_AGENT_VALUE: &str = "MyStremio Intro Skip Plugin";
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(25);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -73,4 +73,17 @@ fn submit_headers(api_key: &str) -> Result<HeaderMap, String> {
         .map_err(|_| "TheIntroDB API key contains invalid header characters.".to_string())?;
     headers.insert(AUTHORIZATION, auth);
     Ok(headers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::THEINTRODB_API_BASE;
+
+    #[test]
+    fn submit_targets_v4() {
+        assert_eq!(
+            format!("{THEINTRODB_API_BASE}/submit"),
+            "https://api.theintrodb.org/v4/submit"
+        );
+    }
 }

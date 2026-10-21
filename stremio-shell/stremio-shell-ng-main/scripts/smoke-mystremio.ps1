@@ -52,6 +52,22 @@ if (-not (Test-Path $PluginsRoot)) {
             Add-Fail "Empty plugin: $($plugin.FullName)"
         }
     }
+    $tidb = Join-Path $PluginsRoot "player\tidb.plugin.js"
+    $tidbText = Get-Content $tidb -Raw
+    if ($tidbText -notmatch 'https://api\.theintrodb\.org/v4') {
+        Add-Fail "Intro skip plugin must call TheIntroDB /v4"
+    }
+    if ($tidbText -match 'https://api\.theintrodb\.org/v[123]\b') {
+        Add-Fail "Intro skip plugin still calls a retired TheIntroDB API version"
+    }
+    $introProxy = Join-Path $ProjectRoot "src\stremio_app\custom_api\theintrodb_proxy.rs"
+    $introProxyText = Get-Content $introProxy -Raw
+    if ($introProxyText -notmatch 'https://api\.theintrodb\.org/v4') {
+        Add-Fail "TheIntroDB proxy must call /v4"
+    }
+    if ($introProxyText -match 'https://api\.theintrodb\.org/v[123]\b') {
+        Add-Fail "TheIntroDB proxy still calls a retired API version"
+    }
 }
 
 $prebootSrc = Join-Path $AssetsDir "custom_preboot.js"
