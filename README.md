@@ -27,6 +27,7 @@ It combines UI upgrades, player improvements, plugins/themes and library tools i
   - [🗑️ Uninstall](#️-uninstall)
   - [🧑‍💻 Build from source (developers)](#️-build-from-source-(developers))
 - [🔒 Privacy and local data](#-privacy-and-local-data)
+- [⚠️ Important Info](#-important-info)
 - [🙏 Credits](#-credits)
 - [💬 Feedback](#-feedback)
 
@@ -210,6 +211,7 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 
 
 
+
 ## 💾 Installation
 
 1. Download the latest installer from this repository's **[Releases](https://github.com/xAlphiiJr/MyStremio/releases/latest)** page.
@@ -264,12 +266,13 @@ The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle
 ## 🔒 Privacy and local data
 
 - API keys, personal settings and library structure are stored locally in `%APPDATA%\MyStremio\`.
-- Cinebye login uses your Stremio session at runtime.
 - Discord Rich Presence only sends data when enabled and connected.
 
 ---
 
-
+## ⚠️ Important Info
+- MyStremio is built with the help of AI
+- English is the only fully supported language
 
 ## 🙏 Credits
 
