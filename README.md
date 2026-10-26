@@ -185,6 +185,9 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 - **Quick Play** — NEW! Set your desired resolution, quality and language in the settings and start streaming with one click. For titels on the dynamic hero banner click "Watch now", for every other title enable the meta hover panel plugin in the settings and click the play button on the panel
 - **Discord Rich Presence** — Now displays the poster of the title you're currently watching instead of the MyStremio icon
 - **Search** — The search icon has moved to the top navigation bar and no longer switches page until you hit enter or click a suggestion. Search suggestions now match the theme and no longer stay highlighted when the mouse no longer hovers over them. After searching navigate to another page or click the "x" to close the search results
+- **Intro Skip** —  Fixed bug where plugin would freeze for the whole session if it crashes once, improved stability, improved visual matching of seek bar timestamps.
+- **Autoskip** — Now waits for mpv to buffer before starting the countdown
+- **Poster scaling** — Fixed scaling bug where posters in rows that were not filled would scale too big
 
 
 ### 2.4.6
