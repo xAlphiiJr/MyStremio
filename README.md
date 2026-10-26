@@ -73,6 +73,7 @@ MyStremio offers its own UI enhancements and combines it with already existing p
 #### 🏠 Board hero home view
 
 The board includes a hero section with rotating titles. The Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme) and just adapted for MyStremio. NEW for 2.5.0: Click "Watch now" to instantly play a stream matching the quick play settings and your set language (using your set favorite languages as fallback).
+
 ![Board Hero Home](./images/01-board-hero.png)
 
 #### 🖱️ Hover metadata in catalogs
