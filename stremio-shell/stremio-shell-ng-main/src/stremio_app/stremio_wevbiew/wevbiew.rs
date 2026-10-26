@@ -21,7 +21,7 @@ use webview2::Controller;
 use winapi::shared::guiddef::GUID;
 use winapi::shared::windef::HWND;
 use winapi::um::winuser::{
-    RegisterPowerSettingNotification, DEVICE_NOTIFY_WINDOW_HANDLE, GetClientRect, VK_F7,
+    GetClientRect, RegisterPowerSettingNotification, DEVICE_NOTIFY_WINDOW_HANDLE, VK_F7,
     WM_APPCOMMAND, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_POWERBROADCAST, WM_SETFOCUS,
 };
 
@@ -48,7 +48,10 @@ fn is_local_webview_origin(uri: &str) -> bool {
     let Ok(url) = Url::parse(uri) else {
         return false;
     };
-    matches!(url.host_str(), Some("127.0.0.1") | Some("localhost") | Some("::1"))
+    matches!(
+        url.host_str(),
+        Some("127.0.0.1") | Some("localhost") | Some("::1")
+    )
 }
 
 fn display_power_turned_on(lparam: isize) -> bool {
@@ -232,6 +235,19 @@ impl PartialUi for WebView {
                         )
                         .ok();
 
+                    let early_theme = serde_json::to_string(include_str!(
+                        "../../../../../assets-bundle/themes/liquid-glass.theme.css"
+                    ))
+                    .unwrap_or_else(|_| "\"\"".to_string());
+                    webview
+                        .add_script_to_execute_on_document_created(
+                            &format!(
+                                "(function(){{try{{var s=document.createElement('style');s.id='stremio-custom-active-theme';s.textContent={early_theme};(document.head||document.documentElement).appendChild(s);}}catch(e){{}}}})();"
+                            ),
+                            |_| Ok(()),
+                        )
+                        .ok();
+
                     webview
                         .add_script_to_execute_on_document_created(
                             include_str!("../../../assets/custom_preboot.js"),
@@ -396,6 +412,7 @@ impl PartialUi for WebView {
                             for script in [
                                 include_str!("../../../assets/custom_startup_guard.js"),
                                 include_str!("../../../assets/custom_route_change.js"),
+                                include_str!("../../../assets/custom_quick_play.js"),
                                 include_str!("../../../assets/custom_bootstrap.js"),
                                 include_str!("../../../assets/custom_scroll_restore.js"),
                                 include_str!("../../../assets/custom_board_row_nav.js"),

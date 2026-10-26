@@ -1,7 +1,7 @@
 /**
  * @name Sleep Timer
- * @description Sleep, close, or shut down when a countdown, clock, or end of episode is reached.
- * @version 1.0.3
+ * @description Sleep, close, and shut down — including close together with sleep or shutdown — when a countdown, clock, or end of episode is reached.
+ * @version 1.0.5
  * @author MyStremio
  * @category player
  */
@@ -10,7 +10,7 @@
 (function () {
   'use strict';
 
-  const PLUGIN_VERSION = '1.0.3';
+  const PLUGIN_VERSION = '1.0.5';
   const PLUGIN_ID = 'sleep-timer';
   const PLUGIN_REF = 'player/sleep-timer.plugin.js';
   const LOG_PREFIX = '[Sleep Timer]';
@@ -28,7 +28,7 @@
   const CONTRIBUTE_BTN_ID = 'tidb-contribute-btn';
   const CAST_BTN_ID = 'mystremio-cast-overlay-btn';
   const ICON_SIZE = '2.0rem';
-  const PANEL_VERSION = '3';
+  const PANEL_VERSION = '4';
   const SETTING_RUNNING = 'running';
   const SETTING_REMAINING = 'remaining';
   const SETTING_ACTION = 'action';
@@ -53,12 +53,15 @@
     {
       key: SETTING_ACTION,
       type: 'select',
-      label: 'Action',
+      label: 'Actions',
+      description: 'Close can run together with Sleep or Shutdown. Sleep and Shutdown cannot run together.',
       defaultValue: 'sleep',
       options: [
         { value: 'sleep', label: 'Sleep' },
         { value: 'close', label: 'Close' },
         { value: 'shutdown', label: 'Shutdown' },
+        { value: 'sleep,close', label: 'Sleep + Close' },
+        { value: 'shutdown,close', label: 'Shutdown + Close' },
       ],
     },
     {
@@ -99,7 +102,6 @@
     { value: 'clock', label: 'Clock' },
     { value: 'episode', label: 'End of episode' },
   ];
-  const ACTION_VALUES = new Set(ACTIONS.map((entry) => entry.value));
   const TRIGGER_VALUES = new Set(TRIGGERS.map((entry) => entry.value));
 
   let shellMsgId = 17000;
@@ -183,12 +185,53 @@
 
   /**
    * @param {unknown} raw
+   * @returns {string}
+   */
+  function normalizeAction(raw) {
+    const text = raw === 'restart' ? 'sleep' : String(raw ?? '');
+    let sleep = false;
+    let shutdown = false;
+    let close = false;
+    for (const part of text.split(',')) {
+      const value = part.trim();
+      if (value === 'sleep') sleep = true;
+      else if (value === 'shutdown') shutdown = true;
+      else if (value === 'close') close = true;
+    }
+    if (sleep && shutdown) shutdown = false;
+    if (!sleep && !shutdown && !close) sleep = true;
+    const selected = [];
+    if (sleep) selected.push('sleep');
+    if (shutdown) selected.push('shutdown');
+    if (close) selected.push('close');
+    return selected.join(',');
+  }
+
+  /**
+   * @param {string} current
+   * @param {string} value
+   * @returns {string}
+   */
+  function toggleAction(current, value) {
+    const on = new Set(String(current || '').split(',').filter(Boolean));
+    if (on.has(value)) {
+      if (on.size === 1) return current;
+      on.delete(value);
+    } else {
+      if (value === 'sleep') on.delete('shutdown');
+      if (value === 'shutdown') on.delete('sleep');
+      on.add(value);
+    }
+    return ['sleep', 'shutdown', 'close'].filter((item) => on.has(item)).join(',');
+  }
+
+  /**
+   * @param {unknown} raw
    * @returns {typeof prefs}
    */
   function normalizePrefs(raw) {
     const src = raw && typeof raw === 'object' ? raw : {};
-    const rawAction = src.action === 'restart' ? 'sleep' : src.action;
-    const action = ACTION_VALUES.has(rawAction) ? rawAction : 'sleep';
+    const action = normalizeAction(src.action);
     const trigger = TRIGGER_VALUES.has(src.trigger) ? src.trigger : 'countdown';
     const hourMax = trigger === 'clock' ? 23 : 12;
     return {
@@ -396,6 +439,120 @@
       window.StremioCustomPlayback?.getVideo?.()?.pause?.();
     } catch (_) {}
     sendMpvSetProp('pause', true);
+  }
+
+  /**
+   * @param {object|null|undefined} message
+   * @returns {'api'|'storage'|'api-error'|'storage-error'|null}
+   */
+  function progressPushKind(message) {
+    const body = message?.name === 'CoreEvent' ? message.args : null;
+    if (!body || typeof body !== 'object') return null;
+    if (body.event === 'LibraryItemsPushedToAPI') return 'api';
+    if (body.event === 'LibraryItemsPushedToStorage') return 'storage';
+    if (body.event !== 'Error') return null;
+    const sourceEvent = body.args?.source?.event;
+    if (sourceEvent === 'LibraryItemsPushedToAPI') return 'api-error';
+    if (sourceEvent === 'LibraryItemsPushedToStorage') return 'storage-error';
+    return null;
+  }
+
+  console.assert(progressPushKind({ name: 'CoreEvent', args: { event: 'LibraryItemsPushedToAPI' } }) === 'api');
+  console.assert(progressPushKind({ name: 'CoreEvent', args: { event: 'LibraryItemsPushedToStorage' } }) === 'storage');
+  console.assert(progressPushKind({
+    name: 'CoreEvent',
+    args: { event: 'Error', args: { source: { event: 'LibraryItemsPushedToAPI' } } },
+  }) === 'api-error');
+  console.assert(progressPushKind({ name: 'NewState', args: {} }) === null);
+
+  /**
+   * Core keeps the live position in the player model and only pushes it to
+   * the account every 180s. Seek writes the real offset, including a rewind;
+   * PausedChanged pushes that item immediately.
+   * @returns {{ done: Promise<boolean>, cancel: () => void }}
+   */
+  function waitForProgressPush(loggedIn) {
+    const need = new Set(loggedIn ? ['api', 'storage'] : ['storage']);
+    let finish = () => {};
+    const done = new Promise((resolve) => {
+      const prev = window.onCoreEvent;
+      let settled = false;
+      let failed = false;
+      // shortcut: stop waiting after 8s, upgrade if account sync regularly takes longer
+      const timer = window.setTimeout(() => finish(), 8000);
+      function finishWait() {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        if (window.onCoreEvent === wrapped) window.onCoreEvent = prev;
+        resolve(need.size === 0 && !failed);
+      }
+      finish = finishWait;
+      function wrapped(message) {
+        if (typeof prev === 'function') {
+          try { prev(message); } catch (_) {}
+        }
+        const kind = progressPushKind(message);
+        if (kind === 'api' || kind === 'api-error') {
+          if (kind === 'api-error') failed = true;
+          need.delete('api');
+        } else if (kind === 'storage' || kind === 'storage-error') {
+          if (kind === 'storage-error') failed = true;
+          need.delete('storage');
+        }
+        if (need.size === 0) finishWait();
+      }
+      window.onCoreEvent = wrapped;
+    });
+    return { done, cancel: () => finish() };
+  }
+
+  async function flushWatchProgress() {
+    const core = window.core;
+    if (!core?.dispatch || !core?.getState) return;
+    let player = null;
+    let loggedIn = false;
+    try {
+      player = await core.getState('player');
+      const ctx = await core.getState('ctx');
+      loggedIn = Boolean(ctx?.profile?.auth);
+    } catch (_) {
+      return;
+    }
+    const libraryItem = player?.libraryItem;
+    if (!libraryItem?.id) return;
+
+    const pending = waitForProgressPush(loggedIn);
+    let pushed = false;
+    try {
+      const timeSec = Number(window.StremioCustomPlayback?.getCurrentTime?.());
+      const durationSec = Number(window.StremioCustomPlayback?.getDuration?.());
+      if (Number.isFinite(timeSec) && timeSec > 0) {
+        const time = Math.round(timeSec * 1000);
+        let duration = Number.isFinite(durationSec) && durationSec > 0
+          ? Math.round(durationSec * 1000)
+          : 0;
+        if (duration < time) {
+          const saved = Number(libraryItem.state?.duration) || 0;
+          duration = saved >= time ? saved : time;
+        }
+        await core.dispatch({
+          action: 'Player',
+          args: { action: 'Seek', args: { time, duration, device: 'MyStremio' } },
+        }, 'player');
+        pushed = true;
+      }
+      await core.dispatch({
+        action: 'Player',
+        args: { action: 'PausedChanged', args: { paused: true } },
+      }, 'player');
+      pushed = true;
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Progress flush failed:`, error);
+    }
+    if (!pushed) pending.cancel();
+    const synced = await pending.done;
+    if (!synced) console.warn(`${LOG_PREFIX} Progress sync was not confirmed.`);
   }
 
   /**
@@ -677,7 +834,12 @@
     syncBadge();
     syncPanelArmedState();
     persistPluginSettings();
-    if (action !== 'close') pausePlayback();
+    pausePlayback();
+    try {
+      await flushWatchProgress();
+    } catch (error) {
+      console.warn(`${LOG_PREFIX} Progress flush failed:`, error);
+    }
     const api = getSettingsApi();
     try {
       await api?.invoke?.('power-action', { action }, 4000);
@@ -794,29 +956,8 @@
    * @param {Element} container
    */
   function placeSleepButton(button, container) {
-    if (!button || !container) return;
-    const menuButton = container.querySelector('[class*="control-bar-buttons-menu-button"]');
-    const anime4k = document.getElementById(ANIME4K_BTN_ID);
-    const cast = document.getElementById(CAST_BTN_ID);
-    const contribute = document.getElementById(CONTRIBUTE_BTN_ID);
-    const after =
-      (anime4k && container.contains(anime4k) && anime4k) ||
-      (cast && container.contains(cast) && cast) ||
-      (contribute && container.contains(contribute) && contribute) ||
-      null;
-    if (after) {
-      if (button.previousElementSibling !== after) {
-        container.insertBefore(button, after.nextSibling);
-      }
-      return;
-    }
-    if (menuButton && container.contains(menuButton)) {
-      if (button.nextElementSibling !== menuButton) {
-        container.insertBefore(button, menuButton);
-      }
-      return;
-    }
-    if (button.parentNode !== container) container.appendChild(button);
+    if (button && container && !container.contains(button)) container.appendChild(button);
+    window.__stremioCustomLayoutPlayerButtons?.();
   }
 
   /**
@@ -858,8 +999,12 @@
   }
 
   function refreshChipState(group, selected) {
+    const on = new Set(String(selected || '').split(','));
+    const multi = Boolean(group?.hasAttribute('data-sleep-actions'));
     group?.querySelectorAll('button[data-value]').forEach((btn) => {
-      btn.classList.toggle('is-active', btn.getAttribute('data-value') === selected);
+      const active = on.has(btn.getAttribute('data-value'));
+      btn.classList.toggle('is-active', active);
+      if (multi) btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
   }
 
@@ -1137,8 +1282,8 @@
         <span class="mystremio-sleep-title">Sleep Timer</span>
         <button type="button" class="mystremio-sleep-close" data-sleep-close aria-label="Close">×</button>
       </div>
-      <span class="mystremio-sleep-label">Action</span>
-      <div class="mystremio-sleep-chips" data-sleep-actions role="group" aria-label="Action"></div>
+      <span class="mystremio-sleep-label">Actions</span>
+      <div class="mystremio-sleep-chips" data-sleep-actions role="group" aria-label="Actions"></div>
       <span class="mystremio-sleep-label">When</span>
       <div class="mystremio-sleep-chips" data-sleep-triggers role="group" aria-label="Trigger"></div>
       <div data-sleep-time>
@@ -1167,7 +1312,7 @@
         event.preventDefault();
         event.stopPropagation();
         if (armed) return;
-        prefs.action = option.value;
+        prefs.action = toggleAction(prefs.action, option.value);
         savePrefs();
         syncSteppers();
       });

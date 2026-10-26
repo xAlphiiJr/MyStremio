@@ -640,8 +640,25 @@
     if (phase === Phase.VIDEO) scheduleViewportPunch();
   }
 
+  function sealOpaqueDocument() {
+    const html = document.documentElement;
+    html.classList.remove('stremio-custom-player-route');
+    html.classList.remove(MPV_VISIBLE_CLASS);
+    html.classList.remove(PUNCHED_CLASS);
+    setWebViewBackgroundTransparent(false);
+    try {
+      window.__stremioCustomPlayerTransparencyEnsure?.();
+    } catch (_) {}
+  }
+
+  function repunchMpvViewport() {
+    if (phase !== Phase.VIDEO || !isPlayerRoute() || !mpvReadyForVideo()) return;
+    punchMpvViewport();
+  }
+
   function onPlayerLeave(options = {}) {
     const hadActiveSession = phase !== Phase.IDLE || pendingSession;
+    sealOpaqueDocument();
     endSession();
     ensureOpaqueReconcile();
     if (!options.silent && hadActiveSession) {
@@ -669,6 +686,13 @@
     onPlayerEnter();
     ensureOpaqueReconcile();
   }
+
+  window.__stremioCustomRepunchMpvViewport = repunchMpvViewport;
+  window.__stremioCustomSealPlayerLeave = () => {
+    if (isPlayerRoute()) return;
+    sealOpaqueDocument();
+    if (phase !== Phase.IDLE) onPlayerLeave({ silent: true });
+  };
 
   document.addEventListener('stremio-custom-route-change', onRouteChangeForSession);
 

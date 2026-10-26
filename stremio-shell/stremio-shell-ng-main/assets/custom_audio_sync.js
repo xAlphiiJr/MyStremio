@@ -23,32 +23,45 @@
     tr: 'tur',
     cs: 'cze',
   };
+  // Bibliographic (ger), terminological (deu) and ISO-639-1 (de) are one language.
+  const LANG_CANON = {
+    ger: 'de', deu: 'de', de: 'de', german: 'de', deutsch: 'de',
+    eng: 'en', en: 'en', english: 'en',
+    jpn: 'ja', ja: 'ja', japanese: 'ja',
+    fra: 'fr', fre: 'fr', fr: 'fr', french: 'fr',
+    spa: 'es', es: 'es', spanish: 'es',
+    ita: 'it', it: 'it', italian: 'it',
+    por: 'pt', pt: 'pt', portuguese: 'pt',
+    rus: 'ru', ru: 'ru', russian: 'ru',
+    kor: 'ko', ko: 'ko', korean: 'ko',
+    zho: 'zh', chi: 'zh', zh: 'zh', chinese: 'zh',
+    ara: 'ar', ar: 'ar', arabic: 'ar',
+    nld: 'nl', dut: 'nl', nl: 'nl', dutch: 'nl',
+    pol: 'pl', pl: 'pl', polish: 'pl',
+    tur: 'tr', tr: 'tr', turkish: 'tr',
+    ces: 'cs', cze: 'cs', cs: 'cs', czech: 'cs',
+  };
 
   let shellMsgId = 8000;
   let trackListDebounce = null;
   let lastTrackList = null;
   let lastAppliedTrackId = null;
-  let applyAttempts = 0;
 
   function isPlayerRoute() {
     return /#\/player/.test(location.hash || '');
   }
 
-  function normalizeLanguageCode(code) {
+  function canonicalLang(code) {
     if (!code || typeof code !== 'string') return '';
-    const trimmed = code.trim().toLowerCase();
-    if (!trimmed) return '';
-    return ISO2_TO_ISO3[trimmed] || trimmed;
+    const base = code.trim().toLowerCase().replace('_', '-').split('-')[0];
+    if (!base || base === 'none' || base === 'und') return '';
+    return LANG_CANON[base] || LANG_CANON[ISO2_TO_ISO3[base]] || base;
   }
 
   function languageMatches(trackLang, preferredLang) {
-    const track = normalizeLanguageCode(trackLang);
-    const preferred = normalizeLanguageCode(preferredLang);
-    if (!track || !preferred) return false;
-    if (track === preferred) return true;
-    if (track.startsWith(preferred) || preferred.startsWith(track)) return true;
-    if (track.slice(0, 2) === preferred.slice(0, 2)) return true;
-    return false;
+    const track = canonicalLang(trackLang);
+    const preferred = canonicalLang(preferredLang);
+    return Boolean(track && preferred && track === preferred);
   }
 
   function readJsonList(key) {
@@ -60,17 +73,10 @@
     }
   }
 
-  function readActiveAudioPreference() {
-    try {
-      const active = normalizeLanguageCode(localStorage.getItem(ACTIVE_AUDIO_KEY));
-      if (active) return active;
-      const favorites = readJsonList(FAV_AUDIO_KEY)
-        .map(normalizeLanguageCode)
-        .filter(Boolean);
-      return favorites[0] || null;
-    } catch {
-      return null;
-    }
+  function pushLang(order, code) {
+    const canon = canonicalLang(code);
+    if (!canon || order.some((item) => item.canon === canon)) return;
+    order.push({ code: String(code).trim().toLowerCase(), canon });
   }
 
   function sendShellMpvSetProp(prop, value) {
@@ -120,81 +126,70 @@
     }
   }
 
-  function findAudioTrack(tracks, preferredLang) {
+  function findAudioTrack(tracks, order) {
     const audioTracks = tracks.filter((track) => track?.type === 'audio' && track.id != null);
-    if (!audioTracks.length) return null;
-
-    const exact = audioTracks.find((track) => languageMatches(track.lang, preferredLang));
-    if (exact) return exact;
-
-    return (
-      audioTracks.find((track) => {
-        const lang = normalizeLanguageCode(track.lang);
-        const pref = normalizeLanguageCode(preferredLang);
-        return lang && pref && (lang.includes(pref) || pref.includes(lang));
-      }) || null
-    );
+    for (const pref of order) {
+      const hit = audioTracks.find((track) => languageMatches(track.lang || track.language, pref.canon));
+      if (hit) return { track: hit, pref };
+    }
+    return null;
   }
 
-  async function resolveAudioPreference() {
-    const activeAudio = readActiveAudioPreference();
-    if (activeAudio) {
-      return { language: activeAudio };
-    }
-    const coreSetting = await readCoreAudioSetting();
-    if (coreSetting) {
-      return { language: normalizeLanguageCode(coreSetting) };
-    }
-    return { language: null };
+  async function resolveAudioOrder() {
+    // Same order as Quick Play: quick-select, otherwise the profile default, then favorites.
+    const order = [];
+    try {
+      const active = localStorage.getItem(ACTIVE_AUDIO_KEY);
+      if (active && active !== 'none') pushLang(order, active);
+    } catch (_) {}
+    if (!order.length) pushLang(order, await readCoreAudioSetting());
+    try {
+      readJsonList(FAV_AUDIO_KEY).forEach((code) => pushLang(order, code));
+    } catch (_) {}
+    return order;
   }
 
   async function applyFavoriteAudioAfterTracks(tracks) {
     if (!isPlayerRoute() || !Array.isArray(tracks) || !tracks.length) return;
 
-    const preference = await resolveAudioPreference();
-    if (!preference.language) return;
+    const order = await resolveAudioOrder();
+    if (!order.length) return;
 
-    await updateCoreSetting(preference.language);
-
-    const expected = findAudioTrack(tracks, preference.language);
-    if (!expected) {
+    const found = findAudioTrack(tracks, order);
+    if (!found) {
       console.info(
         '[StremioCustom] No embedded audio track for',
-        preference.language,
+        order.map((item) => item.code).join(', '),
         '- keeping current track.'
       );
       return;
     }
 
+    if (found.pref === order[0]) await updateCoreSetting(found.pref.code);
+
     const selectedAudio = tracks.find((track) => track?.type === 'audio' && track.selected);
     if (
       selectedAudio &&
-      (selectedAudio.id === expected.id || languageMatches(selectedAudio.lang, preference.language))
+      (selectedAudio.id === found.track.id || languageMatches(selectedAudio.lang, found.pref.canon))
     ) {
-      lastAppliedTrackId = expected.id;
+      lastAppliedTrackId = found.track.id;
       return;
     }
 
-    if (lastAppliedTrackId === expected.id) return;
-
-    lastAppliedTrackId = expected.id;
-    sendShellMpvSetProp('aid', expected.id);
+    lastAppliedTrackId = found.track.id;
+    // mpv aid is an int. A JSON number arrives as f64 and is rejected; the shell sends a string.
+    sendShellMpvSetProp('aid', String(found.track.id));
     console.info(
-      '[StremioCustom] Favorite audio applied/corrected:',
-      preference.language,
+      '[StremioCustom] Audio track applied:',
+      found.pref.code,
       'track',
-      expected.id
+      found.track.id,
+      found.track.lang || ''
     );
   }
 
   async function syncAudioPreference() {
     if (!isPlayerRoute()) return;
-
-    const preference = await resolveAudioPreference();
-    if (!preference.language) return;
-
-    await updateCoreSetting(preference.language);
-
     if (lastTrackList?.length) {
       await applyFavoriteAudioAfterTracks(lastTrackList);
     }
@@ -207,13 +202,11 @@
 
     lastTrackList = tracks;
     lastAppliedTrackId = null;
-    applyAttempts = 0;
 
     if (trackListDebounce) clearTimeout(trackListDebounce);
     trackListDebounce = setTimeout(async () => {
       trackListDebounce = null;
       if (!isPlayerRoute() || !lastTrackList) return;
-      await new Promise((resolve) => setTimeout(resolve, 500));
       await applyFavoriteAudioAfterTracks(lastTrackList);
     }, 350);
   }
@@ -323,6 +316,10 @@
 
   document.addEventListener('stremio-custom-bootstrap-ready', scheduleAudioSync);
   hookShellIncoming();
+
+  if (canonicalLang('deu') !== 'de' || canonicalLang('ger') !== 'de' || canonicalLang('eng') === 'de') {
+    console.warn('[StremioCustom] audio language map is wrong');
+  }
 
   if (isPlayerRoute()) scheduleAudioSync();
   console.info('[StremioCustom] Audio preference sync ready.');

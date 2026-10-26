@@ -103,6 +103,10 @@
     playIntentUntil = Date.now() + PLAY_INTENT_MS;
   }
 
+  // Watch Now sets the player hash long after the click, so the pointer
+  // intent above has already expired and the route looks like a history restore.
+  window.__stremioCustomMarkPlayIntent = markPlayIntent;
+
   function hasLiveStream() {
     try {
       return Boolean(window.StremioCustomPlayback?.getMpvSnapshot?.()?.hasStream);

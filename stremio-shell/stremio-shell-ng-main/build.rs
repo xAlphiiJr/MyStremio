@@ -61,15 +61,13 @@ fn main() {
                 .join("Programs")
                 .join("Stremio")
                 .join(dll_name),
-            PathBuf::from(
-                env::var("USERPROFILE").unwrap_or_default(),
-            )
-            .join("Documents")
-            .join("StremioApp")
-            .join("stremio-custom")
-            .join("vendor")
-            .join("mpv")
-            .join(dll_name),
+            PathBuf::from(env::var("USERPROFILE").unwrap_or_default())
+                .join("Documents")
+                .join("StremioApp")
+                .join("stremio-custom")
+                .join("vendor")
+                .join("mpv")
+                .join(dll_name),
         ];
 
         let mut copied = false;
@@ -84,7 +82,9 @@ fn main() {
 
         if !copied {
             if env::var("MYSTREMIO_SKIP_LIBMPV").ok().as_deref() == Some("1") {
-                println!("cargo:warning=MYSTREMIO_SKIP_LIBMPV=1; skipping libmpv copy (CI/link-only)");
+                println!(
+                    "cargo:warning=MYSTREMIO_SKIP_LIBMPV=1; skipping libmpv copy (CI/link-only)"
+                );
             } else {
                 panic!(
                     "Missing {}. Run: npm run prepare (from stremio-custom-shell) or place libmpv-2_x64.zip in the project root.",

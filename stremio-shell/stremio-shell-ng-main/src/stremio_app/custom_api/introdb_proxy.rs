@@ -39,9 +39,8 @@ pub fn get_segments(imdb_id: &str, season: u64, episode: u64) -> Result<Value, S
     }
 
     let client = http_client(GET_TIMEOUT, GET_CONNECT_TIMEOUT)?;
-    let url = format!(
-        "{INTRODB_API_BASE}/segments?imdb_id={imdb_id}&season={season}&episode={episode}"
-    );
+    let url =
+        format!("{INTRODB_API_BASE}/segments?imdb_id={imdb_id}&season={season}&episode={episode}");
 
     let response = client
         .get(url)
@@ -112,10 +111,7 @@ pub fn submit_segment(api_key: &str, body: &Value) -> Result<Value, String> {
 fn default_headers(api_key: Option<&str>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_static(USER_AGENT_VALUE),
-    );
+    headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
     if let Some(key) = api_key {
         if let Ok(value) = HeaderValue::from_str(key) {
             headers.insert("X-API-Key", value);

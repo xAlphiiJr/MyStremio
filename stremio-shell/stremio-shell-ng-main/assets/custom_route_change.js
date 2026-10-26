@@ -70,14 +70,23 @@
   const originalPushState = history.pushState.bind(history);
   const originalReplaceState = history.replaceState.bind(history);
 
+  function sealIfLeavingPlayer() {
+    if (/#\/player(?:\/|$|\?|#)/.test(location.hash || '')) return;
+    try {
+      window.__stremioCustomSealPlayerLeave?.();
+    } catch (_) {}
+  }
+
   history.pushState = function stremioCustomPushState(state, title, url) {
     const result = originalPushState(state, title, url);
+    sealIfLeavingPlayer();
     scheduleNotify('pushState');
     return result;
   };
 
   history.replaceState = function stremioCustomReplaceState(state, title, url) {
     const result = originalReplaceState(state, title, url);
+    sealIfLeavingPlayer();
     scheduleNotify('replaceState');
     return result;
   };
@@ -86,9 +95,13 @@
   window.addEventListener('popstate', () => {
     pendingSource = '';
     notifyScheduled = false;
+    sealIfLeavingPlayer();
     notifyIfHashChanged('popstate');
   });
-  window.addEventListener('hashchange', () => scheduleNotify('hashchange'));
+  window.addEventListener('hashchange', () => {
+    sealIfLeavingPlayer();
+    scheduleNotify('hashchange');
+  });
 
   console.info('[StremioCustom] Route-change bus ready.');
 })();

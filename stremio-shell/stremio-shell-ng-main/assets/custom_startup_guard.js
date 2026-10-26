@@ -154,7 +154,6 @@
 
   document.addEventListener('stremio-custom-bootstrap-ready', () => {
     window.__stremioCustomBootstrapReady = true;
-    window.__stremioCustomDismissStartupOverlays?.();
   });
 
   ensureOpaqueFallback();

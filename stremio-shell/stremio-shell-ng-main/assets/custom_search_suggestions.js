@@ -160,6 +160,90 @@
       .search-bar-h60ja[data-mystremio-search-collapsed="1"] .submit-button-container-MImNa{
         display:flex!important;opacity:1!important;flex:none!important;
       }
+      /* Docked magnifier uses the same pill as the menu tabs. */
+      html.mystremio-search-docked .search-bar-container-asfq1,
+      html.mystremio-search-docked.mystremio-search-unfocused .search-bar-container-asfq1,
+      html.mystremio-search-docked .search-bar-container-asfq1[data-mystremio-search-collapsed="1"]{
+        --search-bar-size:37px;
+        height:37px!important;min-height:0!important;
+        background:rgba(70,70,70,.45)!important;
+        border:1px solid rgba(255,255,255,.04)!important;
+        box-shadow:0 10px 36px rgba(0,0,0,.28),0 2px 12px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.15),inset 0 -1px 0 rgba(0,0,0,.1)!important;
+        backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+      }
+      html.mystremio-search-typing .search-bar-container-asfq1,
+      html.mystremio-search-typing .search-bar-container-asfq1:hover,
+      html.mystremio-search-typing .search-bar-container-asfq1:focus-within,
+      html.mystremio-search-typing .search-bar-container-asfq1[data-mystremio-search-collapsed="1"]{
+        width:var(--mystremio-search-width, calc(20ch + 3.2rem))!important;
+        max-width:min(420px, 46vw)!important;min-width:0!important;
+        height:37px!important;padding:0 6px 0 14px!important;
+        justify-content:space-between!important;
+      }
+      /* Collapsed: only the icon, centered. The leftover input was a text sliver and pushed the icon off center. */
+      html.mystremio-search-docked:not(.mystremio-search-typing):not(.mystremio-search-has-query) .search-bar-container-asfq1{
+        width:37px!important;min-width:37px!important;max-width:37px!important;
+        justify-content:center!important;padding:0!important;
+      }
+      html.mystremio-search-docked:not(.mystremio-search-typing):not(.mystremio-search-has-query) .mystremio-dock-search,
+      html.mystremio-search-docked:not(.mystremio-search-typing):not(.mystremio-search-has-query) .search-bar-container-asfq1 [class*="search-input"],
+      html.mystremio-search-docked:not(.mystremio-search-typing):not(.mystremio-search-has-query) .search-bar-container-asfq1 [class*="placeholder"]{
+        display:none!important;width:0!important;flex:none!important;padding:0!important;opacity:0!important;
+      }
+      html.mystremio-search-docked:not(.mystremio-search-typing):not(.mystremio-search-has-query) .search-bar-container-asfq1 .submit-button-container-MImNa{
+        width:37px!important;height:37px!important;min-width:0!important;margin:0!important;padding:0!important;
+        display:flex!important;align-items:center!important;justify-content:center!important;order:0!important;
+      }
+      html.mystremio-search-typing .search-bar-container-asfq1 .submit-button-container-MImNa,
+      html.mystremio-search-has-query .search-bar-container-asfq1 .submit-button-container-MImNa{
+        height:37px!important;width:auto!important;min-width:28px!important;padding:0!important;order:2!important;
+      }
+      html.mystremio-search-typing .search-bar-container-asfq1 [class*="placeholder"]{display:none!important}
+      /* Native field stays in the bar and was taking the width, so the placeholder clipped with a gap before the icon. */
+      html.mystremio-search-typing .search-bar-container-asfq1:focus-within [class*="search-input"],
+      html.mystremio-search-typing .search-bar-container-asfq1 [class*="search-input"]{
+        display:none!important;width:0!important;flex:none!important;padding:0!important;opacity:0!important;
+      }
+      html.mystremio-search-typing .mystremio-dock-search{
+        display:block!important;flex:1 1 auto!important;width:auto!important;min-width:0!important;height:100%!important;
+        opacity:1!important;padding:0 8px!important;border:0;outline:none;
+        background:transparent;color:#fff;font:inherit;
+        word-break:normal!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;
+      }
+      html.mystremio-search-docked.mystremio-search-has-query .search-bar-container-asfq1,
+      html.mystremio-search-docked.mystremio-search-has-query .search-bar-container-asfq1:hover,
+      html.mystremio-search-docked.mystremio-search-has-query .search-bar-container-asfq1:focus-within,
+      html.mystremio-search-docked.mystremio-search-unfocused.mystremio-search-has-query .search-bar-container-asfq1,
+      html.mystremio-search-docked.mystremio-search-unfocused.mystremio-search-has-query .search-bar-container-asfq1:focus-within,
+      html.mystremio-search-docked.mystremio-search-has-query .search-bar-container-asfq1[data-mystremio-search-collapsed="1"],
+      html.mystremio-search-docked.mystremio-search-has-query .search-bar-container-asfq1[data-mystremio-search-collapsed="1"]:hover,
+      html.mystremio-search-docked.mystremio-search-has-query .search-bar-container-asfq1[data-mystremio-search-collapsed="1"]:focus-within{
+        width:var(--mystremio-search-width, calc(20ch + 3.2rem))!important;
+        max-width:min(420px, 46vw)!important;min-width:0!important;
+        padding:0 6px 0 14px!important;justify-content:flex-start!important;
+      }
+      html.mystremio-search-docked.mystremio-search-has-query .search-bar-container-asfq1 [class*="search-input"],
+      html.mystremio-search-docked.mystremio-search-unfocused.mystremio-search-has-query .search-bar-container-asfq1 [class*="search-input"],
+      html.mystremio-search-docked.mystremio-search-unfocused.mystremio-search-has-query .search-bar-container-asfq1:focus-within [class*="search-input"],
+      html.mystremio-search-docked.mystremio-search-has-query .search-bar-container-asfq1[data-mystremio-search-collapsed="1"] [class*="search-input"],
+      html.mystremio-search-has-query .search-bar-container-asfq1 [class*="search-input"],
+      html.mystremio-search-unfocused.mystremio-search-has-query .search-bar-container-asfq1:focus-within [class*="search-input"]{
+        display:block!important;opacity:1!important;width:auto!important;min-width:0!important;
+        flex:1 1 auto!important;padding:0 8px!important;
+        word-break:normal!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;
+      }
+      html.mystremio-search-has-query .search-bar-container-asfq1,
+      html.mystremio-search-has-query .search-bar-container-asfq1:hover,
+      html.mystremio-search-has-query .search-bar-container-asfq1:focus-within,
+      html.mystremio-search-unfocused.mystremio-search-has-query .search-bar-container-asfq1,
+      html.mystremio-search-unfocused.mystremio-search-has-query .search-bar-container-asfq1:focus-within,
+      html.mystremio-search-has-query .search-bar-container-asfq1[data-mystremio-search-collapsed="1"],
+      html.mystremio-search-has-query .search-bar-container-asfq1[data-mystremio-search-collapsed="1"]:hover,
+      html.mystremio-search-has-query .search-bar-container-asfq1[data-mystremio-search-collapsed="1"]:focus-within{
+        width:var(--mystremio-search-width, calc(20ch + 3.2rem))!important;
+        max-width:min(420px, 46vw)!important;min-width:0!important;
+        padding:0 6px 0 14px!important;justify-content:flex-start!important;
+      }
     `;
     document.documentElement.appendChild(style);
   }
@@ -194,8 +278,13 @@
       8,
       Math.min(rect.left + (rect.width - width) / 2, window.innerWidth - width - 8)
     )}px`;
-    root.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 8)}px`;
-    root.style.top = 'auto';
+    if (rect.top < window.innerHeight / 2) {
+      root.style.top = `${rect.bottom + 8}px`;
+      root.style.bottom = 'auto';
+    } else {
+      root.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 8)}px`;
+      root.style.top = 'auto';
+    }
   }
 
   function hide() {
@@ -270,6 +359,69 @@
 
   function isSearchRoute(hash = location.hash) {
     return /#\/search(?:\/|$|\?|#)/i.test(hash || '');
+  }
+
+  const SEARCH_WIDTH_MIN_CH = 20;
+  const SEARCH_WIDTH_MAX_CH = 36;
+
+  /**
+   * Bar grows with the text and stops at 36ch. CSS max-width is the hard cap.
+   * @param {string} text
+   * @returns {string}
+   */
+  function searchBarWidth(text) {
+    const len = Math.min(
+      SEARCH_WIDTH_MAX_CH,
+      Math.max(SEARCH_WIDTH_MIN_CH, String(text || '').length)
+    );
+    return `calc(${len}ch + 3.2rem)`;
+  }
+
+  if (
+    searchBarWidth('') !== 'calc(20ch + 3.2rem)' ||
+    searchBarWidth('x'.repeat(80)) !== 'calc(36ch + 3.2rem)'
+  ) {
+    throw new Error('search bar width');
+  }
+
+  /**
+   * @param {string} [hash]
+   * @returns {string}
+   */
+  function searchQueryFromHash(hash = location.hash) {
+    const q = String(hash || '').indexOf('?');
+    if (q < 0) return '';
+    try {
+      return (new URLSearchParams(String(hash).slice(q + 1)).get('search') || '').trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /** Last page that was not a search route. X on the results returns here. */
+  let returnHash = '#/';
+
+  function originHash() {
+    return returnHash && !isSearchRoute(returnHash) ? returnHash : '#/';
+  }
+
+  function applyQueryBarWidth(text) {
+    const root = document.documentElement;
+    root.classList.add('mystremio-search-has-query');
+    root.style.setProperty('--mystremio-search-width', searchBarWidth(text));
+  }
+
+  function clearQueryBarWidth() {
+    const root = document.documentElement;
+    root.classList.remove('mystremio-search-has-query');
+    if (!root.classList.contains('mystremio-search-typing')) {
+      root.style.removeProperty('--mystremio-search-width');
+    }
+  }
+
+  function rememberSearchOrigin(prev, next) {
+    if (!isSearchRoute(next) || !prev || isSearchRoute(prev) || isDetailRoute(prev)) return;
+    returnHash = prev;
   }
 
   function isDetailRoute(hash = location.hash) {
@@ -359,6 +511,16 @@
     hide();
     hideNativeSearchMenus();
     document.documentElement.classList.add('mystremio-search-unfocused');
+    const query = isSearchRoute() ? searchQueryFromHash() : '';
+    if (query) {
+      applyQueryBarWidth(query);
+      nativeSearchBars().forEach((bar) => {
+        if (bar.closest('[class*="addons"]')) return;
+        bar.removeAttribute('data-mystremio-search-collapsed');
+        releaseCollapsedBarInlineStyles(bar);
+      });
+      return;
+    }
     nativeSearchBars().forEach((bar) => {
       if (bar.closest('[class*="addons"]')) return;
       bar.setAttribute('data-mystremio-search-collapsed', '1');
@@ -1134,7 +1296,7 @@
       }
       window.setTimeout(() => {
         if (!isSearchRoute(location.hash)) {
-          window.location.hash = `#/search/${encodeURIComponent(title)}`;
+          window.location.hash = `#/search?search=${encodeURIComponent(title)}`;
         }
       }, 50);
     };
@@ -1223,6 +1385,11 @@
     });
     root.querySelectorAll('.mss-item').forEach((btn, i) => {
       btn.addEventListener('mouseenter', () => setActiveIndex(i, { scroll: false }));
+      btn.addEventListener('mouseleave', () => {
+        if (activeIndex !== i) return;
+        activeIndex = -1;
+        btn.classList.remove('active');
+      });
       btn.addEventListener('click', (event) => {
         if (event.target.closest('.mss-remove')) return;
         event.preventDefault();
@@ -1296,6 +1463,8 @@
     }
 
     if (event.key === 'Enter') {
+      // A hovered row sets activeIndex. Enter in the menu bar must search the typed text.
+      if (input.classList.contains('mystremio-dock-search')) return;
       if (open && items.length && activeIndex >= 0 && currentMetas[activeIndex]) {
         event.preventDefault();
         event.stopPropagation();
@@ -1332,6 +1501,9 @@
       showRecentsIfEmpty(input);
     });
     input.addEventListener('input', () => {
+      if (document.documentElement.classList.contains('mystremio-search-has-query')) {
+        document.documentElement.style.setProperty('--mystremio-search-width', searchBarWidth(input.value));
+      }
       if (suppressUntilUserInput) {
         hide();
         return;
@@ -1359,7 +1531,12 @@
     });
     input.addEventListener('blur', () => {
       setTimeout(() => {
-        if (!document.getElementById(ROOT_ID)?.contains(document.activeElement)) hide();
+        if (document.getElementById(ROOT_ID)?.contains(document.activeElement)) return;
+        hide();
+        if (input.classList.contains('mystremio-dock-search')) {
+          document.documentElement.classList.remove('mystremio-search-typing');
+          if (!isSearchRoute()) clearQueryBarWidth();
+        }
       }, 160);
     });
     input.addEventListener('focus', () => {
@@ -1373,10 +1550,58 @@
     });
   }
 
+  let dockQuery = '';
+
+  /** Keep the current page: the stock bar navigates to /search on click, before it even has an input. */
+  function dockSearchBar(el) {
+    if (!document.documentElement.classList.contains('mystremio-search-docked')) return null;
+    if (isSearchRoute()) return null;
+    if (!(el instanceof Element)) return null;
+    const bar = el.closest('.search-bar-container-asfq1');
+    if (!bar || isAddonSearchContext(bar)) return null;
+    return bar;
+  }
+
+  function armDockSearch(bar) {
+    ensureStyles();
+    document.documentElement.classList.add('mystremio-search-typing');
+    let input = bar.querySelector('input.mystremio-dock-search');
+    if (input) return input;
+    input = document.createElement('input');
+    input.className = 'mystremio-dock-search';
+    input.type = 'text';
+    input.placeholder = 'Search or paste link';
+    input.setAttribute('aria-label', 'Search');
+    input.value = dockQuery;
+    document.documentElement.style.setProperty('--mystremio-search-width', searchBarWidth(dockQuery));
+    input.addEventListener('input', () => {
+      dockQuery = input.value;
+      document.documentElement.style.setProperty('--mystremio-search-width', searchBarWidth(dockQuery));
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      const query = input.value.trim();
+      if (!query) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      location.hash = `#/search?search=${encodeURIComponent(query)}`;
+    });
+    bar.insertBefore(input, bar.querySelector('[class*="submit-button"]'));
+    bindInput(input);
+    return input;
+  }
+
   function scan() {
     document.querySelectorAll(SEARCH_INPUT_SEL).forEach((el) => {
       if (el instanceof HTMLInputElement && !isAddonSearchContext(el)) bindInput(el);
     });
+    if (document.documentElement.classList.contains('mystremio-search-typing') && !isSearchRoute()) {
+      const bar = document.querySelector('.search-bar-container-asfq1');
+      if (bar && !bar.querySelector('input.mystremio-dock-search')) {
+        const input = armDockSearch(bar);
+        if (document.activeElement !== input) input.focus();
+      }
+    }
     if (suppressUntilUserInput) {
       if (isSearchRoute()) keepSearchClosed();
       startCollapseLoop();
@@ -1408,6 +1633,30 @@
   let lastRouteHash = location.hash || '';
 
   function onSearchRouteTransition(prev, next) {
+    rememberSearchOrigin(prev, next);
+    if (
+      isSearchRoute(prev) &&
+      searchQueryFromHash(prev) &&
+      isSearchRoute(next) &&
+      !searchQueryFromHash(next)
+    ) {
+      resetSearchChrome();
+      location.replace(originHash());
+      return;
+    }
+    document.documentElement.classList.remove('mystremio-search-typing');
+    dockQuery = '';
+    const query = isSearchRoute(next) ? searchQueryFromHash(next) : '';
+    if (query) {
+      applyQueryBarWidth(query);
+      nativeSearchBars().forEach((bar) => {
+        if (bar.closest('[class*="addons"]')) return;
+        bar.removeAttribute('data-mystremio-search-collapsed');
+        releaseCollapsedBarInlineStyles(bar);
+      });
+    } else {
+      clearQueryBarWidth();
+    }
     if (isInstalledAddonsRoute(next)) {
       hide();
       return;
@@ -1458,11 +1707,54 @@
     true
   );
 
+  function resetSearchChrome() {
+    dockQuery = '';
+    const root = document.documentElement;
+    root.classList.remove('mystremio-search-typing', 'mystremio-search-has-query');
+    root.style.removeProperty('--mystremio-search-width');
+    document.querySelectorAll('input.mystremio-dock-search').forEach((el) => el.remove());
+    document.querySelectorAll('.search-bar-container-asfq1 input, .search-bar-h60ja input').forEach((input) => {
+      if (!(input instanceof HTMLInputElement) || isAddonSearchContext(input)) return;
+      // React drops a programmatic clear unless its value tracker moves first.
+      const tracker = input._valueTracker;
+      if (tracker) tracker.setValue('x');
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.blur();
+    });
+    hide();
+  }
+
+  function closeSearchResults(event) {
+    if (!event.isTrusted) return false;
+    if (!isSearchRoute() || !searchQueryFromHash()) return false;
+    if (!isSearchCloseButton(event.target)) return false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    resetSearchChrome();
+    // shortcut: replaces only this history entry, so earlier query edits can remain under Back. Walk the search session if that shows up.
+    location.replace(originHash());
+    return true;
+  }
+
+  document.addEventListener('click', (event) => closeSearchResults(event), true);
+
   document.addEventListener(
     'pointerdown',
     (event) => {
       if (!event.isTrusted) return;
+      if (isSearchRoute() && searchQueryFromHash() && isSearchCloseButton(event.target)) return;
       if (!(isSearchCloseButton(event.target) || isSearchInput(event.target) || isSearchBarTarget(event.target))) {
+        return;
+      }
+      const dock = dockSearchBar(event.target);
+      if (dock) {
+        event.stopPropagation();
+        if (!(event.target instanceof HTMLInputElement)) event.preventDefault();
+        if (suppressUntilUserInput) allowSuggestionsFromUser();
+        const input = armDockSearch(dock);
+        if (document.activeElement !== input) input.focus();
+        showRecentsIfEmpty(input);
         return;
       }
       if (suppressUntilUserInput) allowSuggestionsFromUser();
@@ -1476,6 +1768,15 @@
       if (input instanceof HTMLInputElement && !isAddonSearchContext(input)) {
         showRecentsIfEmpty(input);
       }
+    },
+    true
+  );
+
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (!dockSearchBar(event.target)) return;
+      event.stopPropagation();
     },
     true
   );
@@ -1495,6 +1796,7 @@
 
   const observer = new MutationObserver(() => scan());
   function start() {
+    ensureStyles();
     if (!document.body) {
       document.addEventListener('DOMContentLoaded', start, { once: true });
       return;

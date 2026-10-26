@@ -6,11 +6,10 @@
  * @author Fxy
  */
 
-@import url("https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap");
-
 * {
-    /* TwemojiFlags must stay in the stack so regional-indicator emoji render as flags */
-    font-family: "Inter", "TwemojiFlags", sans-serif !important;
+    /* TwemojiFlags must stay so flag emoji render. PlusJakartaSans is already in the web UI.
+       Do not @import a webfont: that request blocks the rest of this theme. */
+    font-family: "PlusJakartaSans", "TwemojiFlags", sans-serif !important;
 }
 
 /* change the accent color from purple to white; neutralize native purple glow */
@@ -336,17 +335,18 @@ html {
     height: 0 !important;
 }
 
-/* Search suggestions portal — same glass as context menus, not the opaque charcoal fill. */
+/* Search suggestions — same glass as the menu pills. */
 #mystremio-search-suggestions {
-    background: rgba(30, 30, 30, 0.92) !important;
-    border: 1px solid rgba(255, 255, 255, 0.12) !important;
-    border-radius: var(--border-radius, 12px) !important;
+    background: rgba(70, 70, 70, 0.55) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 16px !important;
     box-shadow:
-        0 8px 32px rgba(0, 0, 0, 0.5),
-        0 4px 16px rgba(0, 0, 0, 0.3),
-        inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
-    backdrop-filter: var(--backdrop-filter-menu) !important;
-    -webkit-backdrop-filter: var(--backdrop-filter-menu) !important;
+        0 10px 36px rgba(0, 0, 0, 0.28),
+        0 2px 12px rgba(0, 0, 0, 0.12),
+        inset 0 1px 0 rgba(255, 255, 255, 0.15),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.1) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
 }
 #mystremio-search-suggestions .mss-item:hover,
 #mystremio-search-suggestions .mss-item:focus,
@@ -380,6 +380,14 @@ html {
 
     /* Smooth animation */
     transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* Attached to the right of the persistent menu pills (vars set by custom_liquid_glass_nav.js). */
+html.mystremio-search-docked .search-bar-container-asfq1 {
+    top: var(--mystremio-menu-mid);
+    bottom: auto;
+    left: calc(var(--mystremio-menu-right) + 1rem);
+    transform: translateY(-50%);
 }
 
 /* Expanded state */
@@ -619,7 +627,7 @@ html.mystremio-persistent-nav #app nav[class*="horizontal-nav-bar"] {
     top: 0 !important;
     left: 0 !important;
     right: 0 !important;
-    z-index: 121 !important;
+    z-index: 300 !important;
 }
 
 html.mystremio-persistent-nav #app [class*="vertical-nav-bar"] {
@@ -735,18 +743,10 @@ html.mystremio-persistent-nav #app [class*="vertical-nav-bar"] {
     transition: padding 0.2s ease-out !important;
 }
 
-/* Board catalog posters — MyStremio size since ≤2.3.6 (not search). */
-[class*="board-container"]
-    .meta-row-container-xtlB1
-    .meta-items-container-qcuUA
-    .meta-item-QFHCh.poster-shape-poster-LKBza {
-    flex: calc(1 / var(--poster-shape-ratio)) 0 250px !important;
-}
-
-/* Search: Board size (250px) but fixed — no grow so sparse rows match dense ones */
-[class*="search-container"]
-    [class*="meta-items-container"]
-    > [class*="meta-item"] {
+/* Same card width on Board and Search so a short row does not stretch.
+   Height stays the addon's shape (poster, square, landscape). Continue Watching keeps its own size. */
+#app [class*="board-container"] [class*="meta-row-container"]:not([class*="continue-watching"]) [class*="meta-items-container"] > [class*="meta-item"],
+#app [class*="search-container"] [class*="meta-items-container"] > [class*="meta-item"] {
     flex: 0 0 250px !important;
     width: 250px !important;
     min-width: 250px !important;
@@ -754,32 +754,27 @@ html.mystremio-persistent-nav #app [class*="vertical-nav-bar"] {
     box-sizing: border-box !important;
 }
 
-/* Portrait for all shapes; kill placeholder padding-bottom double-height */
-[class*="search-container"]
-    [class*="meta-items-container"]
-    > [class*="meta-item"]
-    [class*="poster-container"] {
-    padding-top: calc(100% * var(--poster-shape-ratio)) !important;
+#app [class*="board-container"] [class*="meta-row-container"]:not([class*="continue-watching"]) [class*="poster-container"],
+#app [class*="search-container"] [class*="meta-items-container"] > [class*="meta-item"] [class*="poster-container"] {
     padding-bottom: 0 !important;
     width: 100% !important;
     height: 0 !important;
     overflow: hidden !important;
-    box-sizing: border-box !important;
+    box-sizing: content-box !important;
 }
 
-[class*="search-container"]
-    [class*="meta-items-container"]
-    > [class*="meta-item"]
-    [class*="poster-image-layer"],
-[class*="search-container"]
-    [class*="meta-items-container"]
-    > [class*="meta-item"]
-    img[class*="poster-image"] {
+#app [class*="board-container"] [class*="meta-row-container"]:not([class*="continue-watching"]) [class*="poster-image-layer"],
+#app [class*="board-container"] [class*="meta-row-container"]:not([class*="continue-watching"]) img[class*="poster-image"],
+#app [class*="search-container"] [class*="meta-items-container"] > [class*="meta-item"] [class*="poster-image-layer"],
+#app [class*="search-container"] [class*="meta-items-container"] > [class*="meta-item"] img[class*="poster-image"] {
     position: absolute !important;
     inset: 0 !important;
     width: 100% !important;
     height: 100% !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
     object-fit: cover !important;
+    object-position: center center !important;
 }
 
 /* account dropdown */
@@ -817,6 +812,7 @@ html.mystremio-persistent-nav #app [class*="vertical-nav-bar"] {
 #app nav[class*="horizontal-nav-bar"] [class*="nav-menu-container"],
 .nav-menu-container-Pl25j,
 [class*="nav-menu-container"] {
+    z-index: 300 !important;
     background: rgba(30, 30, 30, 0.94) !important;
     box-shadow:
         0 8px 32px rgba(0, 0, 0, 0.5),
@@ -1209,12 +1205,15 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
 
     color: white;
 
-    font-family: "Inter", sans-serif !important;
+    font-family: "PlusJakartaSans", "TwemojiFlags", sans-serif !important;
 }
 
 .hero-overlay-image {
     width: 90%;
     max-width: 420px;
+    max-height: 25vh;
+    object-fit: contain;
+    object-position: left bottom;
     margin-bottom: 30px;
 }
 
@@ -1784,15 +1783,23 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
     box-shadow: none !important;
 }
 
-/* Meta hover panel – liquid glass (z-index set in plugin; keep under nav @ 121) */
+/* Meta hover panel – liquid glass (z-index set in plugin; keep under nav @ 121).
+   Filter stays on ::before so the hover play circle is not clipped. */
 .meta-hover-panel {
-    background: rgba(30, 30, 30, 0.92) !important;
-    backdrop-filter: var(--backdrop-filter) !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border: 1px solid rgba(255, 255, 255, 0.12) !important;
     box-shadow:
         0 16px 48px rgba(0, 0, 0, 0.55),
         0 0 0 1px rgba(255, 255, 255, 0.08),
         inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+}
+
+.meta-hover-panel::before {
+    background: rgba(30, 30, 30, 0.92) !important;
+    backdrop-filter: var(--backdrop-filter) !important;
+    -webkit-backdrop-filter: var(--backdrop-filter) !important;
 }
 
 /* Detail slogan: under logo only — do NOT move logo; push following content down */
@@ -1892,10 +1899,9 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
 
 .hero-indicators,
 #app [class*="board-content"] [class*="hero-indicators"] {
-    position: absolute;
-    bottom: 10px;
-    left: 50%;
-    transform: translateX(-50%);
+    position: relative;
+    align-self: center;
+    margin: 0 0 0.5rem;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1907,29 +1913,104 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
 }
 
 .hero-indicator,
-#app [class*="board-content"] [class*="hero-indicators"] > * {
+#app [class*="board-content"] [class*="hero-indicators"] > *:not(.mystremio-cw-toggle) {
+    position: relative;
+    overflow: hidden;
+    padding: 0;
     width: 10px;
     height: 10px;
     flex: none;
-    border-radius: 50%;
+    border-radius: 999px;
     background: rgba(255, 255, 255, 0.4);
     cursor: pointer;
-    transition: width 0.2s ease, height 0.2s ease, background 0.2s ease;
+    transition: width 0.35s ease, height 0.2s ease, background 0.2s ease;
     border: 1px solid rgba(255, 255, 255, 0.2);
     transform: none;
 }
 
 .hero-indicator:hover,
-#app [class*="board-content"] [class*="hero-indicators"] > *:hover {
+#app [class*="board-content"] [class*="hero-indicators"] > *:not(.mystremio-cw-toggle):hover {
     background: rgba(255, 255, 255, 0.6);
-    width: 14px;
-    height: 14px;
-    transform: none;
+    /* scale does not change the row height, so the title beside the dots stays put. */
+    transform: scale(1.4);
+}
+
+.hero-indicator.active:hover,
+#app [class*="board-content"] [class*="hero-indicators"] > *.active:hover {
+    /* 1.4 on the 40px timer fills the 8px gap and touches the neighbors. */
+    transform: scale(1.15);
 }
 
 .hero-indicator.active,
 #app [class*="board-content"] [class*="hero-indicators"] > *.active {
+    width: 40px;
+    height: 10px;
+    background: rgba(255, 255, 255, 0.25);
+}
+
+/* Fill length = hero rotation (8s) minus the 350ms crossfade before the next title. */
+.hero-indicator.active::after,
+#app [class*="board-content"] [class*="hero-indicators"] > *.active::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
     background: rgba(255, 255, 255, 0.9);
+    transform: translateX(-100%);
+    will-change: transform;
+    /* transform runs on the compositor; animating width stuttered whenever the main thread was busy. */
+    animation: mystremio-hero-indicator-fill 7.65s linear forwards;
+}
+
+@keyframes mystremio-hero-indicator-fill {
+    to {
+        transform: translateX(0);
+    }
+}
+
+.mystremio-cw-toggle {
+    width: 18px;
+    height: 14px;
+    flex: none;
+    margin-right: 2px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: rgba(255, 255, 255, 0.92);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transform: rotate(180deg);
+    transition: opacity 0.2s ease, transform 0.35s ease;
+}
+
+.mystremio-cw-toggle:hover {
+    opacity: 0.65;
+}
+
+.mystremio-cw-toggle span {
+    width: 11px;
+    height: 11px;
+    border-top: 2px solid currentColor;
+    border-left: 2px solid currentColor;
+    transform: translateY(2px) rotate(45deg);
+}
+
+.mystremio-cw-toggle.is-collapsed {
+    transform: none;
+}
+
+/* Hidden CW keeps its measured height so the hero overlap stays put, but the posters are gone. */
+#app [class*="board-content"].mystremio-cw-collapsed [class*="continue-watching-row"] {
+    height: var(--mystremio-hero-cw-h, 0px) !important;
+    min-height: var(--mystremio-hero-cw-h, 0px) !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+}
+
+#app [class*="board-content"].mystremio-cw-collapsed [class*="continue-watching-row"] > * {
+    display: none !important;
 }
 
 #heroImage,
@@ -1960,18 +2041,7 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
 }
 
 #heroLoadingScreen {
-    position: fixed !important;
-    top: 0 !important;
-    left: 0 !important;
-    width: 100vw !important;
-    height: 100vh !important;
-    z-index: 999999 !important;
-    transform: none !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
+    display: none !important;
 }
 
 .loading-backdrop {
@@ -4217,7 +4287,8 @@ body.ghost-clicking #heroLoadingScreen {
 }
 
 [class*="hero-image-"] {
-    object-position: center 18% !important;
+    object-fit: cover !important;
+    object-position: center center !important;
 }
 
 /* ========================= MYSTREMIO: UPDATER BANNER ========================= */

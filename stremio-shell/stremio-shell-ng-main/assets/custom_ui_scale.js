@@ -5,7 +5,7 @@
 
   const STORAGE_KEY = 'stremio-custom-ui-scale-percent';
   const OPTION_ROW_ID = 'mystremio-ui-scale-row';
-  const SCALE_OPTIONS = [75, 100, 125, 150, 175, 200];
+  const SCALE_OPTIONS = [75, 100, 125, 150, 175, 200, 250, 300, 400];
   const DEFAULT_PERCENT = 100;
   const MAX_INJECT_ATTEMPTS = 24;
 

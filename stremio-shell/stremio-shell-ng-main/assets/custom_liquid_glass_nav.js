@@ -12,6 +12,7 @@
   const NAV_TRANSITION_STYLE_ID = 'stremio-custom-nav-transition-style';
   const TRANSITION_HOST_ID = 'stremio-custom-nav-transition-host';
   const PERSISTENT_NAV_CLASS = 'mystremio-persistent-nav';
+  const SEARCH_DOCKED_CLASS = 'mystremio-search-docked';
 
   function ensureTransitionStyles() {
     let style = document.getElementById(NAV_TRANSITION_STYLE_ID);
@@ -25,12 +26,14 @@
         position: fixed;
         top: 0;
         left: 91px;
-        z-index: 122;
+        z-index: 320;
         pointer-events: auto;
         height: var(--horizontal-nav-bar-size, 4.5rem);
         display: flex;
         align-items: center;
         flex-wrap: nowrap;
+        /* stremio-web resets * to overflow:hidden, which cut the pill shadows into a hard-edged box. */
+        overflow: visible;
       }
 
       #${TRANSITION_HOST_ID}[hidden] {
@@ -111,7 +114,7 @@
         top: 0 !important;
         left: 0 !important;
         right: 0 !important;
-        z-index: 121 !important;
+        z-index: 300 !important;
       }
 
       html.${PERSISTENT_NAV_CLASS} #app [class*="vertical-nav-bar"] {
@@ -207,6 +210,7 @@
       host = document.createElement('div');
       host.id = TRANSITION_HOST_ID;
       document.body.appendChild(host);
+      new ResizeObserver(dockSearch).observe(host);
     }
     return host;
   }
@@ -214,7 +218,22 @@
   function hidePersistentHost() {
     const host = document.getElementById(TRANSITION_HOST_ID);
     if (host) host.hidden = true;
-    document.documentElement.classList.remove(PERSISTENT_NAV_CLASS);
+    document.documentElement.classList.remove(PERSISTENT_NAV_CLASS, SEARCH_DOCKED_CLASS);
+  }
+
+  /** Theme pins the nav search right after the last menu pill via these vars. */
+  function dockSearch() {
+    const host = document.getElementById(TRANSITION_HOST_ID);
+    const last = host && !host.hidden ? host.firstElementChild?.lastElementChild : null;
+    const root = document.documentElement;
+    if (!last) {
+      root.classList.remove(SEARCH_DOCKED_CLASS);
+      return;
+    }
+    const rect = last.getBoundingClientRect();
+    root.style.setProperty('--mystremio-menu-right', `${rect.right}px`);
+    root.style.setProperty('--mystremio-menu-mid', `${rect.top + rect.height / 2}px`);
+    root.classList.add(SEARCH_DOCKED_CLASS);
   }
 
   function showPersistentHost() {
@@ -309,6 +328,7 @@
 
   function fixAllNavbars() {
     syncPersistentTabs();
+    dockSearch();
     ensureNavClickable();
   }
 

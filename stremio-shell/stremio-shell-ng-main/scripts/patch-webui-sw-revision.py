@@ -85,6 +85,16 @@ def patch_service_worker(service_worker: Path, main_js: Path) -> None:
         "worker.js",
     )
 
+    css = service_worker.parent / webui_hash / "styles" / "main.css"
+    if not css.is_file():
+        raise RuntimeError(f"Missing css at {css}")
+    text = _patch_entry(
+        text,
+        f"{webui_hash}/styles/main.css",
+        md5_hex(css),
+        "main.css",
+    )
+
     service_worker.write_text(text, encoding="utf-8")
 
 

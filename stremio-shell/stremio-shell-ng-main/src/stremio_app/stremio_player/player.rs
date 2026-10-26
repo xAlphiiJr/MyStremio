@@ -47,8 +47,7 @@ impl LastSubtitleStyles {
     }
 }
 
-static LAST_SUBTITLE_STYLES: Mutex<LastSubtitleStyles> =
-    Mutex::new(LastSubtitleStyles::new());
+static LAST_SUBTITLE_STYLES: Mutex<LastSubtitleStyles> = Mutex::new(LastSubtitleStyles::new());
 
 struct ObserveProperty {
     name: String,

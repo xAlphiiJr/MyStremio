@@ -43,6 +43,11 @@ struct Opt {
         help = "Secret key for communication with the server. By default it is randomly generrated on startup"
     )]
     server_ipc_key: String,
+    /// Child process: suspend after the parent exits. Not a user-facing flag.
+    #[clap(long, hide = true)]
+    sleep_now: bool,
+    #[clap(long, hide = true)]
+    sleep_parent: Option<u32>,
 }
 
 fn normalize_launch_command(raw: &str) -> String {
@@ -63,6 +68,12 @@ fn normalize_launch_command(raw: &str) -> String {
 }
 
 fn main() {
+    let opt = Opt::parse();
+    if opt.sleep_now {
+        stremio_app::power_actions::sleep_after_parent(opt.sleep_parent.unwrap_or(0));
+        return;
+    }
+
     // Per-monitor DPI v2 is declared in the application manifest (build.rs).
     // Do not call the deprecated System-DPI helper here; it would override PMv2.
     nwg::enable_visual_styles();
@@ -71,8 +82,6 @@ fn main() {
     // API-only DefaultBackgroundColor can still white-flash; the env var applies first.
     // FF141414 = opaque rgb(20,20,20) matching liquid-glass / splash background.
     std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "FF141414");
-
-    let opt = Opt::parse();
 
     std::env::set_var(
         SERVER_IPC_KEY,
@@ -102,7 +111,9 @@ fn main() {
         if forwarded {
             exit(0);
         }
-        eprintln!("Failed to forward command to existing MyStremio instance; launching new instance");
+        eprintln!(
+            "Failed to forward command to existing MyStremio instance; launching new instance"
+        );
     }
     // END IPC
 

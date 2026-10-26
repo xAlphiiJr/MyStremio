@@ -56,15 +56,90 @@
     return '';
   }
 
+  /**
+   * Discord accepts an https URL as the large image. Asset names and http
+   * links fall back to the app icon.
+   * @param {unknown} value
+   * @returns {string}
+   */
+  function httpsImage(value) {
+    if (typeof value !== 'string') return '';
+    const url = value.trim();
+    if (!url.startsWith('https://') || url.length > 256 || /\s/.test(url)) return '';
+    return url;
+  }
+
+  /**
+   * Portrait poster on Metahub. Same host the rest of MyStremio already uses.
+   * @param {unknown} value
+   * @returns {string}
+   */
+  function metahubPoster(value) {
+    const match = String(value || '').match(/tt\d{7,8}/i);
+    if (!match) return '';
+    return `https://images.metahub.space/poster/medium/${match[0]}/img`;
+  }
+
+  /**
+   * Stremio wraps meta in `{ type, content }` until the fields are on the object.
+   * @param {unknown} node
+   * @returns {object|null}
+   */
+  function readyContent(node) {
+    let current = node;
+    for (let i = 0; i < 4 && current && typeof current === 'object'; i += 1) {
+      if (
+        typeof current.poster === 'string' ||
+        typeof current.name === 'string' ||
+        typeof current.title === 'string'
+      ) {
+        return current;
+      }
+      if (current.content && typeof current.content === 'object' && !Array.isArray(current.content)) {
+        current = current.content;
+        continue;
+      }
+      break;
+    }
+    return null;
+  }
+
+  /**
+   * @param {object} player
+   * @param {object|null} meta
+   * @param {string} route
+   * @returns {string}
+   */
+  function posterFor(player, meta, route) {
+    const library = readyContent(player?.libraryItem) || readyContent(player?.library_item);
+    const selectedId =
+      player?.selected?.metaRequest?.path?.id ||
+      player?.selected?.meta_request?.path?.id ||
+      '';
+    return (
+      httpsImage(meta?.poster) ||
+      httpsImage(library?.poster) ||
+      metahubPoster(meta?.id) ||
+      metahubPoster(selectedId) ||
+      metahubPoster(route)
+    );
+  }
+
   async function readPlayerFromCore() {
     if (!window.core?.getState) return null;
     try {
       const player = await window.core.getState('player');
       if (!player) return null;
 
-      const meta = player.meta || player.selected?.meta || player.item?.meta;
+      const meta =
+        readyContent(player.metaItem) ||
+        readyContent(player.meta_item) ||
+        player.meta ||
+        player.selected?.meta ||
+        player.item?.meta;
       const title = meta?.name || meta?.title || '';
-      if (!title) return null;
+      const poster = posterFor(player, meta, '');
+      if (!title && !poster) return null;
 
       let subtitle = '';
       const type = meta?.type;
@@ -83,7 +158,7 @@
         subtitle = String(meta.year);
       }
 
-      return { title, subtitle, type };
+      return { title, subtitle, type, poster };
     } catch (_) {
       return null;
     }
@@ -174,6 +249,7 @@
       const currentTime = readCurrentTime();
       const duration = readDuration();
       const paused = isPaused();
+      const poster = core?.poster || posterFor({}, null, route);
 
       return {
         state: 'player',
@@ -182,6 +258,7 @@
         currentTime,
         duration,
         paused: paused && showPaused,
+        poster,
         route,
       };
     }

@@ -391,6 +391,24 @@
     if (isHeroPluginRef(path)) return DYNAMIC_HERO_METADATA;
     return invoke('get-metadata', { path });
   };
+
+  api.getRegisteredSettings = async (pluginBaseName) => {
+    if (isHeroPluginRef(`${pluginBaseName}.plugin.js`)) return [];
+    return invoke('get-registered-settings', { pluginBaseName });
+  };
+
+  // Quick Play lives in Quick Settings. Drop the old Dynamic Hero dropdowns.
+  try {
+    const cached = JSON.parse(localStorage.getItem('mystremioSettingsCache') || 'null');
+    if (Array.isArray(cached)) {
+      for (const plugin of cached) {
+        if (plugin && plugin.baseName === 'hero-div') plugin.schema = [];
+      }
+      localStorage.setItem('mystremioSettingsCache', JSON.stringify(cached));
+    }
+  } catch (_) {}
+  window.__mystremioSettingsFull = 0;
+  api.registerSettings('hero-div', []).catch(() => {});
   let autoskipCache = { intro: false, credits: false, recap: false, preview: false };
   let autoskipReady = false;
   let autoskipReadyPromise = null;
@@ -1123,21 +1141,27 @@
       ensurePlayerTransparencyFix();
       return true;
     }
-    document.getElementById('stremio-custom-active-theme')?.remove();
-    appliedThemeName = targetTheme;
     const css = await invoke('read-theme', { fileName: targetTheme }, 4000).catch((error) => {
       console.warn('[StremioCustom] Theme read failed:', error);
       return null;
     });
+    const existing = document.getElementById('stremio-custom-active-theme');
     if (!css) {
+      if (existing) {
+        appliedThemeName = targetTheme;
+        ensurePlayerGlassStyles();
+        ensurePlayerTransparencyFix();
+        return true;
+      }
       console.warn('[StremioCustom] Theme not found:', targetTheme);
       return false;
     }
     const playerCss = window.__stremioCustomPlayerGlassCss || '';
-    const style = document.createElement('style');
+    const style = existing || document.createElement('style');
     style.id = 'stremio-custom-active-theme';
     style.textContent = css + (playerCss ? `\n/* Stremio Custom player */\n${playerCss}` : '');
-    (document.head || document.documentElement).appendChild(style);
+    if (!existing) (document.head || document.documentElement).appendChild(style);
+    appliedThemeName = targetTheme;
     await syncLiquidGlassNavigation(targetTheme);
     ensurePlayerGlassStyles();
     ensurePlayerTransparencyFix();
@@ -1636,16 +1660,6 @@
     window.__stremioCustomUiReadyNotified = true;
     window.__stremioCustomBootstrapReady = true;
     document.dispatchEvent(new CustomEvent('stremio-custom-bootstrap-ready'));
-    try {
-      window.__stremioCustomDismissStartupOverlays?.();
-    } catch (_) {
-      /* ignore */
-    }
-    try {
-      window.__stremioCustomHideAppLoadingMask?.();
-    } catch (_) {
-      /* ignore */
-    }
     notifyShellUiReady();
     window.__stremioCustomScheduleShellAppReadyFallback?.();
     nudgeBoardCatalogLoadRange(reason || 'ui-ready');
@@ -2300,11 +2314,6 @@
       console.error('[StremioCustom] Bootstrap failed:', error);
       bootstrapStarted = false;
       markUiReady('bootstrap-catch');
-      try {
-        window.__stremioCustomRemoveBootSeal?.();
-      } catch (_) {
-        /* ignore */
-      }
     }
   }
 

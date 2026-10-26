@@ -608,17 +608,11 @@
   }
 
   function placeLeftBarButton(button, insertPoint) {
-    if (!button || !insertPoint) return false;
-    if (isButtonCorrectlyPlaced(button)) return true;
-    if (insertPoint.before) {
-      insertPoint.parent.insertBefore(button, insertPoint.before);
-      return true;
+    if (button && insertPoint?.parent && !insertPoint.parent.contains(button)) {
+      insertPoint.parent.appendChild(button);
     }
-    if (insertPoint.after) {
-      insertPoint.parent.insertBefore(button, insertPoint.after.nextSibling);
-      return true;
-    }
-    return false;
+    window.__stremioCustomLayoutPlayerButtons?.();
+    return true;
   }
 
   function getButtonTemplate() {

@@ -3977,9 +3977,9 @@ kbd {
   margin-right: -50vw;
   width: 100vw;
   aspect-ratio: auto;
-  min-height: 0;
-  height: calc(100vh - var(--mystremio-hero-reserved-below, 22.5rem));
-  max-height: calc(100vh - var(--mystremio-hero-reserved-below, 22.5rem));
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - var(--mystremio-hero-reserved-below, 22.5rem));
   margin-top: 0;
   margin-bottom: 0;
   box-sizing: border-box;
@@ -3987,8 +3987,22 @@ kbd {
   background-color: #141414;
   overflow: hidden;
 }
+.hero-row-MReGl:has(+ [class*="continue-watching-row"]) .hero-slot-szdy9 {
+  min-height: 100vh;
+}
 .hero-row-MReGl + [class*="board-row"] {
   margin-top: 0.5rem;
+}
+/* Overlap stays the measured row height so the row cannot drop below the hero. Reveal only fades it. */
+#app [class*="board-container"] [class*="board-content"] .hero-row-MReGl + [class*="continue-watching-row"] {
+  position: relative;
+  z-index: 6;
+  margin-top: calc(-1 * var(--mystremio-hero-cw-h, 0px)) !important;
+  opacity: calc(1 - var(--mystremio-cw-reveal, 0)) !important;
+  transition: opacity 0.35s ease;
+}
+#app [class*="board-container"] [class*="board-content"].mystremio-cw-collapsed .hero-row-MReGl + [class*="continue-watching-row"] {
+  pointer-events: none !important;
 }
 .hero-slot-loader-defhU {
   position: absolute;
@@ -4045,13 +4059,17 @@ kbd {
   transition: opacity 0.35s ease-in-out;
 }
 .hero-container-fUAsb {
-  position: absolute !important;
-  inset: 0 !important;
-  display: block !important;
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column;
+  justify-content: flex-end;
+  flex: 1 0 auto;
   width: 100% !important;
-  height: 100% !important;
-  min-height: unset !important;
+  height: auto !important;
+  min-height: 0 !important;
   max-height: none !important;
+  padding-bottom: calc(var(--mystremio-hero-cw-h, 0px) * (1 - var(--mystremio-cw-reveal, 0)));
+  transition: padding-bottom 0.35s ease;
   overflow: hidden;
   z-index: 2;
   pointer-events: none;
@@ -4072,15 +4090,12 @@ kbd {
   opacity: 0 !important;
 }
 .hero-overlay-eeXbe {
-  position: absolute !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
+  position: relative !important;
   width: 100% !important;
   z-index: 3;
   padding-left: 0 !important;
   padding-right: 0 !important;
-  padding-bottom: 44px !important;
+  padding-bottom: 0 !important;
   opacity: 1 !important;
   pointer-events: none;
   transition: opacity 0.35s ease-in-out;
@@ -4105,10 +4120,78 @@ kbd {
 .rating-text-NjSjq {
   white-space: nowrap;
 }
+.mystremio-hero-watch-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  background: #141414;
+  pointer-events: auto;
+}
+.mystremio-hero-watch-loader > * {
+  position: relative;
+}
+.mystremio-hero-watch-loader > .mystremio-hero-watch-loader-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.35;
+  filter: blur(24px);
+  transform: scale(1.1);
+}
+.mystremio-hero-watch-loader-logo {
+  max-width: min(420px, 70vw);
+  max-height: 30vh;
+  object-fit: contain;
+}
+.mystremio-hero-watch-loader-label {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.95rem;
+}
+.mystremio-hero-watch-loader-meta {
+  margin: -1rem 0 0;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 0.8rem;
+}
+.mystremio-hero-watch-loader-file {
+  margin: -0.75rem 0 0;
+  max-width: min(720px, 80vw);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.mystremio-hero-watch-loader-reasons {
+  margin: -0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.85rem;
+  text-align: center;
+}
+.mystremio-hero-watch-loader-cancel {
+  padding: 8px 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(70, 70, 70, 0.35);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+.mystremio-hero-watch-loader-cancel:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
 @media only screen and (max-width: 900px) {
   .hero-slot-szdy9 {
-    height: calc(100vh - var(--mystremio-hero-reserved-below, 20rem));
-    max-height: calc(100vh - var(--mystremio-hero-reserved-below, 20rem));
+    min-height: calc(100vh - var(--mystremio-hero-reserved-below, 20rem));
   }
 }
 

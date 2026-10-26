@@ -13,9 +13,8 @@ use winapi::um::winuser::{
     RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW, SM_CXSCREEN, SM_CYSCREEN,
     SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
     SW_HIDE, SW_MINIMIZE, SW_RESTORE, SW_SHOWMAXIMIZED, SW_SHOWNORMAL, WINDOWPLACEMENT,
-    WM_SETREDRAW,
-    WS_CAPTION, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE, WS_EX_TOPMOST,
-    WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_OVERLAPPEDWINDOW, WS_THICKFRAME, WS_VISIBLE,
+    WM_SETREDRAW, WS_CAPTION, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE,
+    WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_OVERLAPPEDWINDOW, WS_THICKFRAME, WS_VISIBLE,
 };
 
 /// Same chrome bits stock stremio-shell-ng clears for fullscreen (proven on Windows).
@@ -23,10 +22,8 @@ const STOCK_CHROME_STYLE_BITS: i32 = (WS_CAPTION | WS_THICKFRAME) as i32;
 /// Pixel slack when comparing window outer rect to monitor bounds.
 const MONITOR_COVER_TOLERANCE_PX: i32 = 4;
 /// Extended styles that draw a visible window edge around the client area.
-const CHROME_EXSTYLE_BITS: i32 = (WS_EX_DLGMODALFRAME
-    | WS_EX_WINDOWEDGE
-    | WS_EX_CLIENTEDGE
-    | WS_EX_STATICEDGE) as i32;
+const CHROME_EXSTYLE_BITS: i32 =
+    (WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE) as i32;
 
 const DWMWA_WINDOW_CORNER_PREFERENCE: DWORD = 33;
 const DWMWA_BORDER_COLOR: DWORD = 34;
@@ -290,11 +287,7 @@ impl WindowStyle {
         } else {
             STREMIO_CAPTION_COLOR
         };
-        let corner = if hide_border {
-            DWMWCP_DONOTROUND
-        } else {
-            0u32
-        };
+        let corner = if hide_border { DWMWCP_DONOTROUND } else { 0u32 };
         unsafe {
             DwmSetWindowAttribute(
                 hwnd,
@@ -749,7 +742,11 @@ impl WindowStyle {
                         0,
                         0,
                         0,
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
+                        SWP_NOMOVE
+                            | SWP_NOSIZE
+                            | SWP_NOZORDER
+                            | SWP_NOOWNERZORDER
+                            | SWP_FRAMECHANGED,
                     );
                     return;
                 };
@@ -791,7 +788,9 @@ impl WindowStyle {
                 }
             }
         } else {
-            if self.mode != WindowMode::Fullscreen && Self::hwnd_has_caption(hwnd) && !self.borderless
+            if self.mode != WindowMode::Fullscreen
+                && Self::hwnd_has_caption(hwnd)
+                && !self.borderless
             {
                 self.mode = WindowMode::Framed;
                 self.sync_mode_flags();

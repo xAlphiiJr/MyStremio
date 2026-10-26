@@ -1,6 +1,6 @@
+pub mod app;
 pub mod custom_api;
 pub mod power_actions;
-pub mod app;
 pub use app::MainWindow;
 pub mod discord_presence;
 pub mod ipc;

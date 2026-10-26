@@ -626,27 +626,8 @@
    * @param {Element} container
    */
   function placeAnime4kButton(button, container) {
-    if (!button || !container) return;
-    const menuButton = getAnime4kRightAnchor(container);
-    const cast = document.getElementById(CAST_BTN_ID);
-    const contribute = document.getElementById(CONTRIBUTE_BTN_ID);
-    const after =
-      (cast && container.contains(cast) && cast) ||
-      (contribute && container.contains(contribute) && contribute) ||
-      null;
-    if (after) {
-      if (button.previousElementSibling !== after) {
-        container.insertBefore(button, after.nextSibling);
-      }
-      return;
-    }
-    if (menuButton && container.contains(menuButton)) {
-      if (button.nextElementSibling !== menuButton) {
-        container.insertBefore(button, menuButton);
-      }
-      return;
-    }
-    if (button.parentNode !== container) container.appendChild(button);
+    if (button && container && !container.contains(button)) container.appendChild(button);
+    window.__stremioCustomLayoutPlayerButtons?.();
   }
 
   /**

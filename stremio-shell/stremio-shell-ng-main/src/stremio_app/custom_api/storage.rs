@@ -102,12 +102,9 @@ pub fn read_user_preferences_public() -> Value {
 
 fn read_user_preferences_unlocked() -> Value {
     let path = preferences_path();
-    if !path.exists() {
-        return default_preferences();
-    }
-
-    let content = match fs::read_to_string(&path) {
-        Ok(content) => content,
+    let content = match read_text_or_bak(&path) {
+        Ok(Some(content)) => content,
+        Ok(None) => return default_preferences(),
         Err(error) => {
             eprintln!("[MyStremio] cannot read preferences: {error}");
             return default_preferences();
@@ -133,20 +130,47 @@ fn backup_corrupt_preferences(content: &str) {
         .unwrap_or(0);
     let backup = preferences_path().with_file_name(format!("{PREFERENCES_FILE}.corrupt-{ts}"));
     if let Err(error) = fs::write(&backup, content) {
-        eprintln!("[MyStremio] cannot write preferences backup {}: {error}", backup.display());
+        eprintln!(
+            "[MyStremio] cannot write preferences backup {}: {error}",
+            backup.display()
+        );
     }
 }
 
+/// Windows cannot rename onto an existing file. Move the live file to `.json.bak`
+/// first so a crash never leaves the settings missing.
 fn write_text_atomic(path: &Path, content: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let tmp = path.with_extension("json.tmp");
+    let bak = path.with_extension("json.bak");
     fs::write(&tmp, content)?;
     if path.exists() {
-        fs::remove_file(path)?;
+        let _ = fs::remove_file(&bak);
+        fs::rename(path, &bak)?;
     }
-    fs::rename(&tmp, path)
+    if let Err(error) = fs::rename(&tmp, path) {
+        if !path.exists() && bak.exists() {
+            let _ = fs::rename(&bak, path);
+        }
+        return Err(error);
+    }
+    let _ = fs::remove_file(&bak);
+    Ok(())
+}
+
+fn read_text_or_bak(path: &Path) -> std::io::Result<Option<String>> {
+    if path.exists() {
+        return fs::read_to_string(path).map(Some);
+    }
+    let bak = path.with_extension("json.bak");
+    if !bak.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&bak)?;
+    let _ = fs::rename(&bak, path);
+    Ok(Some(content))
 }
 
 pub fn save_user_preferences(preferences: &Value) {
@@ -180,12 +204,9 @@ pub fn save_user_preferences(preferences: &Value) {
 }
 
 fn read_prefs_field_unlocked(field: &str) -> Option<Value> {
-    let path = preferences_path();
-    if !path.exists() {
-        return None;
-    }
-    fs::read_to_string(path)
+    read_text_or_bak(&preferences_path())
         .ok()
+        .flatten()
         .and_then(|content| serde_json::from_str::<Value>(&content).ok())
         .and_then(|value| value.get(field).cloned())
 }
@@ -329,11 +350,7 @@ pub fn load_registered_schemas() -> RegisteredSchemas {
 }
 
 fn repair_data_enrichment_config(config: Value, path: &Path) -> Value {
-    if config
-        .get("tmdbApiKey")
-        .and_then(|v| v.as_str())
-        .is_some()
-    {
+    if config.get("tmdbApiKey").and_then(|v| v.as_str()).is_some() {
         // Respect explicit user choice, including an intentionally empty key.
         return config;
     }
@@ -435,11 +452,7 @@ fn find_plugin_config_path(plugin_base_name: &str) -> Option<std::path::PathBuf>
     let expected = format!("{plugin_base_name}{PLUGIN_CONFIG_EXT}");
     let mut root_hit: Option<PathBuf> = None;
     for file in walk_files(&plugins_dir(), PLUGIN_CONFIG_EXT) {
-        if Path::new(&file)
-            .file_name()
-            .and_then(|name| name.to_str())
-            != Some(expected.as_str())
-        {
+        if Path::new(&file).file_name().and_then(|name| name.to_str()) != Some(expected.as_str()) {
             continue;
         }
         let full = plugins_dir().join(&file);
@@ -455,11 +468,7 @@ fn find_plugin_config_path(plugin_base_name: &str) -> Option<std::path::PathBuf>
 fn find_plugin_js_path(plugin_base_name: &str) -> Option<std::path::PathBuf> {
     let expected = format!("{plugin_base_name}{PLUGIN_EXT}");
     for file in walk_files(&plugins_dir(), PLUGIN_EXT) {
-        if Path::new(&file)
-            .file_name()
-            .and_then(|name| name.to_str())
-            == Some(expected.as_str())
-        {
+        if Path::new(&file).file_name().and_then(|name| name.to_str()) == Some(expected.as_str()) {
             return Some(plugins_dir().join(file));
         }
     }
@@ -508,7 +517,8 @@ fn default_autoskip_preferences() -> Value {
     json!({
         "intro": false,
         "credits": false,
-        "recap": false
+        "recap": false,
+        "preview": false
     })
 }
 
@@ -517,11 +527,18 @@ fn normalize_autoskip_preferences(value: Option<&Value>) -> Value {
         return default_autoskip_preferences();
     };
 
-    json!({
+    let mut out = json!({
         "intro": autoskip.get("intro").and_then(|v| v.as_bool()).unwrap_or(false),
         "credits": autoskip.get("credits").and_then(|v| v.as_bool()).unwrap_or(false),
-        "recap": autoskip.get("recap").and_then(|v| v.as_bool()).unwrap_or(false)
-    })
+        "recap": autoskip.get("recap").and_then(|v| v.as_bool()).unwrap_or(false),
+    });
+    // Old files have no preview key. Writing false here would beat localStorage on the next launch.
+    if let Some(preview) = autoskip.get("preview").and_then(|v| v.as_bool()) {
+        out.as_object_mut()
+            .expect("autoskip object")
+            .insert("preview".to_string(), json!(preview));
+    }
+    out
 }
 
 fn normalize_preferences(value: Value) -> Value {
@@ -552,11 +569,7 @@ fn normalize_preferences(value: Value) -> Value {
                 .filter(|s| !s.is_empty())
                 .map(|s| {
                     // Soft-disable stores transport bases (no /manifest.json).
-                    let trimmed = s
-                        .split('?')
-                        .next()
-                        .unwrap_or(s)
-                        .trim_end_matches('/');
+                    let trimmed = s.split('?').next().unwrap_or(s).trim_end_matches('/');
                     if let Some(base) = trimmed
                         .strip_suffix("/manifest.json")
                         .or_else(|| trimmed.strip_suffix("/manifest.JSON"))
@@ -675,7 +688,8 @@ fn normalize_preferences(value: Value) -> Value {
     let ui_scale_by_monitor = ui_scale_by_monitor_json(&normalize_ui_scale_by_monitor(
         value.get("uiScaleByMonitor"),
     ));
-    let ui_scale_adapted_monitors = normalize_ui_scale_adapted_monitors(value.get("uiScaleAdaptedMonitors"));
+    let ui_scale_adapted_monitors =
+        normalize_ui_scale_adapted_monitors(value.get("uiScaleAdaptedMonitors"));
     let api_keys = super::api_keys::normalize_api_keys(value.get("apiKeys"));
 
     json!({
@@ -879,8 +893,8 @@ pub fn build_early_storage_restore_script() -> String {
         .unwrap_or("");
 
     let auth_json = serde_json::to_string(auth_profile).unwrap_or_else(|_| "\"\"".to_string());
-    let restore_json =
-        serde_json::to_string(&collect_early_storage_pairs(&prefs)).unwrap_or_else(|_| "{}".to_string());
+    let restore_json = serde_json::to_string(&collect_early_storage_pairs(&prefs))
+        .unwrap_or_else(|_| "{}".to_string());
 
     format!(
         r#"(function(){{try{{
@@ -935,7 +949,7 @@ fn write_json_object(path: &Path, value: &Value) {
     }
 }
 
-const ALLOWED_UI_SCALE_PERCENTS: [u32; 6] = [75, 100, 125, 150, 175, 200];
+const ALLOWED_UI_SCALE_PERCENTS: [u32; 9] = [75, 100, 125, 150, 175, 200, 250, 300, 400];
 
 /// Snaps a UI scale percentage to the nearest supported 25% step.
 pub fn normalize_ui_scale_percent(value: Option<&Value>) -> u32 {
@@ -1006,7 +1020,10 @@ pub fn mark_ui_scale_user_bind(percent: u32) {
 }
 
 pub fn take_ui_scale_user_bind() -> Option<u32> {
-    UI_SCALE_USER_BIND.lock().ok().and_then(|mut pending| pending.take())
+    UI_SCALE_USER_BIND
+        .lock()
+        .ok()
+        .and_then(|mut pending| pending.take())
 }
 
 /// Resolve UI scale for the monitor hosting the window.
@@ -1043,7 +1060,10 @@ pub fn resolve_ui_scale_for_monitor(
 
     if let Some(obj) = prefs.as_object_mut() {
         obj.insert("uiScale".to_string(), json!(percent));
-        obj.insert("uiScaleByMonitor".to_string(), ui_scale_by_monitor_json(&map));
+        obj.insert(
+            "uiScaleByMonitor".to_string(),
+            ui_scale_by_monitor_json(&map),
+        );
         save_user_preferences(&prefs);
     }
 
@@ -1168,3 +1188,45 @@ pub fn migrate_root_plugin_litter() {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autoskip_keeps_preview_and_does_not_invent_it() {
+        let saved = normalize_autoskip_preferences(Some(&json!({
+            "intro": true,
+            "preview": true
+        })));
+        assert_eq!(
+            saved.get("preview").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            saved.get("intro").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+
+        let old = normalize_autoskip_preferences(Some(&json!({ "intro": true })));
+        assert!(old.get("preview").is_none());
+    }
+
+    #[test]
+    fn missing_settings_file_reads_bak() {
+        let dir = std::env::temp_dir().join(format!("mystremio-prefs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mystremio-settings.json");
+        fs::write(path.with_extension("json.bak"), "{\"ok\":true}").unwrap();
+
+        let text = read_text_or_bak(&path).unwrap().unwrap();
+        assert_eq!(text, "{\"ok\":true}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"ok\":true}");
+
+        fs::write(&path, "live").unwrap();
+        fs::write(path.with_extension("json.bak"), "stale").unwrap();
+        assert_eq!(read_text_or_bak(&path).unwrap().unwrap(), "live");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

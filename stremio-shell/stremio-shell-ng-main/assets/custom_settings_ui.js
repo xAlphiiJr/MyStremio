@@ -58,6 +58,10 @@
       #${ROOT_ID} .stremio-mystremio-plugin-toggle.is-on::after {
         transform: translateX(1.05rem);
       }
+      /* Open plugin dropdowns were clipped by the settings scroller, so options could not be clicked. */
+      #app [class*="sections-container"]:has([class*="multiselect-button"][class*="open"]) {
+        overflow: visible !important;
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -171,14 +175,76 @@
     host.dataset.pluginsBuilt = '1';
   }
 
+  let settingsAttempt = 0;
+
+  function readSavedPlugins() {
+    try {
+      const list = JSON.parse(localStorage.getItem('enabledPlugins') || '[]');
+      return Array.isArray(list) ? list : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function paintSavedPlugins(host) {
+    const h = helpers();
+    injectStyles();
+    const root = document.createElement('div');
+    root.id = ROOT_ID;
+    const grouped = {};
+    for (const fileRef of readSavedPlugins()) {
+      const category = getPluginCategory(fileRef, null);
+      if (!grouped[category]) grouped[category] = [];
+      grouped[category].push(fileRef);
+    }
+    for (const { id, label } of PLUGIN_CATEGORY_ORDER) {
+      const entries = grouped[id];
+      if (!entries?.length) continue;
+      const title = document.createElement('div');
+      title.className = 'stremio-mystremio-plugin-group-title';
+      title.textContent = label;
+      root.appendChild(title);
+      for (const fileRef of entries) {
+        const row = document.createElement('div');
+        row.className = 'stremio-mystremio-plugin-row';
+        const info = document.createElement('div');
+        const name = document.createElement('div');
+        name.className = 'stremio-mystremio-plugin-name';
+        name.textContent = String(fileRef).split('/').pop().replace(/\.plugin\.js$/i, '');
+        info.appendChild(name);
+        const enabled = h.isPluginEnabled ? h.isPluginEnabled(fileRef) : true;
+        const toggle = createToggle(enabled);
+        toggle.addEventListener('click', () => togglePlugin(fileRef, toggle));
+        row.append(info, toggle);
+        root.appendChild(row);
+      }
+    }
+    host.replaceChildren(root);
+    host.dataset.pluginsShown = '1';
+  }
+
   async function checkSettings() {
     const h = helpers();
     if (!h.isOnSettingsPage?.()) return;
 
     const host = document.getElementById(HOST_ID);
     if (!host) return;
-    if (host.dataset.pluginsBuilt === '1') return;
-    await buildPluginList(host);
+    if (host.dataset.pluginsShown !== '1') paintSavedPlugins(host);
+    if (host.dataset.pluginsBuilt === '1' || host.dataset.pluginsLoading === '1') return;
+    host.dataset.pluginsLoading = '1';
+    try {
+      await buildPluginList(host);
+      settingsAttempt = 0;
+    } catch (error) {
+      console.warn('[StremioCustom] MyStremio settings refresh failed:', error);
+      settingsAttempt += 1;
+      host.dataset.pluginsLoading = '0';
+      if (settingsAttempt <= 4) {
+        window.setTimeout(() => checkSettings(), 800 * settingsAttempt);
+      }
+      return;
+    }
+    host.dataset.pluginsLoading = '0';
   }
 
   let watcherStarted = false;

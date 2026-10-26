@@ -754,11 +754,10 @@
 
 	function placeAfterVolume(group, insertPoint) {
 
-		const { parent, after } = insertPoint;
-
-		if (group.parentNode === parent && group.previousSibling === after) return;
-
-		parent.insertBefore(group, after.nextSibling);
+		if (group && insertPoint?.parent && !insertPoint.parent.contains(group)) {
+			insertPoint.parent.appendChild(group);
+		}
+		window.__stremioCustomLayoutPlayerButtons?.();
 
 	}
 

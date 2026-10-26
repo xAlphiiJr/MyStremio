@@ -46,7 +46,7 @@ It combines UI upgrades, player improvements, plugins/themes and library tools i
 
 -Custom library groups with JSON import/export
 
--Additional power-user options such as addon/plugin toggles and Discord Rich Presence
+-Additional user tools such as addon/plugin toggles, search suggestions and Discord Rich Presence
 
 -Packaged as a ready-to-use single installer
 
@@ -72,13 +72,12 @@ MyStremio offers its own UI enhancements and combines it with already existing p
 
 #### 🏠 Board hero home view
 
-The board includes a hero section with rotating titles. The Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme) and just adapted for MyStremio.
-
+The board includes a hero section with rotating titles. The Theme is made by [Fxy6969/Stremio-Glass-Theme](https://github.com/Fxy6969/Stremio-Glass-Theme) and just adapted for MyStremio. NEW for 2.5.0: Click "Watch now" to instantly play a stream matching the quick play settings and your set language (using your set favorite languages as fallback).
 ![Board Hero Home](./images/01-board-hero.png)
 
 #### 🖱️ Hover metadata in catalogs
 
-   While browsing catalogs, hover cards show key information (ratings, plot, genres, cast) without forcing a page change.
+While browsing catalogs, hover cards show key information (ratings, plot, genres, cast) without forcing a page change. NEW for 2.5.0: Now features a play button to instantly play a file matching the preferences set in the quick settings.
 
 ![Catalog Hover Metadata](./images/02-catalog-hover.png)
 
@@ -91,7 +90,7 @@ The StreamUI plugin offers a clean and modern sidebar with folders to pick strea
 
 #### ▶️ Horizontal Navigation
 
-  A new plugin that allows to scroll through catalogues right from the board without the need to click on "See All" and switch to the discovery page. Enabling this plugin might cause some performance issues depending on hardware and amount of catalogues. 
+This plugin allows you to scroll through catalogues right from the board without the need to click on "See All" and switch to the discovery page. Enabling this plugin might cause some performance issues depending on hardware and amount of catalogues. 
 
 ---
 
@@ -102,7 +101,7 @@ MyStremio comes with a few custom settings including Favorite Languages, Plugins
 
 #### ⚡ Quick Settings
 
-At the top of the settings page you'll find the quick settings. Here you're able to hot swap between your favorite languages and enable autoskip for individual segment types. Quick Select reads your favorite languages and exposes them as one-click subtitle/audio buttons. How to define favorites is explained in the section below.
+At the top of the settings page you'll find the quick settings. Quick Select reads your favorite languages and exposes them as one-click subtitle/audio buttons. How to define favorites is explained in the section below. Next is Quick Play resolution/quality, which you can adjust to your preferences to always play the correct file when using watch now/quick play. Additionally you can enable autoskip for individual segment types.
 
 #### 🌐 Favorite subtitle and audio languages
 
@@ -128,23 +127,23 @@ MyStremio offers some quality of life changes available as plugins so you can en
 
 #### ⏱️ Skip Intro Plugin
 
-Built in plugin that allows to receive and contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone. You have to set your personal API Key in the settings in order to use the submit feature! Since 2.3.3 AniSkip has been integrated into the Skip Intro Plugin!
+Allows to receive and contribute segment timestamps to TheIntroDB and/or IntroDB while watching. Open the contribute panel from the player, mark times, pick the segment type, and submit — helps improve skip data for everyone. You have to set your personal API Key in the settings in order to use the submit feature! Since 2.3.3 AniSkip has been integrated into the Skip Intro Plugin! You can enable autoskip for different segment types in the quick settings and set a skip duration in the Skip Intro plugin settings for how fast the segment gets skipped.
 
 #### ⏩ Seek Buttons Plugin
 
-Built in plugin that adds configurable skip-back and skip-forward controls to the player bar — useful for quick rewinds or jumping ahead without scrubbing. The skip interval can be changed in the settings: MyStremio → Plugins → Player → Seek Buttons.
+This plugin adds configurable skip-back and skip-forward controls to the player bar — useful for quick rewinds or jumping ahead without scrubbing. The skip interval can be changed in the settings: MyStremio → Plugins → Player → Seek Buttons.
 
 #### 🖼️ Picture Settings Plugin
 
-Built in player plugin with Master Dim plus Contrast, Brightness, Gamma, and Saturation controls.
+This plugin adds a Master Dim slider plus Contrast, Brightness, Gamma, and Saturation controls.
 
 #### ⏳ Hover Timestamps Plugin
 
-Built in plugin that adds timestamps when hovering the seek bar in the player.
+This plugin adds timestamps when hovering the seek bar in the player.
 
 #### 👤 Cast Overlay Plugin
 
-Built in plugin that adds a cast section directly into the player. For TV shows it displays the cast of the season your watching.
+This plugin adds a cast section directly into the player. For TV shows it displays the cast of the season your currently watching.
 
 #### 🎇 Anime4K Plugin
 
@@ -152,7 +151,7 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 #### 🌙 Sleep Timer Plugin
 
-Built in Sleep Timer with the options to Shutdown, Sleep or Close. Can be set as countdown, a certain time or until the end of the video.
+Built in Sleep Timer with the options to Shutdown, Sleep or Close. Can be set as countdown, a certain time or until the end of the file. You can also pick actions simultaneously for example close and sleep together.
 
 
 ---
@@ -180,41 +179,18 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 
 ## 🛠️ Patch Notes
 
-### 2.4.5
-- **Meta Hover Panel** — Optimized hover geometry
-- **Navigation** — Snappier page changes
-- **Settings safety** — Preferences are saved atomically; a corrupt settings file is backed up instead of silently reset
-- **Intro Skip** — Added toggle that skips to video end when skipping credits to avoid previews or false credit timestamps
-- **Picture Settings** — Dim bar now utilizes shaders
-- **Sleep/inactivity** — recovery bugs fixed
+### 2.5.0
+- **Library** — Fixed bug where library export always exports 0 titles and improved the feature overall
+- **Dybamic Hero Banner** — Now features a slider displaying the time until the banner rotates. Additional you can now fullscreen the banner and hide the cataloges
+- **Quick Play** — NEW! Set your desired resolution, quality and language in the settings and start streaming with one click. For titels on the dynamic hero banner click "Watch now", for every other title enable the meta hover panel plugin in the settings and click the play button on the panel
+- **Discord Rich Presence** — Now displays the poster of the title you're currently watching instead of the MyStremio icon
+- **Search** — The search icon has moved to the top navigation bar and no longer switches page until you hit enter or click a suggestion. Search suggestions now match the theme and no longer stay highlighted when the mouse no longer hovers over them. After searching navigate to another page or click the "x" to close the search results
 
-### 2.4.4
-- **Intro Skip** — Autoskip countdown can now be customized in the Intro Skip plugin settings
-- **Sleep Timer** — New plugin to set Sleep timers
-- **Picture Settings** — Optimized dim settings and added reset Buttons to all sliders
-- **Player Control Bar** — Fixed highlighting bug
-- **Sleep / inactivity recovery** — After PC sleep, display-off, or Windows lock, EngineFS, MPV, and WebView come back without a manual reload
 
-### 2.4.3
-
-- **Data Enrichment** — Fixed bug that IMDb episode ratings wouldn't display
-- **Intro Skip** — Fixed issue with timestamp submission and increased segment loading speed
-- **Search suggestions** — Are now auto completing searches instead of opening the detail page directly + faster suggestions + search history
-- **Addon Manager** — Added the native share button to custom addon page + fixed the "configure" button
-
-### 2.4.2
-- **Data Enrichment** — Enhanced episode rating sources and loading
-- **Episode marking** — Added an UI element to mark episodes as watched
-- **UI-Scaling** — Now saves the previously set UI scaling pre monitor 
-- **Meta Hover Panel** — Fixed flickering issue when multiple metadata sources enabled
-
-### 2.4.1
-- **Addon Manager** — Self made addon manager which combines the standard manager tools with the ability to disable cinemeta
-- **Cast Overlay** — Now displays season specific cast
-- **Letterboxt score** — Data Enrichment and Meta Hover Panel now show Letterboxt scores if available
-- **Data Enrichment** — On tv shows DE now displays episode ratings next to the overall series rating cards
-- **Player start** — Optimized video playback start, reduced rubberbanding
-- **Intro Skip** — Added episode info fallback to fetch segments, often needed for anime with false meta/season/episode info
+### 2.4.6
+- **Library** — Profile menu stays above the collection controls. Library CSV export and import live in Settings under Library (movies, series, or both)
+- **Intro Skip** — Segments unload when the next episode starts, so autoskip cannot reuse the previous intro
+- **UI scale** — Added 250%, 300% and 400%. The board hero poster stays fully visible at the same size while the rest of the UI scales
 
 
 ---

@@ -101,10 +101,7 @@ fn github_client() -> Result<Client, anyhow::Error> {
         .context("Failed to build GitHub HTTP client")
 }
 
-fn fetch_release(
-    client: &Client,
-    release_candidate: bool,
-) -> Result<GithubRelease, anyhow::Error> {
+fn fetch_release(client: &Client, release_candidate: bool) -> Result<GithubRelease, anyhow::Error> {
     if release_candidate {
         let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases");
         let releases: Vec<GithubRelease> = client.get(&url).send()?.json()?;
@@ -175,7 +172,9 @@ fn parse_sha256sums(content: &str, file_name: &str) -> Result<String, anyhow::Er
         let name = strip_bom_and_trim(parts.next().context("Malformed SHA256SUMS line")?);
         if name == file_name {
             if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-                return Err(anyhow!("Invalid SHA256 hash for {file_name} in SHA256SUMS.txt"));
+                return Err(anyhow!(
+                    "Invalid SHA256 hash for {file_name} in SHA256SUMS.txt"
+                ));
             }
             return Ok(hash);
         }

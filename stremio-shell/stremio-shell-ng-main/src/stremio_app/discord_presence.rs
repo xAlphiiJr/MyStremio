@@ -7,6 +7,8 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_APP_ID: &str = "997798118185771059";
+/// Discord fetches this itself. Same file as the window icon (`images/stremio.png`).
+const APP_ICON: &str = "https://raw.githubusercontent.com/xAlphiiJr/MyStremio/main/stremio-shell/stremio-shell-ng-main/images/stremio.png";
 
 struct DiscordState {
     client: Option<DiscordIpcClient>,
@@ -22,6 +24,25 @@ fn playback_start_timestamp(current_time: &str) -> Option<i64> {
     let elapsed = parse_clock_label(current_time)?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
     Some(now.saturating_sub(elapsed))
+}
+
+/// https poster URLs Discord will render. Other values are rejected.
+fn discord_image_url(raw: &str) -> Option<&str> {
+    let url = raw.trim();
+    if url.starts_with("https://") && url.len() <= 256 && !url.chars().any(char::is_whitespace) {
+        Some(url)
+    } else {
+        None
+    }
+}
+
+fn presence_image<'a>(state_name: &str, poster: &'a str) -> &'a str {
+    if state_name == "player" {
+        if let Some(url) = discord_image_url(poster) {
+            return url;
+        }
+    }
+    APP_ICON
 }
 
 fn parse_clock_label(raw: &str) -> Option<i64> {
@@ -156,11 +177,17 @@ pub fn update_presence(payload: &Value) -> Result<(), String> {
             });
     }
 
-    activity = activity.assets(
-        Assets::new()
-            .large_image("stremio")
-            .large_text("MyStremio"),
-    );
+    let poster = payload
+        .get("poster")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let image = presence_image(state_name, poster);
+    let hover = if image == APP_ICON {
+        "MyStremio"
+    } else {
+        title
+    };
+    activity = activity.assets(Assets::new().large_image(image).large_text(hover));
 
     let mut state = DISCORD
         .lock()
@@ -174,4 +201,27 @@ pub fn update_presence(payload: &Value) -> Result<(), String> {
         .map_err(|error| format!("Discord activity failed: {error}"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{presence_image, APP_ICON};
+
+    #[test]
+    fn player_uses_poster_url() {
+        let poster = "https://images.metahub.space/poster/medium/tt0137523/img";
+        assert_eq!(presence_image("player", poster), poster);
+    }
+
+    #[test]
+    fn menu_keeps_app_icon() {
+        let poster = "https://images.metahub.space/poster/medium/tt0137523/img";
+        assert!(APP_ICON.starts_with("https://") && APP_ICON.len() <= 256);
+        assert_eq!(presence_image("menu", poster), APP_ICON);
+        assert_eq!(
+            presence_image("player", "http://example.com/a.jpg"),
+            APP_ICON
+        );
+        assert_eq!(presence_image("player", "stremio"), APP_ICON);
+    }
 }

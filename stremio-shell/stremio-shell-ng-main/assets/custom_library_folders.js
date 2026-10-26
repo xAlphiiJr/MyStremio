@@ -13,6 +13,8 @@
   const MENU_ID = 'stremio-custom-library-folder-menu';
   const MODAL_ID = 'stremio-custom-library-folder-modal';
   const TOAST_ID = 'stremio-custom-library-folder-toast';
+  const CSV_SCOPE_KEY = 'stremio-custom-library-csv-scope';
+  const LIBRARY_SETTINGS_ID = 'mystremio-library-csv';
   const DETAIL_LINK_SELECTOR =
     'a[href^="stremio:///detail/"], a[href*="#/detail/"], a[href*="/detail/"]';
 
@@ -78,6 +80,26 @@
     plusTitle: () => t('New collection', 'Neue Sammlung'),
     plusTitleHint: () =>
       t('New collection (Shift+click title to add)', 'Neue Sammlung (Shift+Klick auf Titel zum Hinzufügen)'),
+    exportCollectionsCsv: () => t('Export collections CSV', 'Sammlungen als CSV exportieren'),
+    importCollectionsCsv: () => t('Import collections CSV', 'Sammlungen aus CSV importieren'),
+    exportLibraryCsvLabel: () => t('Export CSV', 'CSV exportieren'),
+    importLibraryCsvLabel: () => t('Import CSV', 'CSV importieren'),
+    libraryRowTitle: () => t('Library', 'Bibliothek'),
+    customCollectionsTitle: () => t('Custom Library Collections', 'Eigene Sammlungen'),
+    scopeMoviesShort: () => t('Movies', 'Filme'),
+    scopeSeriesShort: () => t('Series', 'Serien'),
+    scopeBothShort: () => t('Both', 'Beides'),
+    scopePlaceholder: () => t('Select', 'Auswählen'),
+    csvScope: () => t('Export / import', 'Export / Import'),
+    exportedCsv: (count) => t(`Exported ${count} titles`, `${count} Titel exportiert`),
+    importedCsv: ({ added, already, skipped, folders }) =>
+      t(
+        `${added} new, ${already} already there, ${skipped} skipped, ${folders} collections`,
+        `${added} neu, ${already} schon da, ${skipped} übersprungen, ${folders} Sammlungen`
+      ),
+    importEmpty: () => t('CSV has no titles', 'CSV enthält keine Titel'),
+    importFailed: () => t('Could not import CSV', 'CSV konnte nicht importiert werden'),
+    libraryUnread: () => t('Could not read the library', 'Bibliothek konnte nicht gelesen werden'),
   };
 
   function isLibraryPage() {
@@ -151,7 +173,10 @@
 
   function normalizeItemKey(type, id) {
     const cleanType = String(type || 'movie').trim().toLowerCase();
-    const cleanId = decodeURIComponent(String(id || '').trim());
+    let cleanId = String(id || '').trim();
+    try {
+      cleanId = decodeURIComponent(cleanId);
+    } catch (_) {}
     if (!cleanId) return null;
     return `${cleanType}:${cleanId}`;
   }
@@ -220,7 +245,7 @@
         overflow: visible !important;
       }
       #${ROW_ID} {
-        position: fixed !important;
+        position: static !important;
         display: inline-flex !important;
         flex-direction: row !important;
         align-items: center !important;
@@ -228,11 +253,12 @@
         gap: 1rem !important;
         width: max-content !important;
         max-width: min(50vw, 28rem) !important;
-        margin: 0 !important;
+        margin: 0 0 0 auto !important;
         padding: 0 !important;
         white-space: nowrap !important;
         pointer-events: auto !important;
-        z-index: 200 !important;
+        opacity: 1 !important;
+        flex: 0 0 auto !important;
         box-sizing: border-box !important;
       }
       .sc-custom-library-chip {
@@ -753,40 +779,21 @@
       .forEach((node) => node.remove());
   }
 
-  function bindRailPositioning() {
-    if (railPositionBound) return;
-    railPositionBound = true;
-    window.addEventListener('resize', scheduleInject);
-    window.addEventListener('scroll', scheduleInject, true);
-  }
-
-  function positionCustomRail(inputsContainer, group) {
-    if (!inputsContainer || !group) return;
-
-    const rect = inputsContainer.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-
+  function placeChipRow(inputsContainer, group) {
+    const scroll =
+      inputsContainer.querySelector(':scope > [class*="horizontal-scroll"]') ||
+      inputsContainer.querySelector('[class*="horizontal-scroll"]');
     group.style.display = 'inline-flex';
-    group.style.transform = 'translateY(-50%)';
-    group.style.top = `${rect.top + rect.height / 2}px`;
-
-    const placeRail = () => {
-      const width = Math.ceil(group.getBoundingClientRect().width);
-      const left = Math.max(rect.right - width - 12, rect.left + 12);
-      group.style.left = `${left}px`;
-      group.style.right = 'auto';
-
-      const hScroll = inputsContainer.querySelector('[class*="horizontal-scroll"]');
-      if (hScroll) {
-        const reserve = Math.max(rect.right - left + 16, 120);
-        hScroll.style.flex = '1 1 auto';
-        hScroll.style.minWidth = '0';
-        hScroll.style.maxWidth = `calc(100% - ${Math.ceil(reserve)}px)`;
-      }
-    };
-
-    placeRail();
-    requestAnimationFrame(placeRail);
+    group.style.position = 'static';
+    group.style.top = '';
+    group.style.left = '';
+    group.style.transform = '';
+    group.style.opacity = '1';
+    if (scroll?.parentElement) {
+      if (group.previousElementSibling !== scroll) scroll.after(group);
+      return;
+    }
+    if (group.parentElement !== inputsContainer) inputsContainer.appendChild(group);
   }
 
   function resetCustomTabLayout(tab) {
@@ -851,7 +858,7 @@
       folderTabs.every((tab) => group.contains(tab))
     ) {
       syncTabVisualState();
-      positionCustomRail(inputsContainer, group);
+      placeChipRow(inputsContainer, group);
       return;
     }
 
@@ -868,13 +875,9 @@
     resetCustomTabLayout(plus);
     group.appendChild(plus);
 
-    if (group.parentElement !== document.body) {
-      document.body.appendChild(group);
-    }
+    placeChipRow(inputsContainer, group);
 
     syncTabVisualState();
-    positionCustomRail(inputsContainer, group);
-    bindRailPositioning();
   }
 
   function removeOrphanCustomTabs() {
@@ -997,6 +1000,737 @@
       filterTimer = null;
       applyFolderFilter();
     }, 80);
+  }
+
+  function getCore() {
+    return window.core || window.services?.core?.transport || null;
+  }
+
+  function csvCell(value) {
+    const text = String(value ?? '');
+    if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+    return text;
+  }
+
+  function parseCsv(text) {
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let quoted = false;
+    const source = String(text || '').replace(/^\uFEFF/, '');
+    const headerLine = source.split('\n', 1)[0] || '';
+    // shortcut: delimiter from the first line only. Upgrade when a quoted comma in that line picks the wrong separator.
+    const delimiter =
+      (headerLine.match(/;/g) || []).length > (headerLine.match(/,/g) || []).length ? ';' : ',';
+    for (let i = 0; i < source.length; i += 1) {
+      const char = source[i];
+      if (quoted) {
+        if (char === '"') {
+          if (source[i + 1] === '"') {
+            cell += '"';
+            i += 1;
+          } else {
+            quoted = false;
+          }
+        } else {
+          cell += char;
+        }
+        continue;
+      }
+      if (char === '"') {
+        quoted = true;
+        continue;
+      }
+      if (char === delimiter) {
+        row.push(cell);
+        cell = '';
+        continue;
+      }
+      if (char === '\n') {
+        row.push(cell);
+        rows.push(row);
+        row = [];
+        cell = '';
+        continue;
+      }
+      if (char !== '\r') cell += char;
+    }
+    if (cell.length || row.length) {
+      row.push(cell);
+      rows.push(row);
+    }
+    return rows.filter((entry) => entry.some((value) => String(value).trim()));
+  }
+
+  function unwrapBucketEntry(raw) {
+    if (
+      Array.isArray(raw) &&
+      raw.length >= 2 &&
+      raw[1] &&
+      typeof raw[1] === 'object' &&
+      !Array.isArray(raw[1])
+    ) {
+      const item = raw[1];
+      if (!item.id && !item._id && raw[0] != null) return Object.assign({ _id: String(raw[0]) }, item);
+      return item;
+    }
+    return raw;
+  }
+
+  function bucketEntries(bucket) {
+    if (!bucket) return [];
+    let list = [];
+    if (Array.isArray(bucket)) list = bucket;
+    else if (typeof bucket.forEach === 'function' && typeof bucket.size === 'number') {
+      bucket.forEach((value) => list.push(value));
+    } else if (typeof bucket === 'object') list = Object.values(bucket);
+    return list.map(unwrapBucketEntry);
+  }
+
+  function splitTypedId(value) {
+    const match = String(value || '').match(/^(movie|series|channel|tv):(.+)$/i);
+    if (!match) return null;
+    const type = match[1].toLowerCase() === 'tv' ? 'series' : match[1].toLowerCase();
+    return { type, id: match[2] };
+  }
+
+  function normalizeLibraryRecord(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const fromId = splitTypedId(raw.id);
+    const fromStored = splitTypedId(raw._id);
+    let type = String(raw.type || raw.type_name || fromId?.type || fromStored?.type || '').toLowerCase();
+    if (type === 'tv') type = 'series';
+    let id = raw.id || raw._id || '';
+    if (fromId) id = fromId.id;
+    else if (fromStored && (!raw.id || String(raw.id) === String(raw._id))) id = fromStored.id;
+    const name = raw.name || raw.title;
+    if (!id || !type || !name) return null;
+    const poster = typeof raw.poster === 'string' ? raw.poster : '';
+    const imdb = imdbOf(id, poster);
+    const tmdbMatch = String(id).match(/tmdb:(?:movie:|series:|tv:)?(\d+)/i);
+    return {
+      id: String(id),
+      type,
+      name: String(name),
+      poster,
+      imdb,
+      tmdb: tmdbMatch ? tmdbMatch[1] : '',
+      removed: Boolean(raw.removed || raw.temp),
+    };
+  }
+
+  function imdbOf(...parts) {
+    const match = parts.filter(Boolean).join(' ').match(/tt\d{7,}/i);
+    return match ? match[0].toLowerCase() : '';
+  }
+
+  function posterUrl(poster) {
+    const value = String(poster || '').trim();
+    return /^https?:\/\//i.test(value) ? value : '';
+  }
+
+  function displayPoster(poster, imdb) {
+    return posterUrl(poster) || (imdb ? `https://images.metahub.space/poster/medium/${imdb}/img` : '');
+  }
+
+  function wasWatched(raw) {
+    const state = raw && raw.state;
+    if (!state || typeof state !== 'object') return false;
+    return Boolean(
+      state.timeWatched || state.time_watched ||
+      state.timesWatched || state.times_watched ||
+      state.flaggedWatched || state.flagged_watched ||
+      state.lastWatched || state.last_watched
+    );
+  }
+
+  async function readCoreModel(model) {
+    try {
+      if (window.services?.core?.transport?.getState) {
+        return await window.services.core.transport.getState(model);
+      }
+    } catch (_) {}
+    try {
+      if (window.core?.getState) return await window.core.getState(model);
+    } catch (_) {}
+    return null;
+  }
+
+  function entriesFromStorage(rawLibrary, rawRecent) {
+    const entries = [];
+    for (const raw of [rawLibrary, rawRecent]) {
+      if (!raw) continue;
+      let parsed = raw;
+      if (typeof raw === 'string') {
+        try {
+          parsed = JSON.parse(raw);
+        } catch (_) {
+          continue;
+        }
+      }
+      if (!parsed || typeof parsed !== 'object') continue;
+      const bucket = Object.prototype.hasOwnProperty.call(parsed, 'items') ? parsed.items : parsed;
+      entries.push(...bucketEntries(bucket));
+    }
+    return entries;
+  }
+
+  function recordsFromEntries(entries) {
+    const visible = new Map();
+    const metaIds = new Set();
+    const byImdb = new Map();
+    for (const raw of entries) {
+      const item = normalizeLibraryRecord(raw);
+      if (!item) continue;
+      const key = normalizeItemKey(item.type, item.id);
+      if (!key) continue;
+      const splitAt = key.indexOf(':');
+      const metaId = key.slice(splitAt + 1);
+      const type = key.slice(0, splitAt);
+      metaIds.add(metaId);
+      const record = {
+        key,
+        id: metaId,
+        type,
+        name: item.name,
+        poster: item.poster,
+        imdb: item.imdb,
+        tmdb: item.tmdb,
+        watched: wasWatched(raw),
+      };
+      if (!item.removed) {
+        visible.set(key, record);
+        if (item.imdb) {
+          const canon = `${type}:${item.imdb}`;
+          const prev = byImdb.get(canon);
+          if (!prev || /^tt\d/i.test(metaId)) byImdb.set(canon, record);
+        }
+      }
+    }
+    return { visible, metaIds, byImdb };
+  }
+
+  function readStorageEntries() {
+    let sawKey = false;
+    const chunks = [];
+    try {
+      for (const key of ['library', 'library_recent']) {
+        const raw = localStorage.getItem(key);
+        if (raw == null) continue;
+        sawKey = true;
+        chunks.push(raw);
+      }
+    } catch (_) {
+      return { sawKey: false, entries: [] };
+    }
+    return { sawKey, entries: entriesFromStorage(chunks[0], chunks[1]) };
+  }
+
+  function catalogRows(library) {
+    if (Array.isArray(library?.catalog)) return library.catalog;
+    const content = library?.catalog?.content;
+    if (content?.type === 'Ready' && Array.isArray(content.content)) return content.content;
+    return null;
+  }
+
+  async function loadLibraryFromCatalog() {
+    const transport = window.services?.core?.transport || window.core?.transport || window.core;
+    if (!transport?.dispatch) return null;
+    try {
+      await transport.dispatch(
+        { action: 'Load', args: { model: 'LibraryWithFilters', args: { request: { type: null } } } },
+        'library'
+      );
+    } catch (_) {
+      return null;
+    }
+    let library = await readCoreModel('library');
+    for (let page = 0; page < 100; page += 1) {
+      const requestType = library?.selected?.request?.type;
+      if (!library?.selected || requestType != null) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        library = await readCoreModel('library');
+        continue;
+      }
+      // shortcut: at most 100 pages of 100 titles. Upgrade when a library is larger than that and localStorage has no copy.
+      const next = library?.selectable?.nextPage || library?.selectable?.next_page;
+      if (!next) break;
+      const before = catalogRows(library)?.length || 0;
+      try {
+        await transport.dispatch({ action: 'LibraryWithFilters', args: { action: 'LoadNextPage' } }, 'library');
+      } catch (_) {
+        break;
+      }
+      library = await readCoreModel('library');
+      if ((catalogRows(library)?.length || 0) <= before) break;
+    }
+    const rows = catalogRows(library);
+    if (!rows) return null;
+    return recordsFromEntries(bucketEntries(rows));
+  }
+
+  async function loadLibraryItems() {
+    // ctx.library is not sent to the page, so the saved bucket is the full list.
+    const stored = readStorageEntries();
+    if (stored.entries.length) return recordsFromEntries(stored.entries);
+    const paged = await loadLibraryFromCatalog();
+    if (paged && (paged.visible.size || paged.metaIds.size)) return paged;
+    if (stored.sawKey) return recordsFromEntries(stored.entries);
+    return null;
+  }
+
+  function folderNameForKey(itemKey) {
+    return loadFolders()
+      .filter((folder) => Array.isArray(folder.items) && folder.items.includes(itemKey))
+      .map((folder) => folder.name)
+      .join(';');
+  }
+
+  function ensureFolderByName(folders, name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return null;
+    let folder = folders.find((entry) => entry.name === trimmed);
+    if (!folder) {
+      folder = { id: createFolderId(), name: trimmed, items: [] };
+      folders.push(folder);
+    }
+    if (!Array.isArray(folder.items)) folder.items = [];
+    return folder;
+  }
+
+  function readCsvScope() {
+    try {
+      const raw = localStorage.getItem(CSV_SCOPE_KEY);
+      if (raw === 'movie' || raw === 'series' || raw === 'both') return raw;
+    } catch (_) {}
+    return 'both';
+  }
+
+  function writeCsvScope(scope) {
+    const next = scope === 'movie' || scope === 'series' ? scope : 'both';
+    try {
+      localStorage.setItem(CSV_SCOPE_KEY, next);
+    } catch (_) {}
+    return next;
+  }
+
+  function typeMatchesScope(type, scope) {
+    const value = String(type || '').trim().toLowerCase();
+    if (value !== 'movie' && value !== 'series') return false;
+    if (scope === 'movie') return value === 'movie';
+    if (scope === 'series') return value === 'series';
+    return true;
+  }
+
+  function activeCsvScope() {
+    if (sessionCsvScope === 'movie' || sessionCsvScope === 'series' || sessionCsvScope === 'both') {
+      return sessionCsvScope;
+    }
+    sessionCsvScope = readCsvScope();
+    return sessionCsvScope;
+  }
+
+  function libraryRowDecision(visibleKeys, metaIds, type, id, name, scope) {
+    const key = normalizeItemKey(type, id);
+    if (!key || !String(name || '').trim() || !typeMatchesScope(type, scope)) return { action: 'skip' };
+    const splitAt = key.indexOf(':');
+    const metaId = key.slice(splitAt + 1);
+    const cleanType = key.slice(0, splitAt);
+    if (visibleKeys.has(key)) return { action: 'already', key, metaId, type: cleanType };
+    if (metaIds.has(metaId)) return { action: 'skip' };
+    return { action: 'add', key, metaId, type: cleanType };
+  }
+
+  function mergeLibraryExportRows(items) {
+    const byCanon = new Map();
+    const order = [];
+    for (const item of items) {
+      const imdb = imdbOf(item.imdb, item.id, item.poster);
+      const canonId = imdb || item.id;
+      const canon = imdb ? `imdb:${item.type}:${imdb}` : `id:${item.type}:${item.id}`;
+      let row = byCanon.get(canon);
+      if (!row) {
+        row = {
+          type: item.type,
+          id: canonId,
+          name: item.name,
+          poster: item.poster,
+          imdb,
+          folders: new Set(String(item.folder || '').split(';').filter(Boolean)),
+          alts: new Set(),
+        };
+        byCanon.set(canon, row);
+        order.push(row);
+      } else {
+        if (!posterUrl(row.poster) && posterUrl(item.poster)) row.poster = item.poster;
+        if (!row.name && item.name) row.name = item.name;
+        for (const folderName of String(item.folder || '').split(';')) {
+          if (folderName) row.folders.add(folderName);
+        }
+      }
+      if (item.id && item.id !== row.id) row.alts.add(item.id);
+    }
+    return order.map((row) => ({
+      type: row.type,
+      id: row.id,
+      name: row.name,
+      folder: [...row.folders].join(';'),
+      poster: displayPoster(row.poster, row.imdb),
+      imdb: row.imdb,
+      alt: [...row.alts].join(';'),
+    }));
+  }
+
+  function spareLibraryIds(visible, type, canonKey, imdb, alt) {
+    const alts = new Set(String(alt || '').split(';').map((value) => value.trim()).filter(Boolean));
+    const drops = [];
+    for (const record of visible.values()) {
+      if (record.type !== type || record.key === canonKey || record.watched) continue;
+      if ((imdb && record.imdb === imdb) || alts.has(record.id)) drops.push(record.id);
+    }
+    return drops;
+  }
+
+  function planLibraryImportRow(visible, byImdb, metaIds, type, id, name, scope, imdb, poster, alt) {
+    const key = normalizeItemKey(type, id);
+    if (!key || !String(name || '').trim() || !typeMatchesScope(type, scope)) return { action: 'skip' };
+    const splitAt = key.indexOf(':');
+    const metaId = key.slice(splitAt + 1);
+    const cleanType = key.slice(0, splitAt);
+    const knownImdb = imdbOf(imdb, metaId, poster);
+    const canonId = knownImdb || metaId;
+    const canonKey = normalizeItemKey(cleanType, canonId);
+    const hit = (knownImdb && byImdb.get(`${cleanType}:${knownImdb}`)) || visible.get(canonKey);
+    const posterValue = displayPoster(poster, knownImdb);
+    if (hit) {
+      return {
+        action: !posterUrl(hit.poster) && posterValue ? 'fill' : 'already',
+        key: hit.key,
+        metaId: hit.id,
+        type: hit.type,
+        poster: posterValue,
+        imdb: knownImdb,
+        dropIds: spareLibraryIds(visible, cleanType, hit.key, knownImdb, alt),
+      };
+    }
+    if (metaIds.has(canonId)) return { action: 'skip' };
+    return {
+      action: 'add',
+      key: canonKey,
+      metaId: canonId,
+      type: cleanType,
+      poster: posterValue,
+      imdb: knownImdb,
+      dropIds: spareLibraryIds(visible, cleanType, canonKey, knownImdb, alt),
+    };
+  }
+
+  function mergeCollectionRows(existingFolders, rows) {
+    const folders = existingFolders.map((folder) => ({
+      id: folder.id,
+      name: folder.name,
+      items: Array.isArray(folder.items) ? folder.items.slice() : [],
+    }));
+    const byName = new Map(folders.map((folder) => [folder.name, folder]));
+    let added = 0;
+    let already = 0;
+    let skipped = 0;
+    let sawFolder = false;
+    const touched = new Set();
+    const header = (rows[0] || []).map((cell) => String(cell).trim().toLowerCase());
+    const folderIndex = header.indexOf('folder');
+    const typeIndex = header.indexOf('type');
+    const idIndex = header.indexOf('id');
+    const dataRows = folderIndex >= 0 ? rows.slice(1) : rows;
+    for (const row of dataRows) {
+      const name = String(row[folderIndex >= 0 ? folderIndex : 0] || '').trim();
+      const type = String(row[typeIndex >= 0 ? typeIndex : 1] || '').trim();
+      const id = String(row[idIndex >= 0 ? idIndex : 2] || '').trim();
+      if (!name) {
+        skipped += 1;
+        continue;
+      }
+      sawFolder = true;
+      let folder = byName.get(name);
+      if (!folder) {
+        folder = { id: createFolderId(), name, items: [] };
+        byName.set(name, folder);
+        folders.push(folder);
+        touched.add(folder.id);
+      }
+      const key = type && id ? normalizeItemKey(type, id) : null;
+      if (!key) continue;
+      if (folder.items.includes(key)) {
+        already += 1;
+        continue;
+      }
+      folder.items.push(key);
+      added += 1;
+      touched.add(folder.id);
+    }
+    return { folders, added, already, skipped, sawFolder, touched: touched.size };
+  }
+
+  function downloadCsv(filename, lines) {
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 1500);
+  }
+
+  function exportCollectionsCsv() {
+    const lines = [['folder', 'type', 'id'].join(',')];
+    for (const folder of loadFolders()) {
+      const items = Array.isArray(folder.items) ? folder.items : [];
+      if (!items.length) {
+        lines.push([folder.name, '', ''].map(csvCell).join(','));
+        continue;
+      }
+      for (const item of items) {
+        const [type, ...rest] = String(item).split(':');
+        lines.push([folder.name, type, rest.join(':')].map(csvCell).join(','));
+      }
+    }
+    downloadCsv('mystremio-collections.csv', lines);
+    showToast(TEXT.exportedCsv(Math.max(lines.length - 1, 0)));
+  }
+
+  async function importCollectionsCsv() {
+    const file = await pickCsvFile();
+    if (!file) return;
+    let rows;
+    try {
+      rows = parseCsv(await file.text());
+    } catch (_) {
+      showToast(TEXT.importFailed());
+      return;
+    }
+    if (!rows.length) {
+      showToast(TEXT.importEmpty());
+      return;
+    }
+    const plan = mergeCollectionRows(loadFolders(), rows);
+    if (!plan.sawFolder) {
+      showToast(TEXT.importEmpty());
+      return;
+    }
+    if (plan.touched) {
+      saveFolders(plan.folders);
+      lastFolderSignature = '';
+      renderFolderTabs();
+      scheduleFilter();
+    }
+    showToast(
+      TEXT.importedCsv({
+        added: plan.added,
+        already: plan.already,
+        skipped: plan.skipped,
+        folders: plan.touched,
+      })
+    );
+  }
+
+  async function readTmdbKey() {
+    try {
+      const config = await window.StremioCustomAPI?.getPluginConfig?.('data-enrichment');
+      return String(config?.tmdbApiKey || '').trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  async function imdbFromTmdb(type, tmdbId, apiKey) {
+    const kind = type === 'series' ? 'tv' : 'movie';
+    try {
+      const response = await fetch(
+        `https://api.themoviedb.org/3/${kind}/${tmdbId}/external_ids?api_key=${encodeURIComponent(apiKey)}`
+      );
+      if (!response.ok) return '';
+      const data = await response.json();
+      return imdbOf(data?.imdb_id);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  async function exportLibraryCsv() {
+    const scope = activeCsvScope();
+    const loaded = await loadLibraryItems();
+    if (!loaded) {
+      showToast(TEXT.libraryUnread());
+      return;
+    }
+    const rows = [];
+    for (const [key, item] of loaded.visible) {
+      if (!typeMatchesScope(item.type, scope)) continue;
+      rows.push({
+        type: item.type,
+        id: item.id,
+        name: item.name,
+        folder: folderNameForKey(key),
+        poster: item.poster,
+        imdb: item.imdb,
+        tmdb: item.tmdb,
+      });
+    }
+    const apiKey = await readTmdbKey();
+    const resolved = new Map();
+    for (const row of rows) {
+      if (row.imdb || !row.tmdb || !apiKey) continue;
+      const cacheKey = `${row.type}:${row.tmdb}`;
+      // shortcut: one TMDB lookup per id, in order. Upgrade when a large library makes export too slow.
+      if (!resolved.has(cacheKey)) resolved.set(cacheKey, imdbFromTmdb(row.type, row.tmdb, apiKey));
+      row.imdb = await resolved.get(cacheKey);
+    }
+    const merged = mergeLibraryExportRows(rows);
+    const lines = [['type', 'id', 'name', 'folder', 'poster', 'imdb', 'alt'].join(',')];
+    for (const row of merged) {
+      lines.push([row.type, row.id, row.name, row.folder, row.poster, row.imdb, row.alt].map(csvCell).join(','));
+    }
+    downloadCsv('mystremio-library.csv', lines);
+    showToast(TEXT.exportedCsv(merged.length));
+  }
+
+  function pickCsvFile() {
+    return new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.csv,text/csv';
+      input.addEventListener('change', () => resolve(input.files?.[0] || null), { once: true });
+      input.addEventListener('cancel', () => resolve(null), { once: true });
+      input.click();
+    });
+  }
+
+  async function importLibraryCsv() {
+    const scope = activeCsvScope();
+    const file = await pickCsvFile();
+    if (!file) return;
+    let rows;
+    try {
+      rows = parseCsv(await file.text());
+    } catch (_) {
+      showToast(TEXT.importFailed());
+      return;
+    }
+    if (!rows.length) {
+      showToast(TEXT.importEmpty());
+      return;
+    }
+    const header = rows[0].map((cell) => String(cell).trim().toLowerCase());
+    const typeIndex = header.indexOf('type');
+    const idIndex = header.indexOf('id');
+    const nameIndex = header.indexOf('name');
+    const folderIndex = header.indexOf('folder');
+    const posterIndex = header.indexOf('poster');
+    const imdbIndex = header.indexOf('imdb');
+    const altIndex = header.indexOf('alt');
+    const dataRows = typeIndex >= 0 && idIndex >= 0 ? rows.slice(1) : rows;
+    const loaded = await loadLibraryItems();
+    if (!loaded) {
+      showToast(TEXT.libraryUnread());
+      return;
+    }
+    const { visible, metaIds, byImdb } = loaded;
+    const core = getCore();
+    const folders = loadFolders();
+    let added = 0;
+    let already = 0;
+    let skipped = 0;
+    const touchedFolders = new Set();
+    for (const row of dataRows) {
+      const type = String(row[typeIndex >= 0 ? typeIndex : 0] || '').trim().toLowerCase();
+      const id = String(row[idIndex >= 0 ? idIndex : 1] || '').trim();
+      const name = String(row[nameIndex >= 0 ? nameIndex : 2] || '').trim();
+      const folderCell = folderIndex >= 0 ? row[folderIndex] : '';
+      const poster = posterIndex >= 0 ? row[posterIndex] : '';
+      const imdb = imdbIndex >= 0 ? row[imdbIndex] : '';
+      const alt = altIndex >= 0 ? row[altIndex] : '';
+      const decision = planLibraryImportRow(visible, byImdb, metaIds, type, id, name, scope, imdb, poster, alt);
+      if (decision.action === 'skip') {
+        skipped += 1;
+        continue;
+      }
+      if (decision.action === 'add' || decision.action === 'fill') {
+        if (!core?.dispatch) {
+          skipped += 1;
+          continue;
+        }
+        const args = { id: decision.metaId, type: decision.type, name };
+        if (decision.poster) {
+          args.poster = decision.poster;
+          args.posterShape = 'poster';
+        }
+        try {
+          await core.dispatch({
+            action: 'Ctx',
+            args: { action: 'AddToLibrary', args },
+          });
+        } catch (error) {
+          console.warn('[StremioCustom] Library CSV import failed:', error);
+          skipped += 1;
+          continue;
+        }
+        const record = visible.get(decision.key) || {
+          key: decision.key,
+          id: decision.metaId,
+          type: decision.type,
+          name,
+          watched: false,
+        };
+        record.poster = decision.poster || record.poster;
+        record.imdb = decision.imdb || record.imdb;
+        visible.set(decision.key, record);
+        metaIds.add(decision.metaId);
+        if (decision.imdb) byImdb.set(`${decision.type}:${decision.imdb}`, record);
+        if (decision.action === 'add') added += 1;
+        else already += 1;
+      } else {
+        already += 1;
+      }
+      if (core?.dispatch) {
+        for (const dropId of decision.dropIds || []) {
+          const dropKey = normalizeItemKey(decision.type, dropId);
+          try {
+            await core.dispatch({
+              action: 'Ctx',
+              args: { action: 'RemoveFromLibrary', args: dropId },
+            });
+          } catch (error) {
+            console.warn('[StremioCustom] Library CSV merge failed:', error);
+            continue;
+          }
+          const gone = visible.get(dropKey);
+          visible.delete(dropKey);
+          if (gone?.imdb && byImdb.get(`${decision.type}:${gone.imdb}`)?.key === dropKey) {
+            byImdb.delete(`${decision.type}:${gone.imdb}`);
+          }
+          for (const folder of folders) {
+            if (!Array.isArray(folder.items)) continue;
+            const index = folder.items.indexOf(dropKey);
+            if (index < 0) continue;
+            folder.items.splice(index, 1);
+            if (decision.key && !folder.items.includes(decision.key)) folder.items.push(decision.key);
+            touchedFolders.add(folder.id);
+          }
+        }
+      }
+      for (const folderName of String(folderCell || '').split(';')) {
+        const folder = ensureFolderByName(folders, folderName);
+        if (!folder || folder.items.includes(decision.key)) continue;
+        folder.items.push(decision.key);
+        touchedFolders.add(folder.id);
+      }
+    }
+    if (touchedFolders.size) {
+      saveFolders(folders);
+      lastFolderSignature = '';
+      renderFolderTabs();
+      scheduleFilter();
+    }
+    showToast(TEXT.importedCsv({ added, already, skipped, folders: touchedFolders.size }));
   }
 
   function bindCustomRailInteractions() {
@@ -1203,6 +1937,305 @@
     );
   }
 
+  function isSettingsPage() {
+    return /#\/settings(?:[/?#]|$)/.test(location.hash || '');
+  }
+
+  function findButtonByOwnText(text) {
+    const settings = document.querySelector('[class*="settings-content"]');
+    if (!settings) return null;
+    for (const el of settings.querySelectorAll('[class*="button-container"]')) {
+      if (el.closest(`#${LIBRARY_SETTINGS_ID}`)) continue;
+      if (el.querySelector('[class*="button-container"]')) continue;
+      const value = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (value === text) return el;
+    }
+    return null;
+  }
+
+  function setOwnButtonText(pill, text) {
+    const current = (pill.textContent || '').replace(/\s+/g, ' ').trim();
+    if (current === text) return;
+    const textNodes = [];
+    const walk = (el) => {
+      for (const node of el.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          if (node.textContent.trim()) textNodes.push(node);
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+          walk(node);
+        }
+      }
+    };
+    walk(pill);
+    if (textNodes.length === 1) {
+      textNodes[0].textContent = text;
+      return;
+    }
+    pill.textContent = text;
+  }
+
+  function bindPill(pill, text, onClick) {
+    if (!pill) return;
+    setOwnButtonText(pill, text);
+    if (pill.dataset.mystremioCsvBound === '1') return;
+    pill.dataset.mystremioCsvBound = '1';
+    pill.addEventListener(
+      'click',
+      (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        onClick();
+      },
+      true
+    );
+  }
+
+  function rowTitleLabel(row) {
+    for (const label of row.querySelectorAll('[class*="label-"]')) {
+      if (label.closest('button, [class*="button-container"]')) continue;
+      return label;
+    }
+    return null;
+  }
+
+  function rowPills(row) {
+    return Array.from(row.querySelectorAll('button, [class*="button-container"]')).filter(
+      (node) => !node.querySelector('button, [class*="button-container"]') && !node.dataset.mystremioScope
+    );
+  }
+
+  function setRowTitle(row, text) {
+    const title = rowTitleLabel(row);
+    if (!title) return;
+    const current = (title.textContent || '').replace(/\s+/g, ' ').trim();
+    if (current !== text) title.textContent = text;
+  }
+
+  const SCOPE_OPTIONS = [
+    ['movie', () => TEXT.scopeMoviesShort()],
+    ['series', () => TEXT.scopeSeriesShort()],
+    ['both', () => TEXT.scopeBothShort()],
+  ];
+
+  let sessionCsvScope = null;
+
+  function scopeChoiceLabel(scope) {
+    if (scope === 'movie') return TEXT.scopeMoviesShort();
+    if (scope === 'series') return TEXT.scopeSeriesShort();
+    if (scope === 'both') return TEXT.scopeBothShort();
+    return TEXT.scopePlaceholder();
+  }
+
+  function ensureCsvScopeStyles() {
+    const id = 'mystremio-library-csv-scope-style';
+    if (document.getElementById(id)) return;
+    const style = document.createElement('style');
+    style.id = id;
+    style.textContent = `
+      #${LIBRARY_SETTINGS_ID} .mystremio-scope-menu {
+        position: relative;
+        width: 100%;
+        margin: 0 0 0.65rem 0;
+      }
+      #${LIBRARY_SETTINGS_ID} .mystremio-scope-trigger {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        min-width: 9rem;
+        height: 2.75rem;
+        padding: 0 1.15rem;
+        border-radius: 2.75rem;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff;
+        font: 500 0.95rem/1 var(--default-font-family, inherit);
+        cursor: pointer;
+      }
+      #${LIBRARY_SETTINGS_ID} .mystremio-scope-trigger::after {
+        content: "";
+        width: 0.45rem;
+        height: 0.45rem;
+        margin-left: 0.75rem;
+        border-right: 2px solid #fff;
+        border-bottom: 2px solid #fff;
+        transform: rotate(45deg) translateY(-2px);
+        opacity: 0.8;
+      }
+      .mystremio-scope-list {
+        position: fixed;
+        z-index: 400;
+        margin: 0;
+        padding: 0.35rem;
+        border-radius: 0.9rem;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgb(32, 32, 36);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      }
+      .mystremio-scope-list button {
+        display: block;
+        width: 100%;
+        margin: 0;
+        padding: 0.65rem 0.9rem;
+        border: 0;
+        border-radius: 0.65rem;
+        background: transparent;
+        color: #fff;
+        font: 500 0.95rem/1 var(--default-font-family, inherit);
+        text-align: left;
+        cursor: pointer;
+      }
+      .mystremio-scope-list button:hover,
+      .mystremio-scope-list button[aria-selected="true"] {
+        background: rgba(255, 255, 255, 0.12);
+      }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function paintScopeMenu(root) {
+    if (!root) return;
+    const label = root.querySelector('[data-mystremio-scope-label]');
+    const next = scopeChoiceLabel(sessionCsvScope);
+    if (label && label.textContent !== next) label.textContent = next;
+    root.querySelectorAll('[data-mystremio-scope-option]').forEach((option) => {
+      const selected = option.dataset.mystremioScopeOption === sessionCsvScope;
+      if (option.getAttribute('aria-selected') !== (selected ? 'true' : 'false')) {
+        option.setAttribute('aria-selected', selected ? 'true' : 'false');
+      }
+    });
+  }
+
+  function closeScopeLists(except) {
+    document.querySelectorAll(`#${LIBRARY_SETTINGS_ID} [data-mystremio-scope-list]`).forEach((list) => {
+      if (list !== except) list.hidden = true;
+    });
+  }
+
+  function buildScopeMenu() {
+    const wrap = document.createElement('div');
+    wrap.className = 'mystremio-scope-menu';
+    wrap.dataset.mystremioScopeMenu = '1';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'mystremio-scope-trigger';
+    button.setAttribute('aria-haspopup', 'listbox');
+    button.setAttribute('aria-label', TEXT.csvScope());
+    const label = document.createElement('span');
+    label.dataset.mystremioScopeLabel = '1';
+    label.textContent = scopeChoiceLabel(sessionCsvScope);
+    button.appendChild(label);
+
+    const list = document.createElement('div');
+    list.className = 'mystremio-scope-list';
+    list.dataset.mystremioScopeList = '1';
+    list.hidden = true;
+    list.setAttribute('role', 'listbox');
+
+    for (const [scope, labelOf] of SCOPE_OPTIONS) {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.dataset.mystremioScopeOption = scope;
+      option.setAttribute('role', 'option');
+      option.textContent = labelOf();
+      option.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        sessionCsvScope = scope;
+        writeCsvScope(scope);
+        list.hidden = true;
+        paintScopeMenu(wrap);
+      }, true);
+      list.appendChild(option);
+    }
+
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if (list.hidden) {
+        const rect = button.getBoundingClientRect();
+        list.style.left = `${rect.left}px`;
+        list.style.top = `${rect.bottom + 6}px`;
+        list.style.width = `${rect.width}px`;
+        if (list.parentElement !== document.body) document.body.appendChild(list);
+        closeScopeLists(list);
+        list.hidden = false;
+      } else {
+        list.hidden = true;
+      }
+    }, true);
+
+    wrap.append(button, list);
+    paintScopeMenu(wrap);
+    return wrap;
+  }
+
+  let ensuringLibrarySettings = false;
+
+  function ensureLibrarySettings() {
+    if (ensuringLibrarySettings) return;
+    if (!isSettingsPage()) return;
+    ensuringLibrarySettings = true;
+    observer.disconnect();
+    try {
+    activeCsvScope();
+    document.querySelectorAll('[data-mystremio-library-section="1"]').forEach((node) => node.remove());
+    ensureCsvScopeStyles();
+
+    const exportPill =
+      findButtonByOwnText('Export library JSON') ||
+      findButtonByOwnText(TEXT.exportCollectionsCsv());
+    const importPill =
+      findButtonByOwnText('Import library JSON') ||
+      findButtonByOwnText(TEXT.importCollectionsCsv());
+    const backupRow = exportPill?.closest('[class*="option-"]') || exportPill?.parentElement;
+    if (!backupRow?.parentElement || !exportPill) return;
+
+    setRowTitle(backupRow, TEXT.customCollectionsTitle());
+    bindPill(exportPill, TEXT.exportCollectionsCsv(), () => exportCollectionsCsv());
+    bindPill(importPill, TEXT.importCollectionsCsv(), () => void importCollectionsCsv());
+
+    let row = document.getElementById(LIBRARY_SETTINGS_ID);
+    if (row && !row.querySelector('[data-mystremio-scope-menu]')) {
+      row.remove();
+      row = null;
+    }
+    if (row) {
+      setRowTitle(row, TEXT.libraryRowTitle());
+      paintScopeMenu(row.querySelector('[data-mystremio-scope-menu]'));
+      if (backupRow.previousElementSibling !== row) backupRow.before(row);
+      return;
+    }
+
+    row = backupRow.cloneNode(true);
+    row.id = LIBRARY_SETTINGS_ID;
+    row.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'));
+    row.querySelectorAll('[data-mystremio-csv-bound]').forEach((node) => {
+      delete node.dataset.mystremioCsvBound;
+    });
+    setRowTitle(row, TEXT.libraryRowTitle());
+
+    const pills = rowPills(row);
+    const exportCsvPill = pills[0];
+    const importCsvPill = pills[1];
+    if (!exportCsvPill || !importCsvPill) return;
+
+    exportCsvPill.before(buildScopeMenu());
+    bindPill(exportCsvPill, TEXT.exportLibraryCsvLabel(), () => void exportLibraryCsv());
+    bindPill(importCsvPill, TEXT.importLibraryCsvLabel(), () => void importLibraryCsv());
+    backupRow.before(row);
+    } finally {
+      ensuringLibrarySettings = false;
+      const root = document.body || document.documentElement;
+      if (root) observer.observe(root, { childList: true, subtree: true });
+    }
+  }
+
   function scheduleInject() {
     if (Date.now() < suppressInjectUntil) return;
     if (injectTimer) clearTimeout(injectTimer);
@@ -1229,15 +2262,28 @@
   window.__stremioCustomLibraryFoldersEnsure = scheduleInject;
 
   window.addEventListener('hashchange', scheduleInject);
+  if (!window.__stremioCsvScopeOutsideBound) {
+    window.__stremioCsvScopeOutsideBound = true;
+    document.addEventListener('pointerdown', (event) => {
+      const menu = event.target?.closest?.('[data-mystremio-scope-menu]');
+      if (!menu) closeScopeLists(null);
+    });
+  }
+
   window.addEventListener('hashchange', () => {
     if (!isLibraryPage()) {
       clearLibraryRouteState();
     }
+    if (!isSettingsPage()) sessionCsvScope = null;
+    if (isSettingsPage()) ensureLibrarySettings();
   });
   window.addEventListener('popstate', scheduleInject);
   document.addEventListener('stremio-custom-bootstrap-ready', scheduleInject);
 
-  const observer = new MutationObserver(scheduleInject);
+  const observer = new MutationObserver(() => {
+    if (isSettingsPage()) ensureLibrarySettings();
+    scheduleInject();
+  });
   const observeTarget = () => {
     const root = document.body || document.documentElement;
     if (!root) {
@@ -1248,6 +2294,16 @@
     scheduleInject();
   };
   observeTarget();
+
+  window.__libraryCsvPlan = {
+    parseCsv,
+    mergeCollectionRows,
+    libraryRowDecision,
+    entriesFromStorage,
+    recordsFromEntries,
+    mergeLibraryExportRows,
+    planLibraryImportRow,
+  };
 
   console.info('[StremioCustom] Library folders ready.');
 })();

@@ -8,8 +8,8 @@ use super::api_keys;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -119,7 +119,12 @@ fn payload_is_complete(payload: &Value) -> bool {
 /// `typeVerified` tells the frontend that `type` came from TMDB's `/find`, not from the
 /// caller's guess. Without it the hover has to try the other type as well, which costs a
 /// second full backend round for every card.
-fn build_payload(out: &Map<String, Value>, complete: bool, kind: &str, type_verified: bool) -> Value {
+fn build_payload(
+    out: &Map<String, Value>,
+    complete: bool,
+    kind: &str,
+    type_verified: bool,
+) -> Value {
     json!({
         "ratings": ordered_ratings(out),
         "complete": complete,
@@ -584,7 +589,11 @@ fn fetch_aggregator(
 fn json_u32(value: &Value) -> Option<u32> {
     let n = value
         .as_u64()
-        .or_else(|| value.as_i64().and_then(|n| if n >= 0 { Some(n as u64) } else { None }))
+        .or_else(|| {
+            value
+                .as_i64()
+                .and_then(|n| if n >= 0 { Some(n as u64) } else { None })
+        })
         .or_else(|| {
             value.as_f64().and_then(|n| {
                 if n >= 0.0 && n.fract() == 0.0 {
@@ -682,7 +691,9 @@ fn find_cinemeta_video_for_mapped(
             return Some(video);
         }
     }
-    let has_numbered = videos.iter().any(|video| video_season_episode(video).is_some());
+    let has_numbered = videos
+        .iter()
+        .any(|video| video_season_episode(video).is_some());
     if has_numbered {
         return None;
     }
@@ -697,9 +708,8 @@ fn mapped_absolute(
     if mapped.absolute > 0 {
         return Some(mapped.absolute);
     }
-    absolute_from_season_episode(cinemeta_lengths, mapped.cinemeta.0, mapped.cinemeta.1).or_else(
-        || absolute_from_season_episode(tmdb_lengths, mapped.tmdb.0, mapped.tmdb.1),
-    )
+    absolute_from_season_episode(cinemeta_lengths, mapped.cinemeta.0, mapped.cinemeta.1)
+        .or_else(|| absolute_from_season_episode(tmdb_lengths, mapped.tmdb.0, mapped.tmdb.1))
 }
 
 /// Whether the episode was identified at a source that addresses episodes by number.
@@ -796,17 +806,11 @@ fn resolve_episode_against_videos(
     tmdb_lengths: &[u32],
     layout: EpisodeLayout,
 ) -> MappedEpisode {
-    let candidates = episode_layout_candidates(
-        season,
-        episode,
-        cinemeta_lengths,
-        tmdb_lengths,
-        layout,
-    );
-    let fallback = candidates
-        .first()
-        .copied()
-        .unwrap_or_else(|| map_episode_layout(season, episode, cinemeta_lengths, tmdb_lengths, layout));
+    let candidates =
+        episode_layout_candidates(season, episode, cinemeta_lengths, tmdb_lengths, layout);
+    let fallback = candidates.first().copied().unwrap_or_else(|| {
+        map_episode_layout(season, episode, cinemeta_lengths, tmdb_lengths, layout)
+    });
     if videos.is_empty() {
         return fallback;
     }
@@ -818,9 +822,9 @@ fn resolve_episode_against_videos(
             videos,
             mapped.cinemeta.0,
             mapped.cinemeta.1,
-            Some(mapped.absolute).filter(|n| *n > 0).or_else(|| {
-                mapped_absolute(mapped, cinemeta_lengths, tmdb_lengths)
-            }),
+            Some(mapped.absolute)
+                .filter(|n| *n > 0)
+                .or_else(|| mapped_absolute(mapped, cinemeta_lengths, tmdb_lengths)),
         );
         if found.is_some() {
             return *mapped;
@@ -979,14 +983,7 @@ pub fn map_tv_episode_layout(
         imdb: id.clone(),
         ..ResolvedIds::default()
     };
-    let videos = fetch_cinemeta_title(
-        &client,
-        &id,
-        "series",
-        &mut dummy_out,
-        &mut ids,
-        &failures,
-    );
+    let videos = fetch_cinemeta_title(&client, &id, "series", &mut dummy_out, &mut ids, &failures);
     let cinemeta_lengths = cinemeta_season_lengths(&videos);
 
     let tmdb_lengths = if let Some(hint) = tmdb_lengths_hint.filter(|hint| !hint.is_empty()) {
@@ -1115,7 +1112,10 @@ fn fetch_episode_imdb_score(
         return false;
     };
     for stream in streams {
-        let desc = stream.get("description").and_then(|v| v.as_str()).unwrap_or("");
+        let desc = stream
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let name = stream.get("name").and_then(|v| v.as_str()).unwrap_or("");
         let Some(v) = parse_imdb_ratings_addon_score(&format!("{desc}\n{name}")) else {
             continue;
@@ -1153,7 +1153,9 @@ fn apply_cinemeta_episode_from_videos(
     ids: &mut ResolvedIds,
     out: &mut Map<String, Value>,
 ) {
-    let Some(video) = find_cinemeta_video_for_mapped(videos, season, episode, Some(absolute).filter(|n| *n > 0)) else {
+    let Some(video) =
+        find_cinemeta_video_for_mapped(videos, season, episode, Some(absolute).filter(|n| *n > 0))
+    else {
         return;
     };
     if ids.episode_name.is_empty() {
@@ -1317,9 +1319,7 @@ fn fetch_trakt_episode(
     let Some(id) = id else {
         return false;
     };
-    let path = format!(
-        "{TRAKT_BASE}/shows/{id}/seasons/{season}/episodes/{episode}?extended=full"
-    );
+    let path = format!("{TRAKT_BASE}/shows/{id}/seasons/{season}/episodes/{episode}?extended=full");
     let Some(payload) = get_json_optional(client, &path, headers, failures) else {
         return false;
     };
@@ -1335,7 +1335,10 @@ fn fetch_trakt_episode(
             .and_then(|v| v.as_str())
             .and_then(normalize_imdb_id);
     }
-    if let Some(rating) = payload.get("rating").and_then(|v| v.as_f64()).filter(|v| *v > 0.0)
+    if let Some(rating) = payload
+        .get("rating")
+        .and_then(|v| v.as_f64())
+        .filter(|v| *v > 0.0)
     {
         out.remove("trakt");
         insert_rating(
@@ -1453,9 +1456,7 @@ fn resolve_tmdb_id(
     if api_key.is_empty() {
         return;
     }
-    let find_url = format!(
-        "{TMDB_BASE}/find/{imdb_id}?api_key={api_key}&external_source=imdb_id"
-    );
+    let find_url = format!("{TMDB_BASE}/find/{imdb_id}?api_key={api_key}&external_source=imdb_id");
     let Some(payload) = get_json(client, &find_url, default_headers(), failures) else {
         return;
     };
@@ -1566,11 +1567,7 @@ fn fetch_tmdb_title(
     }
 }
 
-fn fetch_tmdb_season_lengths(
-    client: &Client,
-    ids: &ResolvedIds,
-    failures: &Failures,
-) -> Vec<u32> {
+fn fetch_tmdb_season_lengths(client: &Client, ids: &ResolvedIds, failures: &Failures) -> Vec<u32> {
     let api_key = api_keys::get_api_key("tmdb");
     let Some(tmdb_id) = ids.tmdb else {
         return Vec::new();
@@ -1836,7 +1833,13 @@ fn fetch_mdblist(
             }
             "tmdb" => {
                 if let Some(s) = score.filter(|v| *v > 0.0) {
-                    insert_rating(out, "tmdb", "TMDB", "percent", &format!("{}%", s.round() as i32));
+                    insert_rating(
+                        out,
+                        "tmdb",
+                        "TMDB",
+                        "percent",
+                        &format!("{}%", s.round() as i32),
+                    );
                 } else if let Some(v) = value.filter(|v| *v > 0.0) {
                     insert_rating(
                         out,
@@ -1957,11 +1960,7 @@ fn fetch_mdblist(
 ///
 /// Only a join when TVMaze lists exactly as many episodes as Cinemeta; otherwise the
 /// same index is a different episode on each side.
-fn tvmaze_absolute_index(
-    listed: usize,
-    cinemeta_total: u32,
-    absolute: u32,
-) -> Option<usize> {
+fn tvmaze_absolute_index(listed: usize, cinemeta_total: u32, absolute: u32) -> Option<usize> {
     if absolute < 1 || cinemeta_total == 0 || listed != cinemeta_total as usize {
         return None;
     }
@@ -2091,16 +2090,27 @@ fn attach_deep_links(
     // IMDb
     if is_episode {
         if let Some(ep_imdb) = ids.episode_imdb.as_deref() {
-            set_rating_url(out, "imdb", &format!("https://www.imdb.com/title/{ep_imdb}/"));
+            set_rating_url(
+                out,
+                "imdb",
+                &format!("https://www.imdb.com/title/{ep_imdb}/"),
+            );
         } else if let (Some(s), _) = (season, episode) {
             set_rating_url(
                 out,
                 "imdb",
-                &format!("https://www.imdb.com/title/{}/episodes/?season={s}", ids.imdb),
+                &format!(
+                    "https://www.imdb.com/title/{}/episodes/?season={s}",
+                    ids.imdb
+                ),
             );
         }
     } else {
-        set_rating_url(out, "imdb", &format!("https://www.imdb.com/title/{}/", ids.imdb));
+        set_rating_url(
+            out,
+            "imdb",
+            &format!("https://www.imdb.com/title/{}/", ids.imdb),
+        );
     }
 
     // TMDB
@@ -2114,13 +2124,25 @@ fn attach_deep_links(
                         &format!("https://www.themoviedb.org/tv/{tmdb_id}/season/{s}/episode/{e}"),
                     );
                 } else {
-                    set_rating_url(out, "tmdb", &format!("https://www.themoviedb.org/tv/{tmdb_id}"));
+                    set_rating_url(
+                        out,
+                        "tmdb",
+                        &format!("https://www.themoviedb.org/tv/{tmdb_id}"),
+                    );
                 }
             } else {
-                set_rating_url(out, "tmdb", &format!("https://www.themoviedb.org/tv/{tmdb_id}"));
+                set_rating_url(
+                    out,
+                    "tmdb",
+                    &format!("https://www.themoviedb.org/tv/{tmdb_id}"),
+                );
             }
         } else {
-            set_rating_url(out, "tmdb", &format!("https://www.themoviedb.org/movie/{tmdb_id}"));
+            set_rating_url(
+                out,
+                "tmdb",
+                &format!("https://www.themoviedb.org/movie/{tmdb_id}"),
+            );
         }
     }
 
@@ -2160,13 +2182,25 @@ fn attach_deep_links(
                         &format!("https://www.rottentomatoes.com/tv/{rt_slug}/s{s:02}/e{e:02}"),
                     );
                 } else {
-                    set_rating_url(out, "rt", &format!("https://www.rottentomatoes.com/tv/{rt_slug}"));
+                    set_rating_url(
+                        out,
+                        "rt",
+                        &format!("https://www.rottentomatoes.com/tv/{rt_slug}"),
+                    );
                 }
             } else {
-                set_rating_url(out, "rt", &format!("https://www.rottentomatoes.com/tv/{rt_slug}"));
+                set_rating_url(
+                    out,
+                    "rt",
+                    &format!("https://www.rottentomatoes.com/tv/{rt_slug}"),
+                );
             }
         } else {
-            set_rating_url(out, "rt", &format!("https://www.rottentomatoes.com/m/{rt_slug}"));
+            set_rating_url(
+                out,
+                "rt",
+                &format!("https://www.rottentomatoes.com/m/{rt_slug}"),
+            );
         }
     }
 
@@ -2203,12 +2237,20 @@ fn attach_deep_links(
 
     // MAL
     if let Some(mal_id) = ids.mal {
-        set_rating_url(out, "mal", &format!("https://myanimelist.net/anime/{mal_id}"));
+        set_rating_url(
+            out,
+            "mal",
+            &format!("https://myanimelist.net/anime/{mal_id}"),
+        );
     }
 
     // Letterboxd — IMDb permalink when possible.
     if !ids.imdb.is_empty() {
-        set_rating_url(out, "letterboxd", &format!("https://letterboxd.com/imdb/{}/", ids.imdb));
+        set_rating_url(
+            out,
+            "letterboxd",
+            &format!("https://letterboxd.com/imdb/{}/", ids.imdb),
+        );
     }
 
     // FSK → IMDb parental guide (closest stable page)
@@ -2269,8 +2311,8 @@ pub fn get_title_ratings(
         .ok_or_else(|| "Ratings lookup requires media type movie or series.".to_string())?;
 
     let fast_only = mode.eq_ignore_ascii_case("fast");
-    let episode_mode = kind == "series"
-        && matches!((season, episode), (Some(s), Some(e)) if s > 0 && e > 0);
+    let episode_mode =
+        kind == "series" && matches!((season, episode), (Some(s), Some(e)) if s > 0 && e > 0);
     let season_n = season.filter(|s| *s > 0);
     let episode_n = episode.filter(|e| *e > 0);
     let layout = parse_episode_layout(episode_layout, exact_cinemeta);
@@ -2362,7 +2404,13 @@ pub fn get_title_ratings(
                     imdb: id_trakt.clone(),
                     ..ResolvedIds::default()
                 };
-                resolve_trakt_ids(&client_trakt, &id_trakt, &kind_trakt, &mut local, &fail_trakt);
+                resolve_trakt_ids(
+                    &client_trakt,
+                    &id_trakt,
+                    &kind_trakt,
+                    &mut local,
+                    &fail_trakt,
+                );
                 local
             });
             (Some(tmdb_h), Some(trakt_h))
@@ -2485,7 +2533,9 @@ pub fn get_title_ratings(
         );
         mapped_season = Some(mapped.cinemeta.0);
         mapped_episode = Some(mapped.cinemeta.1);
-        let absolute = mapped.absolute.max(mapped_absolute(&mapped, &cinemeta_lengths, &tmdb_lengths).unwrap_or(e));
+        let absolute = mapped
+            .absolute
+            .max(mapped_absolute(&mapped, &cinemeta_lengths, &tmdb_lengths).unwrap_or(e));
         apply_cinemeta_episode_from_videos(
             &cinemeta_videos,
             mapped.cinemeta.0,
@@ -2515,12 +2565,12 @@ pub fn get_title_ratings(
             mapped_season_len: season_length(&tmdb_lengths, tmdb_season),
             allow_absolute_join,
         };
-        let jikan_episode = if kitsu_id.filter(|id| *id > 0).is_some() || layout == EpisodeLayout::Absolute
-        {
-            e
-        } else {
-            absolute.max(1)
-        };
+        let jikan_episode =
+            if kitsu_id.filter(|id| *id > 0).is_some() || layout == EpisodeLayout::Absolute {
+                e
+            } else {
+                absolute.max(1)
+            };
         let title_for_mal = ids.title.clone();
         resolve_mal_id(kitsu_id, &title_for_mal, &mut ids);
         std::thread::scope(|scope| {
@@ -2658,9 +2708,11 @@ pub fn get_title_ratings(
         // come from rows that need no mapping, so counting them here would satisfy the
         // check on almost every series and silently disable the ladder below.
         if !has_mapped_episode_score(&out) && extras_budget() {
-            let candidates = episode_layout_candidates(s, e, &cinemeta_lengths, &tmdb_lengths, layout);
+            let candidates =
+                episode_layout_candidates(s, e, &cinemeta_lengths, &tmdb_lengths, layout);
             for next in candidates {
-                if next.cinemeta == (cin_season, cin_episode) && next.tmdb == (tmdb_season, tmdb_episode)
+                if next.cinemeta == (cin_season, cin_episode)
+                    && next.tmdb == (tmdb_season, tmdb_episode)
                 {
                     continue;
                 }
@@ -2701,12 +2753,8 @@ pub fn get_title_ratings(
                     merge_ratings(&mut out, local);
                     if let Some(ep_imdb) = fresh_ep_imdb {
                         if !imdb_from_episode {
-                            imdb_from_episode = fetch_episode_imdb_score(
-                                &client,
-                                &ep_imdb,
-                                &mut out,
-                                &failures,
-                            );
+                            imdb_from_episode =
+                                fetch_episode_imdb_score(&client, &ep_imdb, &mut out, &failures);
                         }
                     }
                 }
@@ -2771,7 +2819,13 @@ pub fn get_title_ratings(
             let fail_trakt = failures.clone();
             let trakt_h = scope.spawn(move || {
                 let mut local = Map::new();
-                fetch_trakt_title(&client_trakt, &kind_trakt, &ids_trakt, &mut local, &fail_trakt);
+                fetch_trakt_title(
+                    &client_trakt,
+                    &kind_trakt,
+                    &ids_trakt,
+                    &mut local,
+                    &fail_trakt,
+                );
                 local
             });
             let title_for_mal = ids.title.clone();
@@ -2800,13 +2854,7 @@ pub fn get_title_ratings(
                 let mut ids_tv = ids.clone();
                 Some(scope.spawn(move || {
                     let mut local = Map::new();
-                    fetch_tvmaze_show_rating(
-                        &client_tv,
-                        &id_tv,
-                        &mut ids_tv,
-                        &mut local,
-                        &fail_tv,
-                    );
+                    fetch_tvmaze_show_rating(&client_tv, &id_tv, &mut ids_tv, &mut local, &fail_tv);
                     (local, ids_tv)
                 }))
             } else {
@@ -2912,10 +2960,7 @@ mod tests {
     fn empty_ratings_use_negative_ttl() {
         let _guard = cache_test_lock();
         clear_ratings_cache();
-        cache_store(
-            "empty-test".to_string(),
-            &json!({ "ratings": [] }),
-        );
+        cache_store("empty-test".to_string(), &json!({ "ratings": [] }));
         let cache = ratings_cache().lock().expect("ratings cache");
         let entry = cache.get("empty-test").expect("stored empty");
         assert_eq!(entry.ttl, NEGATIVE_TTL);
@@ -3016,11 +3061,7 @@ mod tests {
     fn empty_episode_ratings_use_short_ttl() {
         let _guard = cache_test_lock();
         clear_ratings_cache();
-        cache_store_inner(
-            "empty-episode".to_string(),
-            &json!({ "ratings": [] }),
-            true,
-        );
+        cache_store_inner("empty-episode".to_string(), &json!({ "ratings": [] }), true);
         let cache = ratings_cache().lock().expect("ratings cache");
         let entry = cache.get("empty-episode").expect("stored empty episode");
         assert_eq!(entry.ttl, Duration::from_secs(2));
@@ -3074,9 +3115,16 @@ mod tests {
             "imdb",
             stream.get("externalUrl").and_then(|u| u.as_str()).unwrap(),
         );
-        assert_eq!(out.get("imdb").and_then(|c| c.get("value")).and_then(|v| v.as_str()), Some("8.9"));
         assert_eq!(
-            out.get("imdb").and_then(|c| c.get("url")).and_then(|v| v.as_str()),
+            out.get("imdb")
+                .and_then(|c| c.get("value"))
+                .and_then(|v| v.as_str()),
+            Some("8.9")
+        );
+        assert_eq!(
+            out.get("imdb")
+                .and_then(|c| c.get("url"))
+                .and_then(|v| v.as_str()),
             Some("https://www.imdb.com/title/tt1480055/")
         );
     }
@@ -3263,14 +3311,8 @@ mod tests {
         let cinemeta = vec![35, 48, 48, 48, 41];
         let tmdb = vec![52, 52, 52, 52];
         let videos = videos_for_lengths(&cinemeta);
-        let mapped = resolve_episode_against_videos(
-            3,
-            3,
-            &videos,
-            &cinemeta,
-            &tmdb,
-            EpisodeLayout::Tmdb,
-        );
+        let mapped =
+            resolve_episode_against_videos(3, 3, &videos, &cinemeta, &tmdb, EpisodeLayout::Tmdb);
         assert_eq!(mapped.tmdb, (3, 3));
         assert_eq!(mapped.cinemeta, (3, 24));
         assert!(find_cinemeta_video(&videos, 3, 24).is_some());
@@ -3478,7 +3520,11 @@ mod tests {
             ),
         );
         assert_eq!(resolved, Some((2, 87)));
-        assert_eq!(asked.into_inner(), vec![3, 2], "label first, then the bridge");
+        assert_eq!(
+            asked.into_inner(),
+            vec![3, 2],
+            "label first, then the bridge"
+        );
     }
 
     /// Same shape, but reached through a Kitsu absolute route.
@@ -3554,7 +3600,11 @@ mod tests {
             season_lookup(vec![(2, vec![101, 102, 103, 104, 105, 106])], &asked),
         );
         assert_eq!(resolved, None);
-        assert_eq!(asked.into_inner(), vec![2], "no second fetch for the same pair");
+        assert_eq!(
+            asked.into_inner(),
+            vec![2],
+            "no second fetch for the same pair"
+        );
     }
 
     /// TVDB and TVmaze must not satisfy the ladder gate, or a failed IMDb/TMDb lookup
@@ -3682,7 +3732,11 @@ mod tests {
         assert_eq!(tvmaze_absolute_index(220, 220, 220), Some(219));
         assert_eq!(tvmaze_absolute_index(224, 220, 87), None, "counts differ");
         assert_eq!(tvmaze_absolute_index(220, 0, 87), None, "no Cinemeta total");
-        assert_eq!(tvmaze_absolute_index(220, 220, 0), None, "no absolute index");
+        assert_eq!(
+            tvmaze_absolute_index(220, 220, 0),
+            None,
+            "no absolute index"
+        );
     }
 
     #[test]
@@ -3763,7 +3817,10 @@ mod tests {
             out.get("tvdb").and_then(|v| v.get("label")),
             Some(&json!("TVDB"))
         );
-        assert!(!out.contains_key("imdb"), "series TVDB must not become IMDb");
+        assert!(
+            !out.contains_key("imdb"),
+            "series TVDB must not become IMDb"
+        );
         assert_eq!(
             out.get("tvdb")
                 .and_then(|v| v.get("url"))

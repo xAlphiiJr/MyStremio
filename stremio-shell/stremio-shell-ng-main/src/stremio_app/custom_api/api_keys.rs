@@ -19,9 +19,7 @@ const PLUGIN_EXT: &str = ".plugin.js";
 /// Returns true when a schema field key should be treated as an API key.
 pub fn is_api_key_field(key: &str) -> bool {
     let normalized = key.to_lowercase();
-    normalized.contains("apikey")
-        || normalized.contains("api_key")
-        || normalized.ends_with("token")
+    normalized.contains("apikey") || normalized.contains("api_key") || normalized.ends_with("token")
 }
 
 /// Maps a plugin setting field key onto a shared service id.
@@ -126,11 +124,7 @@ pub fn normalize_api_keys(value: Option<&Value>) -> Value {
     let mut out = Map::new();
     if let Some(obj) = value.and_then(|v| v.as_object()) {
         for (key, raw) in obj {
-            let trimmed = raw
-                .as_str()
-                .map(str::trim)
-                .unwrap_or("")
-                .to_string();
+            let trimmed = raw.as_str().map(str::trim).unwrap_or("").to_string();
             out.insert(key.clone(), json!(trimmed));
         }
     }
@@ -175,7 +169,11 @@ pub fn set_api_key(service_id: &str, value: &str) -> String {
 }
 
 /// Resolves a plugin setting through the shared vault when the field is an API key.
-pub fn resolve_plugin_setting(plugin_base_name: &str, key: &str, schemas: &Mutex<RegisteredSchemas>) -> Option<Value> {
+pub fn resolve_plugin_setting(
+    plugin_base_name: &str,
+    key: &str,
+    schemas: &Mutex<RegisteredSchemas>,
+) -> Option<Value> {
     if !is_api_key_field(key) {
         return None;
     }
@@ -275,10 +273,8 @@ pub fn list_api_key_services(schemas: &Mutex<RegisteredSchemas>) -> Value {
             }
             let service_id = service_id_for_field_key(key);
             let entry = services.entry(service_id.clone()).or_insert_with(|| {
-                let label = resolve_service_label(
-                    &service_id,
-                    field.get("label").and_then(|v| v.as_str()),
-                );
+                let label =
+                    resolve_service_label(&service_id, field.get("label").and_then(|v| v.as_str()));
                 ServiceAccum {
                     label,
                     docs_url: service_docs_url(&service_id).to_string(),
@@ -426,10 +422,7 @@ pub fn ensure_api_keys_migrated() {
 }
 
 /// Status rows for a single plugin's API-key fields (for plugin settings UI).
-pub fn plugin_api_key_status(
-    plugin_base_name: &str,
-    schemas: &Mutex<RegisteredSchemas>,
-) -> Value {
+pub fn plugin_api_key_status(plugin_base_name: &str, schemas: &Mutex<RegisteredSchemas>) -> Value {
     ensure_api_keys_migrated();
     let schema = schemas
         .lock()

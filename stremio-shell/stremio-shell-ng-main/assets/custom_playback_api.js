@@ -510,6 +510,27 @@
     return null;
   }
 
+  function notifyEpisodeEnded(raw) {
+    let data = raw;
+    if (typeof data === 'string') {
+      try {
+        data = JSON.parse(data);
+      } catch (_) {
+        return;
+      }
+    }
+    const list = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.args)
+        ? data.args
+        : null;
+    if (!list || list[0] !== 'mpv-event-ended') return;
+    const reason = list[1] && list[1].reason;
+    // Played-out is eof. Next episode is loadfile, which mpv reports as stop.
+    if (reason !== 'eof' && reason !== 'stop') return;
+    document.dispatchEvent(new CustomEvent('stremio-custom-episode-ended'));
+  }
+
   function handleMpvPropChange(payload) {
     const change = Array.isArray(payload) ? payload[1] : payload;
     if (!change?.name) return;
@@ -813,6 +834,7 @@
       transport.onmessage = function (ev) {
         const payload = parseShellPayload(ev?.data);
         if (payload) handleMpvPropChange(payload);
+        notifyEpisodeEnded(ev?.data);
         if (typeof original === 'function') original.call(this, ev);
       };
     }
@@ -822,6 +844,7 @@
       window.chrome.webview.addEventListener('message', (ev) => {
         const payload = parseShellPayload(ev?.data);
         if (payload) handleMpvPropChange(payload);
+        notifyEpisodeEnded(ev?.data);
       });
     }
   }

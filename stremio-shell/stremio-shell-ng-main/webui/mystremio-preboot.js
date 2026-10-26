@@ -8,6 +8,25 @@
   if (window.__stremioCustomPreboot) return;
   window.__stremioCustomPreboot = true;
 
+  if (!document.getElementById('mystremio-critical-theme')) {
+    const critical = document.createElement('style');
+    critical.id = 'mystremio-critical-theme';
+    critical.textContent =
+      'html,body,#root,#app{background:rgb(20,20,20)!important;color:#fff!important;}' +
+      'a,a:visited,a:hover,a:active{color:#fff!important;}' +
+      ':root{--primary-accent-color:#fff!important;--primary-foreground-color:#fff!important;' +
+      '--background:rgb(20,20,20)!important;}' +
+      '[class*="settings-content"] [class*="section"]>[class*="label"]:has(#mystremio-quick-settings-reload){' +
+      'display:flex!important;align-items:center!important;justify-content:space-between!important;' +
+      'gap:1rem!important;width:100%!important;box-sizing:border-box!important;}' +
+      '#mystremio-quick-settings-reload{flex:none!important;margin-left:auto!important;display:inline-flex!important;' +
+      'align-items:center!important;justify-content:center!important;min-height:2.1rem!important;' +
+      'padding:0.35rem 0.95rem!important;border-radius:999px!important;border:1px solid rgba(255,255,255,0.12)!important;' +
+      'background:rgba(70,70,70,0.22)!important;color:#fff!important;font:inherit!important;font-weight:600!important;' +
+      'font-size:0.9rem!important;line-height:1!important;cursor:pointer!important;}';
+    (document.documentElement || document.head).appendChild(critical);
+  }
+
   const HERO_CACHE_KEY = 'mystremio_hero_titles_v1';
   const RELOAD_GUARD_KEY = 'mystremio_hero_crash_reload_v1';
 
@@ -130,7 +149,8 @@
         const style = document.createElement('style');
         style.id = 'mystremio-boot-seal-style';
         style.textContent =
-          'html.mystremio-booting #app,html.mystremio-booting #root{' +
+          'html.mystremio-booting #app,html.mystremio-booting #root,' +
+          'html.mystremio-booting [class*="hero-slot"]{' +
           'visibility:hidden!important;}' +
           '#mystremio-boot-seal{position:fixed!important;inset:0!important;' +
           'z-index:2147483647!important;background:rgb(20,20,20)!important;' +
@@ -144,6 +164,7 @@
   window.__stremioCustomEnsureBootSeal = ensureBootSeal;
   window.__stremioCustomRemoveBootSeal = function () {
     try {
+      if (!document.getElementById('stremio-custom-active-theme')) return;
       window.__stremioCustomBootSealRetired = true;
       document.documentElement.classList.remove('mystremio-booting');
       document.getElementById('mystremio-boot-seal')?.remove();

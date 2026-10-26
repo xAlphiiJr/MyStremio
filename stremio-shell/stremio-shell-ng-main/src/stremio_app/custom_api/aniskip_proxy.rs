@@ -21,23 +21,14 @@ fn http_client() -> Result<Client, String> {
 fn default_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_static(USER_AGENT_VALUE),
-    );
+    headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
     headers
 }
 
 fn kitsu_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
-    headers.insert(
-        ACCEPT,
-        HeaderValue::from_static("application/vnd.api+json"),
-    );
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_static(USER_AGENT_VALUE),
-    );
+    headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.api+json"));
+    headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
     headers
 }
 
@@ -82,7 +73,11 @@ pub fn get_skip_times(
         let payload = v1_response
             .json::<Value>()
             .map_err(|error| format!("AniSkip v1 response was not valid JSON: {error}"))?;
-        if payload.get("found").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if payload
+            .get("found")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             return Ok(payload);
         }
         // Empty v1 → try v2 when we have a duration.
@@ -228,7 +223,11 @@ pub fn resolve_mal_from_jikan(title: &str, year: Option<u32>) -> Result<Option<u
     let needle = trimmed.to_lowercase();
     let mut best: Option<(u32, u64)> = None;
     for entry in entries {
-        let Some(mal_id) = entry.get("mal_id").and_then(|v| v.as_u64()).filter(|id| *id > 0) else {
+        let Some(mal_id) = entry
+            .get("mal_id")
+            .and_then(|v| v.as_u64())
+            .filter(|id| *id > 0)
+        else {
             continue;
         };
         let titles = jikan_titles(entry);

@@ -126,7 +126,7 @@ fn spawn_server_thread(
             "http://127.0.0.1:11475/index.html#/?streamingServerUrl=http%3A%2F%2F127.0.0.1%3A11470%2F";
         let local_webui_available = webui_server_path.exists() && webui_index.exists();
 
-        if local_webui_available {
+        if local_webui_available && TcpStream::connect("127.0.0.1:11475").is_err() {
             match Command::new(runtime_path.clone())
                 .arg(&webui_server_path)
                 .arg("--dir")
@@ -153,6 +153,12 @@ fn spawn_server_thread(
                 }
                 thread::sleep(Duration::from_millis(100));
             }
+        }
+
+        if StremioServer::is_engine_reachable() {
+            println!("Stremio server already ready at http://127.0.0.1:11470");
+            tx.send("http://127.0.0.1:11470".to_string()).ok();
+            return;
         }
 
         let mut server_command = Command::new(runtime_path);
@@ -277,10 +283,7 @@ impl StremioServer {
             Ok(client) => client,
             Err(_) => return false,
         };
-        match client
-            .get(format!("http://{ENGINE_HOST}/settings"))
-            .send()
-        {
+        match client.get(format!("http://{ENGINE_HOST}/settings")).send() {
             Ok(response) => response.status().is_success(),
             Err(_) => false,
         }

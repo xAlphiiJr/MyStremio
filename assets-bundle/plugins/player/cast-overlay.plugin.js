@@ -934,22 +934,8 @@
    * @param {Element} container
    */
   function placeCastButton(button, container) {
-    if (!button || !container) return;
-    const menuButton = container.querySelector('[class*="control-bar-buttons-menu-button"]');
-    const contribute = document.getElementById(CONTRIBUTE_BTN_ID);
-    if (contribute && container.contains(contribute)) {
-      if (button.previousElementSibling !== contribute) {
-        container.insertBefore(button, contribute.nextSibling);
-      }
-      return;
-    }
-    if (menuButton && container.contains(menuButton)) {
-      if (button.nextElementSibling !== menuButton) {
-        container.insertBefore(button, menuButton);
-      }
-      return;
-    }
-    if (button.parentNode !== container) container.appendChild(button);
+    if (button && container && !container.contains(button)) container.appendChild(button);
+    window.__stremioCustomLayoutPlayerButtons?.();
   }
 
   /**

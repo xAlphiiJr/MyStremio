@@ -1,7 +1,7 @@
 /**
  * @name Meta Hover Panel
  * @description Rich movie/series info panel on poster hover using Cinemeta metadata.
- * @version 2.2.2
+ * @version 2.2.6
  * @author MyStremio
  * @category Metadata
  */
@@ -9,10 +9,11 @@
 (function () {
   'use strict';
 
-  const PLUGIN_VERSION = '2.2.2';
+  const PLUGIN_VERSION = '2.2.7';
 
   const CONFIG = {
     HOVER_DELAY: 450,
+    HIDE_GRACE: 240,
     API_BASE: 'https://v3-cinemeta.strem.io/meta',
     API_TIMEOUT: 2500,
     CACHE_SIZE: 80,
@@ -29,6 +30,8 @@
   const RATINGS_CACHE_TTL_MS = 10 * 60 * 1000;
   const RATINGS_INCOMPLETE_TTL_MS = 5 * 1000;
   let hoverTimer = null;
+  let hideTimer = null;
+  let panelPointerInside = false;
   let activePanel = null;
   let activeAnchor = null;
   let trackedAnchor = null;
@@ -41,18 +44,22 @@
   const styles = `
     .meta-hover-panel {
       position: fixed;
+      display: flex;
+      flex-direction: column;
       width: ${CONFIG.PANEL_WIDTH}px;
       max-height: min(78vh, 640px);
-      overflow: hidden auto;
+      /* Visible: backdrop-filter plus overflow clips the scaled play circle. */
+      overflow: visible;
       z-index: 100;
       border-radius: 14px;
-      background: rgba(18, 18, 22, 0.94);
+      background: transparent;
       border: 1px solid rgba(255, 255, 255, 0.1);
       box-shadow:
         0 16px 48px rgba(0, 0, 0, 0.55),
         0 0 0 1px rgba(123, 91, 245, 0.25),
         inset 0 1px 0 rgba(255, 255, 255, 0.08);
-      backdrop-filter: blur(18px) saturate(160%);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
       color: #fff;
       font-family: inherit;
       pointer-events: none;
@@ -61,29 +68,134 @@
       transition: opacity 0.2s ease, transform 0.2s ease;
     }
 
+    .meta-hover-panel::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      border-radius: inherit;
+      pointer-events: none;
+      background: rgba(18, 18, 22, 0.94);
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+    }
+
     .meta-hover-panel.visible {
       opacity: 1;
       transform: translateY(0) scale(1);
+      pointer-events: auto;
     }
 
     .meta-hover-panel-header {
-      padding: 1.1rem 1.15rem 0.85rem;
+      position: relative;
+      z-index: 1;
+      flex: none;
+      /* App reset sets overflow:hidden on every element and cuts the hover circle. */
+      overflow: visible;
+      padding: 0.95rem 1rem 0.8rem 1.15rem;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }
 
+    .meta-hover-panel-body {
+      overflow: auto;
+      min-height: 0;
+      border-radius: 0 0 14px 14px;
+    }
+
+    .meta-hover-panel-header-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      column-gap: 0.75rem;
+      align-items: start;
+      min-width: 0;
+      overflow: visible;
+    }
+
+    .meta-hover-panel-headline {
+      grid-column: 1;
+      grid-row: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      overflow: visible;
+    }
+
+    .meta-hover-panel-play {
+      grid-column: 2;
+      grid-row: 1;
+      justify-self: end;
+      align-self: start;
+      position: relative;
+      width: 0;
+      height: 0;
+      margin: 0;
+      border: 0;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      background: transparent;
+      color: #16161a;
+      -webkit-appearance: none;
+      appearance: none;
+      overflow: visible;
+    }
+
+    .meta-hover-panel-play::before {
+      content: "";
+      position: absolute;
+      /* Rest circle matches the glyph span; 1.06 fills this box and does not leave it. */
+      inset: calc((1 - 1 / 1.06) / 2 * 100%);
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+      transition: transform 0.15s ease;
+    }
+
+    .meta-hover-panel-play:hover::before {
+      transform: scale(1.06);
+    }
+
+    .meta-hover-panel-play:active::before {
+      transform: scale(0.96);
+    }
+
+    .meta-hover-panel-play:focus-visible::before {
+      outline: 2px solid rgba(255, 255, 255, 0.85);
+      outline-offset: 2px;
+    }
+
+    .meta-hover-panel-play svg {
+      position: absolute;
+      z-index: 1;
+      left: 50%;
+      top: 50%;
+      width: 42%;
+      height: 42%;
+      transform: translate(calc(-50% + 16%), -50%);
+      transition: transform 0.15s ease;
+    }
+
+    .meta-hover-panel-play:hover svg {
+      transform: translate(calc(-50% + 16%), -50%) scale(1.06);
+    }
+
+    .meta-hover-panel-play:active svg {
+      transform: translate(calc(-50% + 16%), -50%) scale(0.96);
+    }
+
     .meta-hover-panel-title {
+      min-width: 0;
       font-size: 1.35rem;
       font-weight: 700;
-      line-height: 1.25;
-      margin-bottom: 0.45rem;
+      line-height: 1.2;
+      margin: 0;
     }
 
     .meta-hover-panel-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.55rem;
-      align-items: center;
       font-size: 0.82rem;
+      line-height: 1.2;
       color: rgba(255, 255, 255, 0.78);
     }
 
@@ -105,13 +217,13 @@
     }
 
     .meta-hover-panel-ratings-host {
-      display: inline-flex;
+      display: flex;
       align-items: center;
       flex-wrap: wrap;
       gap: 0.35rem;
       min-height: 22px;
       max-width: 100%;
-      margin-top: 0.15rem;
+      margin-top: 0.55rem;
       pointer-events: auto;
     }
 
@@ -289,11 +401,13 @@
   `;
 
   function injectStyles() {
-    if (document.getElementById('meta-hover-panel-css')) return;
-    const style = document.createElement('style');
-    style.id = 'meta-hover-panel-css';
+    let style = document.getElementById('meta-hover-panel-css');
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'meta-hover-panel-css';
+      document.head.appendChild(style);
+    }
     style.textContent = styles;
-    document.head.appendChild(style);
   }
 
   function extractImdbFromSource(text) {
@@ -1522,6 +1636,72 @@
     }
   }
 
+  function createPlayButton(meta, type, imdbId) {
+    const playId = pickHoverImdbId(imdbId, meta);
+    if (!playId) return null;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'meta-hover-panel-play';
+    button.title = 'Play';
+    button.setAttribute('aria-label', 'Play');
+    button.innerHTML = '<svg viewBox="8 5 11 14" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>';
+    const stop = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    button.addEventListener('pointerdown', stop);
+    button.addEventListener('click', (event) => {
+      stop(event);
+      const api = window.StremioCustomQuickPlay;
+      if (!api || typeof api.play !== 'function') return;
+      api.play({
+        id: playId,
+        type: type === 'series' ? 'series' : 'movie',
+        title: meta.name,
+        name: meta.name,
+        background: meta.background,
+        logo: meta.logo,
+      });
+      clearHoverState();
+    });
+    return button;
+  }
+
+  function playInk(headline) {
+    const title = headline.querySelector('.meta-hover-panel-title');
+    const meta = headline.querySelector('.meta-hover-panel-meta');
+    if (!title) return null;
+    const range = document.createRange();
+    range.selectNodeContents(title);
+    const top = range.getBoundingClientRect().top;
+    range.selectNodeContents(meta || title);
+    const bottom = range.getBoundingClientRect().bottom;
+    return { top, height: bottom - top };
+  }
+
+  // shortcut: circle stops once the title column would drop under ~140px
+  function fitPlayButton(panel) {
+    const button = panel.querySelector('.meta-hover-panel-play');
+    const headline = panel.querySelector('.meta-hover-panel-headline');
+    if (!button || !headline) return;
+    const limit = Math.max(32, panel.clientWidth - 140);
+    button.style.width = '0px';
+    button.style.height = '0px';
+    button.style.marginTop = '0px';
+    let size = 0;
+    for (let i = 0; i < 4; i++) {
+      const ink = playInk(headline);
+      if (!ink || ink.height <= 0) return;
+      const next = Math.min(Math.round(ink.height * 1.06), limit);
+      if (next === size) break;
+      size = next;
+      const shift = ink.top - headline.getBoundingClientRect().top - (size - ink.height) / 2;
+      button.style.marginTop = Math.round(shift) + 'px';
+      button.style.width = size + 'px';
+      button.style.height = size + 'px';
+    }
+  }
+
   function renderPanel(meta, type, resolvedImdb) {
     const panel = document.createElement('div');
     panel.className = 'meta-hover-panel';
@@ -1534,15 +1714,19 @@
     title.className = 'meta-hover-panel-title';
     title.textContent = meta.name || 'Unbekannt';
 
-    const metaLine = document.createElement('div');
-    metaLine.className = 'meta-hover-panel-meta';
+    const playButton = createPlayButton(meta, type, resolvedImdb);
+
+    const headline = document.createElement('div');
+    headline.className = 'meta-hover-panel-headline';
+    headline.appendChild(title);
     const info = buildMetaLine(meta, type);
     if (info) {
-      const span = document.createElement('span');
-      span.textContent = info;
-      metaLine.appendChild(span);
+      const metaLine = document.createElement('div');
+      metaLine.className = 'meta-hover-panel-meta';
+      metaLine.textContent = info;
+      headline.appendChild(metaLine);
     }
-    const ratingsHost = document.createElement('span');
+    const ratingsHost = document.createElement('div');
     ratingsHost.className = 'meta-hover-panel-ratings-host';
     const imdbId = pickHoverImdbId(resolvedImdb, meta);
     const cached = imdbId ? peekHoverRatings(imdbId, type) : null;
@@ -1553,11 +1737,16 @@
     } else if (meta.imdbRating) {
       renderImdbFallback(ratingsHost, meta);
     }
-    metaLine.appendChild(ratingsHost);
     fillHoverRatings(ratingsHost, meta, type, imdbId);
 
-    header.append(title, metaLine);
+    const headerMain = document.createElement('div');
+    headerMain.className = 'meta-hover-panel-header-main';
+    headerMain.appendChild(headline);
+    if (playButton) headerMain.appendChild(playButton);
+    header.append(headerMain, ratingsHost);
     panel.appendChild(header);
+    const sections = document.createElement('div');
+    sections.className = 'meta-hover-panel-body';
 
     const genres = getGenres(meta).slice(0, CONFIG.MAX_GENRES);
     if (genres.length) {
@@ -1569,14 +1758,14 @@
         tag.textContent = genre;
         tags.appendChild(tag);
       });
-      panel.appendChild(createSection('Tags', tags));
+      sections.appendChild(createSection('Tags', tags));
     }
 
     if (meta.description) {
       const plot = document.createElement('div');
       plot.className = 'meta-hover-panel-plot';
       plot.textContent = meta.description;
-      panel.appendChild(createSection('Plot', plot));
+      sections.appendChild(createSection('Plot', plot));
     }
 
     const director = getDirector(meta);
@@ -1590,7 +1779,7 @@
       name.textContent = director;
       text.appendChild(name);
       person.appendChild(text);
-      panel.appendChild(createSection('Director', person));
+      sections.appendChild(createSection('Director', person));
     }
 
     const cast = getCast(meta);
@@ -1615,9 +1804,10 @@
         item.appendChild(text);
         grid.appendChild(item);
       });
-      panel.appendChild(createSection('Cast', grid));
+      sections.appendChild(createSection('Cast', grid));
     }
 
+    if (sections.childElementCount) panel.appendChild(sections);
     return panel;
   }
 
@@ -1639,12 +1829,25 @@
   }
 
   function removePanel() {
-    if (activePanel) {
-      activePanel.remove();
-      activePanel = null;
-    }
+    const panel = activePanel;
+    activePanel = null;
     activeAnchor = null;
+    panelPointerInside = false;
+    if (panel) panel.remove();
     document.querySelectorAll('#meta-hover-panel-active').forEach((node) => node.remove());
+  }
+
+  function attachPanelPointer(panel) {
+    panel.addEventListener('pointerenter', () => {
+      if (panel !== activePanel) return;
+      panelPointerInside = true;
+      cancelScheduledHide();
+    });
+    panel.addEventListener('pointerleave', () => {
+      if (panel !== activePanel) return;
+      panelPointerInside = false;
+      scheduleHide();
+    });
   }
 
   function getPosterSurface(anchor) {
@@ -1672,8 +1875,35 @@
   }
 
   /**
-   * Painted Continue Watching cover. Enhanced Covers can collapse the card
-   * layout box to ~0 while the image still paints — never clamp to card.bottom.
+   * Visible slice. The CW row clips overflow; Enhanced Covers' 16:9 box can
+   * extend past that clip while the pointer only hits the visible part.
+   * @param {{left:number,right:number,top:number,bottom:number}} rect
+   * @param {{left:number,right:number,top:number,bottom:number}} clip
+   */
+  function clipRect(rect, clip) {
+    const left = Math.max(rect.left, clip.left);
+    const right = Math.min(rect.right, clip.right);
+    const top = Math.max(rect.top, clip.top);
+    const bottom = Math.min(rect.bottom, clip.bottom);
+    if (right - left < 8 || bottom - top < 8) return rect;
+    return { left, right, top, bottom, width: right - left, height: bottom - top };
+  }
+
+  function assertClipRect() {
+    const clipped = clipRect(
+      { left: 0, right: 400, top: 0, bottom: 200 },
+      { left: 50, right: 150, top: 10, bottom: 180 },
+    );
+    if (clipped.left !== 50 || clipped.right !== 150 || clipped.top !== 10 || clipped.width !== 100) {
+      console.error('[MetaHoverPanel] clipRect self-check failed');
+    }
+  }
+
+  /**
+   * Painted Continue Watching cover.
+   * Poster-container first: Enhanced Covers sets that box to 16:9, and with the
+   * plugin off the same box is the native poster. Img is only the fallback when
+   * the container collapses to 0.
    *
    * @param {Element|null} anchor
    * @returns {{left:number,right:number,top:number,bottom:number,width:number,height:number}|null}
@@ -1685,42 +1915,42 @@
     const minSize = 8;
     const usable = (rect) => rect && rect.width >= minSize && rect.height >= minSize;
 
-    const img = live.querySelector('img[class*="poster-image"]');
-    if (img?.isConnected) {
-      const rect = img.getBoundingClientRect();
-      if (usable(rect)) return copyHitRect(rect);
-    }
-
+    let rect = null;
     const poster = getPosterSurface(live);
     if (poster?.isConnected) {
-      const rect = poster.getBoundingClientRect();
-      if (usable(rect)) return copyHitRect(rect);
+      const box = poster.getBoundingClientRect();
+      if (usable(box)) rect = copyHitRect(box);
     }
-
-    const card = live.getBoundingClientRect();
-    if (card.width < minSize) return null;
-
-    let top = card.top;
-    let bottom = card.top + Math.max((card.width * 9) / 16, 180);
-    const title = live.querySelector('[class*="title-bar-container"], [class*="title-bar"]');
-    if (title) {
-      const titleRect = title.getBoundingClientRect();
-      if (titleRect.top > card.top + 40) {
-        bottom = titleRect.top;
+    if (!rect) {
+      const img = live.querySelector('img[class*="poster-image"]');
+      if (img?.isConnected) {
+        const box = img.getBoundingClientRect();
+        if (usable(box)) rect = copyHitRect(box);
       }
     }
+    if (!rect) {
+      const card = live.getBoundingClientRect();
+      if (card.width < minSize) return null;
+      let bottom = card.bottom;
+      const title = live.querySelector('[class*="title-bar-container"], [class*="title-bar"]');
+      if (title) {
+        const titleRect = title.getBoundingClientRect();
+        if (titleRect.top > card.top + 40) bottom = titleRect.top;
+      }
+      if (bottom - card.top < minSize) return null;
+      rect = {
+        left: card.left,
+        right: card.right,
+        top: card.top,
+        bottom,
+        width: card.width,
+        height: bottom - card.top,
+      };
+    }
 
-    const height = bottom - top;
-    if (height < minSize) return null;
-
-    return {
-      left: card.left,
-      right: card.right,
-      top,
-      bottom,
-      width: card.width,
-      height,
-    };
+    const port = live.closest('[class*="meta-items-container"]');
+    if (port) rect = clipRect(rect, port.getBoundingClientRect());
+    return rect;
   }
 
   /**
@@ -1785,9 +2015,20 @@
    * @param {number} [pad]
    * @returns {boolean}
    */
+  function isCwRowHidden(node) {
+    const row = node?.closest?.('[class*="continue-watching-row"]');
+    return Boolean(
+      row && (row.getAttribute('aria-hidden') === 'true' || row.closest('.mystremio-cw-collapsed')),
+    );
+  }
+  if (isCwRowHidden({ closest: () => null })) throw new Error('cw hover without row');
+  if (!isCwRowHidden({ closest: () => ({ getAttribute: () => 'true', closest: () => null }) })) {
+    throw new Error('cw hover stays on hidden row');
+  }
+
   function isPointerOverCwCard(anchor, x, y, pad = 0) {
     const live = rebindAnchorIfDetached(anchor);
-    if (!(live instanceof Element)) return false;
+    if (!(live instanceof Element) || isCwRowHidden(live)) return false;
     const rect = cwHitRect(live);
     if (rect && pointInRect(x, y, rect, pad)) return true;
     const el = document.elementFromPoint(x, y);
@@ -1815,13 +2056,15 @@
    */
   function cardFromPoint(x, y) {
     const el = document.elementFromPoint(x, y);
+    if (el instanceof Element && el.closest('.meta-hover-panel')) return null;
     const fromEl = el?.closest('[class*="meta-item-container"]');
-    if (fromEl && isContinueWatchingCard(fromEl)) return fromEl;
+    if (fromEl && isContinueWatchingCard(fromEl) && !isCwRowHidden(fromEl)) return fromEl;
 
     const cwCards = document.querySelectorAll(
       '[class*="continue-watching-row"] [class*="meta-item-container"]',
     );
     for (const node of cwCards) {
+      if (isCwRowHidden(node)) continue;
       const rect = cwHitRect(node);
       if (rect && pointInRect(x, y, rect, 0)) return node;
     }
@@ -1883,6 +2126,7 @@
     const live = rebindAnchorIfDetached(anchor);
     const key = mediaKeyFromAnchor(live) || trackedMediaKey;
     if (trackedMediaKey && key && trackedMediaKey !== key) return false;
+    if (panelPointerInside || hideTimer) return true;
     if (isPointerOverHoverTarget(lastPointer.x, lastPointer.y)) return true;
     // Catalog re-render can drop the poster node for a frame; keep the same media intent.
     if (trackedMediaKey && (!live || !getPosterSurface(live))) return true;
@@ -1912,14 +2156,46 @@
    * @param {number} y
    * @returns {boolean}
    */
+  function posterRect(anchor) {
+    if (isContinueWatchingCard(anchor)) return cwHitRect(anchor);
+    return getPosterHitRect(anchor);
+  }
+
+  // The 12px gap between poster and panel used to dismiss the hover
+  // before the pointer reached the play button.
+  function pointerInPosterPanelGap(x, y) {
+    if (!activePanel?.isConnected) return false;
+    const poster = posterRect(activeAnchor) || posterRect(trackedAnchor);
+    if (!poster) return false;
+    const panel = activePanel.getBoundingClientRect();
+    const pad = 20;
+    let left;
+    let right;
+    if (poster.right <= panel.left) {
+      left = poster.right - pad;
+      right = panel.left + pad;
+    } else if (panel.right <= poster.left) {
+      left = panel.right - pad;
+      right = poster.left + pad;
+    } else {
+      return false;
+    }
+    const top = Math.min(poster.top, panel.top) - pad;
+    const bottom = Math.max(poster.bottom, panel.bottom) + pad;
+    return x >= left && x <= right && y >= top && y <= bottom;
+  }
+
   function isPointerOverHoverTarget(x, y) {
+    if (panelPointerInside) return true;
     const posterPad = activePanel ? 8 : 0;
     if (isPointerOverPoster(activeAnchor, x, y, posterPad)) return true;
     if (isPointerOverPoster(trackedAnchor, x, y, posterPad)) return true;
-    if (activePanel?.isConnected && pointInRect(x, y, activePanel.getBoundingClientRect(), 8)) {
+    if (activePanel?.isConnected && pointInRect(x, y, activePanel.getBoundingClientRect(), 12)) {
       return true;
     }
-    return false;
+    const hit = document.elementFromPoint(x, y);
+    if (hit instanceof Element && hit.closest('.meta-hover-panel')) return true;
+    return pointerInPosterPanelGap(x, y);
   }
 
   /**
@@ -1943,7 +2219,7 @@
     }
 
     if (!activeAnchor?.isConnected || !isAnchorVisible(activeAnchor)) {
-      clearHoverState();
+      if (!panelPointerInside) clearHoverState();
       return;
     }
 
@@ -1989,6 +2265,7 @@
     document.body.appendChild(loading);
     positionPanel(loading, panelAnchorRect(anchor));
     activePanel = loading;
+    attachPanelPointer(loading);
 
     const imdbId = await resolveImdbId(media);
     const tmdbId =
@@ -1998,6 +2275,7 @@
     if (tmdbId) candidateIds.push(`tmdb:${tmdbId}`);
     if (!candidateIds.length || !stillValid()) {
       removePanel();
+      if (!candidateIds.length) markNativeTitleFallback(anchor);
       return;
     }
 
@@ -2013,7 +2291,9 @@
       if (activePanel) {
         activePanel.innerHTML = '<div class="meta-hover-panel-loading">Keine Metadaten</div>';
         setTimeout(() => {
-          if (generation === showGeneration) removePanel();
+          if (generation !== showGeneration) return;
+          removePanel();
+          markNativeTitleFallback(anchor);
         }, 1200);
       }
       return;
@@ -2038,8 +2318,10 @@
     const panel = renderPanel(meta, resolvedType, imdbId);
     panel.classList.add('visible');
     document.body.appendChild(panel);
-    loading.remove();
+    fitPlayButton(panel);
     activePanel = panel;
+    attachPanelPointer(panel);
+    loading.remove();
     positionPanel(panel, panelAnchorRect(anchor));
   }
 
@@ -2052,32 +2334,165 @@
     showGeneration += 1;
     clearTimeout(hoverTimer);
     hoverTimer = null;
+    cancelScheduledHide();
+    panelPointerInside = false;
     trackedAnchor = null;
     trackedMediaKey = null;
+    nativeTitleFallbackAnchor = null;
+    restoreAllNativeHoverTitles();
     removePanel();
+  }
+
+  let nativeTitleHeld = null;
+  let nativeTitleFallbackAnchor = null;
+  let nativeTitleObserver = null;
+
+  /**
+   * Browser tooltip comes from the cover's title attribute. Hold it only while
+   * this plugin owns the hover; put it back when the panel cannot run.
+   * shortcut: Chromium shows the restored tooltip only after the next real mouse move.
+   * @param {Element} anchor
+   */
+  function suppressNativeHoverTitle(anchor) {
+    if (!(anchor instanceof Element)) return;
+    if (nativeTitleHeld && nativeTitleHeld !== anchor) restoreNativeHoverTitle(nativeTitleHeld);
+    if (anchor.dataset.metaHoverTitleHeld !== '1') {
+      anchor.dataset.metaHoverTitleHeld = '1';
+      anchor.dataset.metaHoverNativeTitle = anchor.getAttribute('title') ?? '';
+    } else if (anchor.hasAttribute('title')) {
+      const next = anchor.getAttribute('title') ?? '';
+      if (next) anchor.dataset.metaHoverNativeTitle = next;
+    }
+    if (anchor.hasAttribute('title')) anchor.removeAttribute('title');
+    if (nativeTitleHeld === anchor) return;
+    nativeTitleHeld = anchor;
+    if (!nativeTitleObserver) {
+      nativeTitleObserver = new MutationObserver(() => {
+        const held = nativeTitleHeld;
+        if (!held?.isConnected || held === nativeTitleFallbackAnchor) return;
+        if (!held.hasAttribute('title')) return;
+        const next = held.getAttribute('title') ?? '';
+        if (next) held.dataset.metaHoverNativeTitle = next;
+        held.removeAttribute('title');
+      });
+    }
+    nativeTitleObserver.disconnect();
+    nativeTitleObserver.observe(anchor, { attributes: true, attributeFilter: ['title'] });
+  }
+
+  /** @param {Element} anchor */
+  function restoreNativeHoverTitle(anchor) {
+    if (!(anchor instanceof Element)) return;
+    if (nativeTitleHeld === anchor) {
+      nativeTitleHeld = null;
+      nativeTitleObserver?.disconnect();
+    }
+    if (anchor.dataset.metaHoverTitleHeld !== '1') return;
+    const saved = anchor.dataset.metaHoverNativeTitle ?? '';
+    delete anchor.dataset.metaHoverTitleHeld;
+    delete anchor.dataset.metaHoverNativeTitle;
+    if (saved) anchor.setAttribute('title', saved);
+  }
+
+  function restoreAllNativeHoverTitles() {
+    nativeTitleObserver?.disconnect();
+    const nodes = new Set(document.querySelectorAll('[data-meta-hover-title-held="1"]'));
+    if (nativeTitleHeld) nodes.add(nativeTitleHeld);
+    nativeTitleHeld = null;
+    nodes.forEach((node) => restoreNativeHoverTitle(node));
+  }
+
+  /** Panel cannot describe this cover — give the native title tooltip back. @param {Element} anchor */
+  function markNativeTitleFallback(anchor) {
+    const live = (anchor?.isConnected ? anchor : rebindAnchorIfDetached(anchor)) || anchor;
+    if (!(live instanceof Element)) return;
+    if (!isPointerOverPoster(live, lastPointer.x, lastPointer.y, 0)) {
+      restoreNativeHoverTitle(live);
+      return;
+    }
+    nativeTitleFallbackAnchor = live;
+    restoreNativeHoverTitle(live);
+  }
+
+  function assertNativeTitleHold() {
+    const el = document.createElement('a');
+    el.setAttribute('title', 'Film');
+    suppressNativeHoverTitle(el);
+    const held = !el.hasAttribute('title') && el.dataset.metaHoverNativeTitle === 'Film';
+    restoreNativeHoverTitle(el);
+    if (!held || el.getAttribute('title') !== 'Film' || nativeTitleHeld) {
+      console.error('[MetaHoverPanel] native title hold self-check failed');
+    }
+  }
+
+  function cancelScheduledHide() {
+    clearTimeout(hideTimer);
+    hideTimer = null;
+  }
+
+  function scheduleHide() {
+    if (hideTimer || panelPointerInside) return;
+    hideTimer = setTimeout(() => {
+      hideTimer = null;
+      if (panelPointerInside || isPointerOverHoverTarget(lastPointer.x, lastPointer.y)) return;
+      clearHoverState();
+    }, CONFIG.HIDE_GRACE);
+  }
+
+  function leaveHoverTarget() {
+    if (activePanel) scheduleHide();
+    else clearHoverState();
   }
 
   function scheduleHover(anchor) {
     if (!anchor || !isHoverRouteAllowed()) return;
+    if (isContinueWatchingCard(anchor) && isCwRowHidden(anchor)) {
+      clearHoverState();
+      return;
+    }
+    if (anchor === nativeTitleFallbackAnchor) {
+      restoreNativeHoverTitle(anchor);
+      if (nativeTitleHeld && nativeTitleHeld !== anchor) restoreNativeHoverTitle(nativeTitleHeld);
+      return;
+    }
     if (!isContinueWatchingCard(anchor) && !isPointerOverPoster(anchor, lastPointer.x, lastPointer.y, 0)) {
       return;
     }
+    suppressNativeHoverTitle(anchor);
     const nextKey = mediaKeyFromAnchor(anchor);
     if (trackedMediaKey && nextKey && trackedMediaKey === nextKey && (hoverTimer || activePanel)) {
       trackedAnchor = anchor;
+      cancelScheduledHide();
       return;
     }
+    cancelScheduledHide();
     trackedAnchor = anchor;
     trackedMediaKey = nextKey;
     clearTimeout(hoverTimer);
 
     hoverTimer = setTimeout(async () => {
       const cw = isContinueWatchingCard(anchor);
-      if (!isHoverRouteAllowed() || (!cw && !isHoverIntentActive(anchor))) return;
       const live = rebindAnchorIfDetached(anchor) || anchor;
+      if (!isHoverRouteAllowed()) {
+        restoreNativeHoverTitle(live);
+        return;
+      }
+      if (!cw && !isHoverIntentActive(anchor)) {
+        if (!isPointerOverPoster(live, lastPointer.x, lastPointer.y, 0)) restoreNativeHoverTitle(live);
+        else hoverTimer = null;
+        return;
+      }
       const media = await extractMediaInfo(live);
-      if (!isHoverRouteAllowed() || !media) return;
-      if (!isContinueWatchingCard(live) && !isHoverIntentActive(live)) return;
+      if (!isHoverRouteAllowed() || !media) {
+        if (!media) markNativeTitleFallback(live);
+        else restoreNativeHoverTitle(live);
+        return;
+      }
+      if (!isContinueWatchingCard(live) && !isHoverIntentActive(live)) {
+        if (!isPointerOverPoster(live, lastPointer.x, lastPointer.y, 0)) restoreNativeHoverTitle(live);
+        else hoverTimer = null;
+        return;
+      }
       if (media.id) trackedMediaKey = String(media.id).toLowerCase();
       if (media.id && /^tt\d{7,}/i.test(String(media.id))) {
         prefetchHoverRatings(media.id, media.type);
@@ -2091,8 +2506,12 @@
     const target = event.target;
     if (!(target instanceof Element)) return;
     const card = target.closest('[class*="meta-item-container"]');
-    if (!card || !isContinueWatchingCard(card)) return;
+    if (!card || !isContinueWatchingCard(card) || isCwRowHidden(card)) {
+      if (card && isCwRowHidden(card)) clearHoverState();
+      return;
+    }
     lastPointer = { x: event.clientX, y: event.clientY };
+    if (activePanel && isPointerOverHoverTarget(event.clientX, event.clientY)) return;
     scheduleHover(card);
   }
 
@@ -2114,19 +2533,25 @@
       const y = lastPointer.y;
 
       if (isContinueWatchingCard(trackedAnchor)) {
+        if (isCwRowHidden(trackedAnchor)) {
+          clearHoverState();
+          return;
+        }
         if (isPointerOverHoverTarget(x, y)) {
+          cancelScheduledHide();
           if (activePanel) {
             validateActivePanel({ x, y });
             repositionActivePanel();
           }
           return;
         }
-        clearHoverState();
+        leaveHoverTarget();
         return;
       }
 
       // Keep an open panel while the pointer stays over poster or panel area.
       if (activePanel && isPointerOverHoverTarget(x, y)) {
+        cancelScheduledHide();
         validateActivePanel({ x, y });
         repositionActivePanel();
         return;
@@ -2141,6 +2566,7 @@
             activeAnchor = card;
             trackedAnchor = card;
           }
+          cancelScheduledHide();
           repositionActivePanel();
           return;
         }
@@ -2150,9 +2576,10 @@
       }
 
       if (isPointerOverHoverTarget(x, y)) {
+        cancelScheduledHide();
         return;
       }
-      clearHoverState();
+      leaveHoverTarget();
     });
   }
 
@@ -2163,6 +2590,7 @@
    */
   function handlePointerDown(event) {
     if (!(event instanceof PointerEvent) || event.button !== 0) return;
+    if (event.target instanceof Element && event.target.closest('.meta-hover-panel')) return;
     const anchor = getMetaItemAnchor(event.target);
     if (anchor || activePanel || trackedAnchor) {
       clearHoverState();
@@ -2190,7 +2618,7 @@
   }
 
   function repositionActivePanel() {
-    if (!activePanel || !activeAnchor) return;
+    if (!activePanel || !activeAnchor || panelPointerInside) return;
     positionPanel(activePanel, panelAnchorRect(activeAnchor));
   }
 
@@ -2268,7 +2696,14 @@
         // Row-nav chevrons / width freezes mutate the catalog constantly — only tear down
         // when the hovered poster itself was removed from the DOM.
         if (activeAnchor && !activeAnchor.isConnected) {
-          clearHoverState();
+          const live = rebindAnchorIfDetached(activeAnchor);
+          if (live?.isConnected) {
+            activeAnchor = live;
+            trackedAnchor = live;
+            if (live !== nativeTitleFallbackAnchor) suppressNativeHoverTitle(live);
+          } else if (!panelPointerInside) {
+            clearHoverState();
+          }
         }
         mutations.forEach((mutation) => {
           if (isEnhancedCoversNoise(mutation)) return;
@@ -2316,6 +2751,9 @@
       runtimeBound = true;
       document.addEventListener('mousemove', handlePointerMove, { passive: true });
       document.addEventListener('mouseover', handleCwMouseOver, true);
+      document.addEventListener('click', (event) => {
+        if (event.target?.closest?.('.mystremio-cw-toggle')) clearHoverState();
+      }, true);
       document.addEventListener('pointerdown', handlePointerDown, true);
       document.addEventListener('mouseleave', clearHoverState);
       window.addEventListener('scroll', handleScroll, true);
@@ -2336,6 +2774,8 @@
     }
 
     ensureRuntime();
+    assertClipRect();
+    assertNativeTitleHold();
     console.info('[MetaHoverPanel] Ready');
   }
 

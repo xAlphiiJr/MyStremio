@@ -1,9 +1,7 @@
 use crate::stremio_app::constants::APP_DATA_DIR;
 use std::{
     collections::HashSet,
-    env,
-    fs,
-    io,
+    env, fs, io,
     path::{Path, PathBuf},
 };
 
@@ -230,13 +228,10 @@ fn migrate_legacy_webview_user_data(target: &Path) {
         return;
     }
 
-    let Some(exe_dir) = env::current_exe()
-        .ok()
-        .and_then(|mut path| {
-            path.pop();
-            Some(path)
-        })
-    else {
+    let Some(exe_dir) = env::current_exe().ok().and_then(|mut path| {
+        path.pop();
+        Some(path)
+    }) else {
         return;
     };
 
@@ -524,7 +519,9 @@ fn walk_files_inner(root: &Path, current: &Path, extension: &str, files: &mut Ve
         if path
             .extension()
             .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| format!(".{ext}") == extension || path.to_string_lossy().ends_with(extension))
+            .is_some_and(|ext| {
+                format!(".{ext}") == extension || path.to_string_lossy().ends_with(extension)
+            })
         {
             if let Ok(relative) = path.strip_prefix(root) {
                 files.push(relative.to_string_lossy().replace('\\', "/"));

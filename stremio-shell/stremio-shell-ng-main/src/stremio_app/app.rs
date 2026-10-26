@@ -13,7 +13,9 @@ use std::{
 use winapi::um::{winbase::CREATE_BREAKAWAY_FROM_JOB, winuser::WS_EX_TOPMOST};
 
 use crate::stremio_app::{
-    constants::{APP_NAME, ENABLE_AUTOUPDATER, UPDATE_INTERVAL, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH},
+    constants::{
+        APP_NAME, ENABLE_AUTOUPDATER, UPDATE_INTERVAL, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
+    },
     custom_api,
     ipc::{RPCRequest, RPCResponse},
     splash::SplashImage,
@@ -45,7 +47,7 @@ pub struct MainWindow {
     pub requested_window_chrome: Arc<Mutex<Option<String>>>,
     /// Pending WebView2 DefaultBackgroundColor transparency (MPV punch-through).
     pub requested_webview_transparent: Arc<Mutex<Option<bool>>>,
-    /// Pending allowlisted power action: "sleep" | "close" | "shutdown" | "restart".
+    /// Pending allowlisted power action, canonical: "sleep", "close", "sleep,close", …
     pub requested_power: Arc<Mutex<Option<String>>>,
     pub saved_window_style: RefCell<WindowStyle>,
     #[nwg_resource]
@@ -184,6 +186,10 @@ impl MainWindow {
                         saved_style.bring_child_to_top(splash_hwnd);
                     }
                     saved_style.update_window_now(hwnd);
+                }
+                if let Some(splash_hwnd) = self.splash_screen.hwnd() {
+                    self.splash_screen.cover_client(hwnd);
+                    saved_style.bring_child_to_top(splash_hwnd);
                 }
             }
         }
@@ -341,10 +347,7 @@ impl MainWindow {
                     if value.get("method").and_then(|method| method.as_str())
                         == Some("toggle-player-pip")
                     {
-                        let id = value
-                            .get("id")
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Null);
+                        let id = value.get("id").cloned().unwrap_or(serde_json::Value::Null);
                         let _ = pip_response_rx.try_recv();
                         toggle_pip_sender.notice();
                         let active = pip_response_rx
@@ -365,21 +368,15 @@ impl MainWindow {
                     if value.get("method").and_then(|method| method.as_str())
                         == Some("power-action")
                     {
-                        let id = value
-                            .get("id")
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Null);
-                        let action = value
+                        let id = value.get("id").cloned().unwrap_or(serde_json::Value::Null);
+                        let requested = value
                             .get("params")
                             .and_then(|params| params.get("action"))
                             .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let allowed = matches!(
-                            action.as_str(),
-                            "sleep" | "close" | "shutdown" | "restart"
-                        );
-                        if allowed {
+                            .unwrap_or("");
+                        let action = crate::stremio_app::power_actions::parse_actions(requested);
+                        let allowed = action.is_some();
+                        if let Some(action) = action {
                             *requested_power.lock().unwrap() = Some(action);
                             power_action_sender.notice();
                         }
@@ -607,8 +604,12 @@ impl MainWindow {
         data.set_min_size(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT);
     }
     fn on_paint(&self) {
-        if !self.splash_screen.visible() {
-            self.webview.fit_to_window(self.window.handle.hwnd());
+        if let Some(hwnd) = self.window.handle.hwnd() {
+            if self.splash_screen.visible() {
+                self.splash_screen.cover_client(hwnd);
+                return;
+            }
+            self.webview.fit_to_window(Some(hwnd));
         }
     }
     fn on_window_state_changed(&self) {
@@ -635,6 +636,9 @@ impl MainWindow {
         }
     }
     fn on_toggle_fullscreen_notice(&self) {
+        // Opaque before the client rect changes. Alpha 0 leaves white strips
+        // where the WebView has not been resized yet.
+        self.webview.set_background_transparent(false);
         if let Some(hwnd) = self.window.handle.hwnd() {
             if let Ok(mut saved_style) = self.saved_window_style.try_borrow_mut() {
                 // Coalesce to the latest explicit target. Never toggle on empty notice —
@@ -643,14 +647,20 @@ impl MainWindow {
                 if let Some(target) = target {
                     saved_style.set_full_screen(hwnd, target);
                     self.tray.tray_topmost.set_enabled(!saved_style.full_screen);
-                    self.tray
-                        .tray_topmost
-                        .set_checked((saved_style.ex_style as u32 & WS_EX_TOPMOST) == WS_EX_TOPMOST);
+                    self.tray.tray_topmost.set_checked(
+                        (saved_style.ex_style as u32 & WS_EX_TOPMOST) == WS_EX_TOPMOST,
+                    );
                 }
             }
             // Client area changes when chrome is stripped — keep WebView bounds in sync.
             self.webview.fit_to_window(Some(hwnd));
+            if let Some(controller) = self.webview.controller.get() {
+                controller.notify_parent_window_position_changed().ok();
+            }
         }
+        self.webview.execute_script(
+            "requestAnimationFrame(function(){try{window.__stremioCustomRepunchMpvViewport&&window.__stremioCustomRepunchMpvViewport();}catch(e){}});"
+        );
         self.transmit_window_visibility_change();
     }
 
@@ -661,6 +671,7 @@ impl MainWindow {
      * video cannot flash framed borders during player load.
      */
     fn on_toggle_borderless_notice(&self) {
+        self.webview.set_background_transparent(false);
         if let Some(hwnd) = self.window.handle.hwnd() {
             if let Ok(mut saved_style) = self.saved_window_style.try_borrow_mut() {
                 if let Some(enabled) = self.requested_borderless.lock().unwrap().take() {
@@ -670,7 +681,13 @@ impl MainWindow {
             // Critical: removing caption grows the client rect; without this, a white
             // ring of HWND background remains around the (still smaller) WebView2.
             self.webview.fit_to_window(Some(hwnd));
+            if let Some(controller) = self.webview.controller.get() {
+                controller.notify_parent_window_position_changed().ok();
+            }
         }
+        self.webview.execute_script(
+            "requestAnimationFrame(function(){try{window.__stremioCustomRepunchMpvViewport&&window.__stremioCustomRepunchMpvViewport();}catch(e){}});"
+        );
     }
 
     /// Applies pending in-app min/max from player nav chrome (borderless has no OS caption).
@@ -753,10 +770,9 @@ impl MainWindow {
         custom_api::complete_pip_toggle(false);
     }
     fn on_apply_ui_scale_notice(&self) {
-        if let (Some(hwnd), Some(controller)) = (
-            self.window.handle.hwnd(),
-            self.webview.controller.get(),
-        ) {
+        if let (Some(hwnd), Some(controller)) =
+            (self.window.handle.hwnd(), self.webview.controller.get())
+        {
             apply_ui_scale(controller, hwnd);
         }
     }
@@ -769,17 +785,25 @@ impl MainWindow {
         let Some(action) = action else {
             return;
         };
-        match action.as_str() {
-            "close" => {
-                self.save_window_settings();
-                nwg::stop_thread_dispatch();
-            }
-            "sleep" | "shutdown" | "restart" => {
-                if let Err(err) = crate::stremio_app::power_actions::apply(&action) {
-                    eprintln!("Power action {action} failed: {err}");
+        let wants_close = action.split(',').any(|part| part == "close");
+        let power = action
+            .split(',')
+            .find(|part| matches!(*part, "sleep" | "shutdown" | "restart"));
+        if let Some(power) = power {
+            if power == "sleep" && wants_close {
+                if let Err(err) = crate::stremio_app::power_actions::spawn_sleep_after_exit() {
+                    eprintln!("Power action sleep failed: {err}");
+                    if let Err(err) = crate::stremio_app::power_actions::apply("sleep") {
+                        eprintln!("Power action sleep failed: {err}");
+                    }
                 }
+            } else if let Err(err) = crate::stremio_app::power_actions::apply(power) {
+                eprintln!("Power action {power} failed: {err}");
             }
-            _ => {}
+        }
+        if wants_close {
+            self.save_window_settings();
+            nwg::stop_thread_dispatch();
         }
     }
     fn on_power_resume_notice(&self) {

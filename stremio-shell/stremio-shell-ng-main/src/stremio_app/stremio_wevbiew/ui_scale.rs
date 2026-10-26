@@ -8,7 +8,7 @@ use winapi::um::winuser::{
     GetDpiForWindow, GetMonitorInfoA, MonitorFromWindow, MONITORINFOEXA, MONITOR_DEFAULTTONEAREST,
 };
 
-const ALLOWED_UI_SCALE_PERCENTS: [u32; 6] = [75, 100, 125, 150, 175, 200];
+const ALLOWED_UI_SCALE_PERCENTS: [u32; 9] = [75, 100, 125, 150, 175, 200, 250, 300, 400];
 
 /// Snaps a UI scale percentage to the nearest supported 25% step.
 pub fn normalize_ui_scale_percent(value: u32) -> u32 {
@@ -80,6 +80,18 @@ fn sync_ui_scale_to_webview(controller: &Controller, percent: u32) {
     let _ = webview.execute_script(&script, |_| Ok(()));
 }
 
+/// Publishes the applied WebView zoom so hero layout can compensate rem growth.
+fn publish_ui_zoom(controller: &Controller, zoom: f64) {
+    let Ok(webview) = controller.get_webview() else {
+        return;
+    };
+    let script = format!(
+        "(function(){{try{{document.documentElement.style.setProperty('--mystremio-ui-zoom','{z}');}}catch(_){{}}}})();",
+        z = zoom
+    );
+    let _ = webview.execute_script(&script, |_| Ok(()));
+}
+
 /// Computes the WebView2 zoom factor for a user-selected UI scale on the current monitor.
 ///
 /// User scale is absolute (100% = design baseline). Windows DPI is compensated so that
@@ -107,6 +119,7 @@ pub fn apply_ui_scale(controller: &Controller, hwnd: HWND) {
     };
     let zoom = compute_zoom_factor(hwnd, percent);
     controller.put_zoom_factor(zoom).ok();
+    publish_ui_zoom(controller, zoom);
     if percent != previous || pending_user.is_some() {
         sync_ui_scale_to_webview(controller, percent);
     }

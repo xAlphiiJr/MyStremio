@@ -16,12 +16,15 @@
   {
     "key": "action",
     "type": "select",
-    "label": "Action",
+    "label": "Actions",
+    "description": "Close can run together with Sleep or Shutdown. Sleep and Shutdown cannot run together.",
     "defaultValue": "sleep",
     "options": [
       { "value": "sleep", "label": "Sleep" },
       { "value": "close", "label": "Close" },
-      { "value": "shutdown", "label": "Shutdown" }
+      { "value": "shutdown", "label": "Shutdown" },
+      { "value": "sleep,close", "label": "Sleep + Close" },
+      { "value": "shutdown,close", "label": "Shutdown + Close" }
     ]
   },
   {

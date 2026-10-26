@@ -176,5 +176,85 @@
     }, 2000);
   }
 
+  const LEFT_BUTTON_IDS = ['mystremio-brightness-btn', 'stremio-seek-buttons-group'];
+  const RIGHT_BUTTON_IDS = [
+    'tidb-contribute-btn',
+    'mystremio-cast-overlay-btn',
+    'mystremio-anime4k-btn',
+    'mystremio-sleep-timer-btn',
+  ];
+  let layingOutPlayerButtons = false;
+
+  function volumeAnchor() {
+    const controlBar = document.querySelector(
+      '[class*="player-container"] [class*="control-bar-container"]'
+    );
+    if (!controlBar) return null;
+    return (
+      controlBar.querySelector('[class*="control-bar-volume"]') ||
+      controlBar.querySelector('[class*="volume-change-indicator"]')?.closest('[class*="control-bar"]') ||
+      controlBar.querySelector('[class*="volume-slider"]')?.closest('[class*="volume"]') ||
+      controlBar.querySelector('[class*="volume-slider"]')?.parentElement ||
+      null
+    );
+  }
+
+  function placeAfter(node, after) {
+    if (!node || !after?.parentNode || node === after) return;
+    if (node.parentNode === after.parentNode && node.previousElementSibling === after) return;
+    after.parentNode.insertBefore(node, after.nextSibling);
+  }
+
+  function layoutPlayerButtons() {
+    if (layingOutPlayerButtons) return;
+    layingOutPlayerButtons = true;
+    try {
+      const volume = volumeAnchor();
+      if (volume?.parentNode) {
+        let after = volume;
+        for (const id of LEFT_BUTTON_IDS) {
+          const node = document.getElementById(id);
+          if (!node) continue;
+          placeAfter(node, after);
+          after = node;
+        }
+      }
+
+      const container = document.querySelector(
+        '[class*="player-container"] [class*="control-bar-buttons-container"]'
+      );
+      if (!container) return;
+      const nodes = RIGHT_BUTTON_IDS.map((id) => document.getElementById(id)).filter(Boolean);
+      const menu = container.querySelector('[class*="control-bar-buttons-menu-button"]');
+      if (menu && container.contains(menu)) {
+        let next = menu;
+        for (let i = nodes.length - 1; i >= 0; i -= 1) {
+          const node = nodes[i];
+          if (node.parentNode === container && node.nextElementSibling === next) {
+            next = node;
+            continue;
+          }
+          container.insertBefore(node, next);
+          next = node;
+        }
+      } else {
+        let previous = null;
+        for (const node of nodes) {
+          if (!previous) {
+            if (node.parentNode !== container) container.appendChild(node);
+            previous = node;
+            continue;
+          }
+          placeAfter(node, previous);
+          previous = node;
+        }
+      }
+    } finally {
+      layingOutPlayerButtons = false;
+    }
+  }
+
+  window.__stremioCustomLayoutPlayerButtons = layoutPlayerButtons;
+
   console.info('[StremioCustom] Player glass module ready.');
 })();

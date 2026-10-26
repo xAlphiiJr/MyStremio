@@ -16,12 +16,11 @@ use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
 use storage::{
     clear_registered_schema, get_plugin_config, get_plugin_setting, get_registered_schema,
-    list_plugin_files, list_theme_files, load_registered_schemas, read_asset_metadata,
-    read_plugin_source, read_theme_css, read_autoskip_settings, read_player_volume,
-    read_ui_scale_percent, read_user_preferences_public, register_plugin_schema,
-    save_autoskip_settings,
-    save_player_volume, save_plugin_setting, save_ui_scale_percent, save_user_preferences,
-    mark_ui_scale_user_bind,
+    list_plugin_files, list_theme_files, load_registered_schemas, mark_ui_scale_user_bind,
+    read_asset_metadata, read_autoskip_settings, read_player_volume, read_plugin_source,
+    read_theme_css, read_ui_scale_percent, read_user_preferences_public, register_plugin_schema,
+    save_autoskip_settings, save_player_volume, save_plugin_setting, save_ui_scale_percent,
+    save_user_preferences,
 };
 
 static REGISTERED_SCHEMAS: OnceLock<Mutex<storage::RegisteredSchemas>> = OnceLock::new();
@@ -89,8 +88,19 @@ fn ratings_is_background(message: &Value) -> bool {
         .unwrap_or(false)
 }
 
-/// HTTP fan-out that must not block the WebView IPC loop (ratings, intro proxies, layout).
-pub fn is_slow_http_method(method: &str) -> bool {
+fn is_disk_method(method: &str) -> bool {
+    matches!(
+        method,
+        "list-plugins"
+            | "read-plugin"
+            | "register-plugin-settings"
+            | "get-metadata"
+            | "get-registered-settings"
+            | "get-plugin-config"
+    )
+}
+
+fn is_ratings_method(method: &str) -> bool {
     matches!(
         method,
         "get-title-ratings"
@@ -106,7 +116,34 @@ pub fn is_slow_http_method(method: &str) -> bool {
     )
 }
 
+/// Work that must not block the WebView IPC loop.
+/// Disk reads run on their own thread so a ratings fetch cannot delay settings.
+pub fn is_slow_http_method(method: &str) -> bool {
+    is_disk_method(method) || is_ratings_method(method)
+}
+
+fn disk_queue() -> &'static flume::Sender<RatingsJob> {
+    static TX: OnceLock<flume::Sender<RatingsJob>> = OnceLock::new();
+    TX.get_or_init(|| {
+        let (tx, rx) = flume::unbounded::<RatingsJob>();
+        std::thread::spawn(move || {
+            while let Ok(job) = rx.recv() {
+                dispatch_ratings_job(job);
+            }
+        });
+        tx
+    })
+}
+
 pub fn enqueue_slow_request(message: Value, tx: flume::Sender<String>) {
+    let method = message
+        .get("method")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if is_disk_method(method) {
+        let _ = disk_queue().send(RatingsJob { message, tx });
+        return;
+    }
     let background = ratings_is_background(&message);
     let job = RatingsJob { message, tx };
     let queues = ratings_queues();
@@ -120,7 +157,11 @@ pub fn enqueue_slow_request(message: Value, tx: flume::Sender<String>) {
 fn json_u64(value: &Value) -> Option<u64> {
     value
         .as_u64()
-        .or_else(|| value.as_i64().and_then(|n| if n >= 0 { Some(n as u64) } else { None }))
+        .or_else(|| {
+            value
+                .as_i64()
+                .and_then(|n| if n >= 0 { Some(n as u64) } else { None })
+        })
         .or_else(|| {
             value.as_f64().and_then(|n| {
                 if n >= 0.0 && n.fract() == 0.0 {
@@ -227,10 +268,7 @@ pub fn handle_request(message: &Value) -> Option<String> {
             "shadersPath": bundled_root().join("shaders").to_string_lossy(),
         }),
         "open-folder" => {
-            let folder = params
-                .get("path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let folder = params.get("path").and_then(|v| v.as_str()).unwrap_or("");
             if is_allowed_open_folder(folder) {
                 open::that(folder).ok();
             } else if !folder.is_empty() {
@@ -241,7 +279,10 @@ pub fn handle_request(message: &Value) -> Option<String> {
         "list-plugins" => json!(list_plugin_files()),
         "list-themes" => json!(list_theme_files()),
         "read-theme" => {
-            let file_name = params.get("fileName").and_then(|v| v.as_str()).unwrap_or("");
+            let file_name = params
+                .get("fileName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             json!(read_theme_css(file_name))
         }
         "read-plugin" => {
@@ -268,7 +309,10 @@ pub fn handle_request(message: &Value) -> Option<String> {
             json!(true)
         }
         "get-plugin-setting" => {
-            let plugin = params.get("pluginBaseName").and_then(|v| v.as_str()).unwrap_or("");
+            let plugin = params
+                .get("pluginBaseName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
             if let Some(shared) = api_keys::resolve_plugin_setting(plugin, key, schemas()) {
                 json!(shared)
@@ -277,7 +321,10 @@ pub fn handle_request(message: &Value) -> Option<String> {
             }
         }
         "get-plugin-config" => {
-            let plugin = params.get("pluginBaseName").and_then(|v| v.as_str()).unwrap_or("");
+            let plugin = params
+                .get("pluginBaseName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let mut config = get_plugin_config(plugin);
             // Overlay shared API keys so plugins that read full config still see vault values.
             let registered = get_registered_schema(schemas(), plugin);
@@ -316,7 +363,10 @@ pub fn handle_request(message: &Value) -> Option<String> {
             json!(config)
         }
         "save-plugin-setting" => {
-            let plugin = params.get("pluginBaseName").and_then(|v| v.as_str()).unwrap_or("");
+            let plugin = params
+                .get("pluginBaseName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
             let value = params.get("value").cloned().unwrap_or(Value::Null);
             let config = if let Some(saved) = api_keys::save_shared_plugin_setting(key, &value) {
@@ -344,11 +394,17 @@ pub fn handle_request(message: &Value) -> Option<String> {
         }
         "list-api-key-services" => api_keys::list_api_key_services(schemas()),
         "get-api-key" => {
-            let service_id = params.get("serviceId").and_then(|v| v.as_str()).unwrap_or("");
+            let service_id = params
+                .get("serviceId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             json!(api_keys::get_api_key(service_id))
         }
         "set-api-key" => {
-            let service_id = params.get("serviceId").and_then(|v| v.as_str()).unwrap_or("");
+            let service_id = params
+                .get("serviceId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let value = params.get("value").and_then(|v| v.as_str()).unwrap_or("");
             let saved = api_keys::set_api_key(service_id, value);
             ratings_proxy::clear_ratings_cache();
@@ -388,22 +444,34 @@ pub fn handle_request(message: &Value) -> Option<String> {
             );
         }
         "get-plugin-api-key-status" => {
-            let plugin = params.get("pluginBaseName").and_then(|v| v.as_str()).unwrap_or("");
+            let plugin = params
+                .get("pluginBaseName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             api_keys::plugin_api_key_status(plugin, schemas())
         }
         "register-plugin-settings" => {
-            let plugin = params.get("pluginBaseName").and_then(|v| v.as_str()).unwrap_or("");
+            let plugin = params
+                .get("pluginBaseName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let schema = params.get("schema").cloned().unwrap_or(Value::Null);
             let ok = register_plugin_schema(schemas(), plugin, schema);
             json!(ok)
         }
         "get-registered-settings" => {
-            let plugin = params.get("pluginBaseName").and_then(|v| v.as_str()).unwrap_or("");
+            let plugin = params
+                .get("pluginBaseName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             json!(get_registered_schema(schemas(), plugin))
         }
         "read-language-names" => json!(storage::read_language_names()),
         "clear-registered-settings" => {
-            let plugin = params.get("pluginBaseName").and_then(|v| v.as_str()).unwrap_or("");
+            let plugin = params
+                .get("pluginBaseName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             json!(clear_registered_schema(schemas(), plugin))
         }
         "open-external-url" => {
@@ -415,18 +483,14 @@ pub fn handle_request(message: &Value) -> Option<String> {
             };
             json!(opened)
         }
-        "update-discord-presence" => {
-            match discord_presence::update_presence(&params) {
-                Ok(()) => json!(true),
-                Err(error) => return Some(error_response(id, &error)),
-            }
-        }
-        "clear-discord-presence" => {
-            match discord_presence::clear_presence() {
-                Ok(()) => json!(true),
-                Err(error) => return Some(error_response(id, &error)),
-            }
-        }
+        "update-discord-presence" => match discord_presence::update_presence(&params) {
+            Ok(()) => json!(true),
+            Err(error) => return Some(error_response(id, &error)),
+        },
+        "clear-discord-presence" => match discord_presence::clear_presence() {
+            Ok(()) => json!(true),
+            Err(error) => return Some(error_response(id, &error)),
+        },
         "imdb-suggest" => {
             let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
             match imdb_suggest::suggest(query) {
@@ -495,7 +559,10 @@ pub fn handle_request(message: &Value) -> Option<String> {
         }
         "get-title-ratings" => {
             let imdb_id = params.get("imdbId").and_then(|v| v.as_str()).unwrap_or("");
-            let media_type = params.get("type").and_then(|v| v.as_str()).unwrap_or("movie");
+            let media_type = params
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("movie");
             let season = params
                 .get("season")
                 .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()))
@@ -504,7 +571,10 @@ pub fn handle_request(message: &Value) -> Option<String> {
                 .get("episode")
                 .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()))
                 .map(|n| n as u32);
-            let mode = params.get("mode").and_then(|v| v.as_str()).unwrap_or("full");
+            let mode = params
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("full");
             let exact_cinemeta = params.get("exactCinemeta").and_then(|v| v.as_bool());
             let episode_layout = params.get("episodeLayout").and_then(|v| v.as_str());
             let kitsu_id = params.get("kitsuId").and_then(json_u64);
@@ -524,14 +594,8 @@ pub fn handle_request(message: &Value) -> Option<String> {
         }
         "map-tv-episode-layout" => {
             let imdb_id = params.get("imdbId").and_then(|v| v.as_str()).unwrap_or("");
-            let season = params
-                .get("season")
-                .and_then(json_u64)
-                .unwrap_or(0) as u32;
-            let episode = params
-                .get("episode")
-                .and_then(json_u64)
-                .unwrap_or(0) as u32;
+            let season = params.get("season").and_then(json_u64).unwrap_or(0) as u32;
+            let episode = params.get("episode").and_then(json_u64).unwrap_or(0) as u32;
             let tmdb_lengths: Option<Vec<u32>> = params.get("tmdbLengths").and_then(|value| {
                 value.as_array().map(|items| {
                     items
@@ -559,9 +623,8 @@ pub fn handle_request(message: &Value) -> Option<String> {
             let percent = params
                 .get("percent")
                 .and_then(|v| {
-                    v.as_u64().or_else(|| {
-                        v.as_i64().map(|n| if n < 0 { 0 } else { n as u64 })
-                    })
+                    v.as_u64()
+                        .or_else(|| v.as_i64().map(|n| if n < 0 { 0 } else { n as u64 }))
                 })
                 .unwrap_or(100) as u32;
             let normalized = save_ui_scale_percent(percent);
@@ -606,3 +669,14 @@ pub fn is_custom_request(raw: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::is_disk_method;
+
+    #[test]
+    fn settings_reads_stay_off_the_ratings_pool() {
+        assert!(is_disk_method("get-plugin-config"));
+        assert!(is_disk_method("list-plugins"));
+        assert!(!is_disk_method("get-title-ratings"));
+    }
+}

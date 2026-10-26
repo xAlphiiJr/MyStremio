@@ -47034,7 +47034,7 @@
             }
             return err && mkdirp.sync(cacheDir = os.tmpdir()), path.join(cacheDir, ih);
         }, enginefs.getDefaults = function(ih) {
-            var MAX_CONNECTIONS = isPositiveInteger(settings.btMaxConnections) ? settings.btMaxConnections : 35, HANDSHAKE_TIMEOUT = isPositiveInteger(settings.btHandshakeTimeout) ? settings.btHandshakeTimeout : 2e4, REQUEST_TIMEOUT = isPositiveInteger(settings.btRequestTimeout) ? settings.btRequestTimeout : 4e3, DOWNLOAD_SPEED_LIMIT = isPositiveInteger(settings.btDownloadSpeedSoftLimit) ? settings.btDownloadSpeedSoftLimit : 1677721.6, DOWNLOAD_SPEED_HARD_LIMIT = isPositiveInteger(settings.btDownloadSpeedHardLimit) ? settings.btDownloadSpeedHardLimit : 2621440, MIN_PEERS_FOR_STABLE = isPositiveInteger(settings.btMinPeersForStable) ? settings.btMinPeersForStable : 5, defaults = {
+            var MAX_CONNECTIONS = isPositiveInteger(settings.btMaxConnections) ? settings.btMaxConnections : 35, HANDSHAKE_TIMEOUT = isPositiveInteger(settings.btHandshakeTimeout) ? settings.btHandshakeTimeout : 2e4, REQUEST_TIMEOUT = isPositiveInteger(settings.btRequestTimeout) ? settings.btRequestTimeout : 4e3, DOWNLOAD_SPEED_LIMIT = Number.MAX_SAFE_INTEGER, DOWNLOAD_SPEED_HARD_LIMIT = Number.MAX_SAFE_INTEGER, MIN_PEERS_FOR_STABLE = isPositiveInteger(settings.btMinPeersForStable) ? settings.btMinPeersForStable : 5, defaults = {
                 peerSearch: {
                     min: 40,
                     max: 150,

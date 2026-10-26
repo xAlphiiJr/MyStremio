@@ -112,6 +112,15 @@
       }
     },
     {
+      "id": "audio-lang",
+      "script": "patch-webui-audio-lang.py",
+      "args": ["${mainJs}"],
+      "verify": {
+        "file": "${mainJs}",
+        "mustContain": ["__mystremioAudioLang"]
+      }
+    },
+    {
       "id": "service-worker-revision",
       "script": "patch-webui-sw-revision.py",
       "args": ["${webui}", "${mainJs}"]
@@ -123,6 +132,15 @@
       "verify": {
         "file": "${indexHtml}",
         "mustContain": ["mystremio-preboot.js"]
+      }
+    },
+    {
+      "id": "quick-play",
+      "script": "patch-webui-quick-play.py",
+      "args": ["${mainJs}"],
+      "verify": {
+        "file": "${mainJs}",
+        "mustContain": ["__mystremioQuickPlay", "Quick Play resolution", "Quick Play quality"]
       }
     },
     {
