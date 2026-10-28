@@ -58,7 +58,7 @@ HOOK_V2 = (
     '};'
     'window.__mystremioBoardLoadVisibleRange=function(range){'
     'e.transport.dispatch({action:"CatalogsWithExtra",args:{action:"LoadRange",'
-    'args:range||{start:0,end:4}}},"board")'
+    'args:range||{start:0,end:1}}},"board")'
     '};'
     'window.__mystremioBoardGetCatalogItemCount=function(n){'
     'return e.transport.getState("board").then(function(state){'
@@ -179,6 +179,20 @@ METAROW_ROOT_REPLACEMENT = (
     'String(mystremioCatalogIndex):void 0},'
 )
 
+# At the top of the board, load the first catalog only until its poster is up.
+# After that, four rows. Scrolling keeps the stock visible range plus five.
+BOARD_RANGE_NEEDLE = (
+    'y=E.useCallback(function(){var e=I(v.current);if(null!==e){var t=Math.max(0,e.start-B-5),'
+    'a=e.end-B+5;a<t||l({start:t,end:a})}},[B])'
+)
+BOARD_RANGE_REPLACEMENT = (
+    'y=E.useCallback(function(){var e=I(v.current);if(null!==e){var t=Math.max(0,e.start-B-5),'
+    'a=e.end-B+5;v.current.scrollTop<=0&&(t=0,a=window.__mystremioFirstPosterReady?4:1);'
+    'a<t||l({start:t,end:a})}},[B])'
+)
+BOARD_RANGE_DEFAULT_NEEDLE = 'range||{start:0,end:4}'
+BOARD_RANGE_DEFAULT_REPLACEMENT = 'range||{start:0,end:1}'
+
 
 def patch_file(path: Path) -> int:
     text = path.read_text(encoding="utf-8", errors="strict")
@@ -265,6 +279,26 @@ def patch_file(path: Path) -> int:
         print(f"MetaRow root catalog index attribute already present in {path}")
     else:
         print(f"ERROR: MetaRow root needle not found in {path}", file=sys.stderr)
+        missing += 1
+
+    if BOARD_RANGE_REPLACEMENT in text:
+        print(f"Board first-row LoadRange already present in {path}")
+    elif BOARD_RANGE_NEEDLE in text:
+        text = text.replace(BOARD_RANGE_NEEDLE, BOARD_RANGE_REPLACEMENT, 1)
+        changed += 1
+        print(f"Patched Board first-row LoadRange in {path}")
+    else:
+        print(f"ERROR: Board visible-range needle not found in {path}", file=sys.stderr)
+        missing += 1
+
+    if BOARD_RANGE_DEFAULT_NEEDLE in text:
+        text = text.replace(BOARD_RANGE_DEFAULT_NEEDLE, BOARD_RANGE_DEFAULT_REPLACEMENT, 1)
+        changed += 1
+        print(f"Patched Board LoadRange default to the first row in {path}")
+    elif BOARD_RANGE_DEFAULT_REPLACEMENT in text:
+        print(f"Board LoadRange default already the first row in {path}")
+    else:
+        print(f"ERROR: Board LoadRange default needle not found in {path}", file=sys.stderr)
         missing += 1
 
     if text != original:

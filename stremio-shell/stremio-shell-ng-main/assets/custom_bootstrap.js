@@ -408,6 +408,7 @@
     }
   } catch (_) {}
   window.__mystremioSettingsFull = 0;
+  window.__mystremioPluginsReady = 0;
   api.registerSettings('hero-div', []).catch(() => {});
   let autoskipCache = { intro: false, credits: false, recap: false, preview: false };
   let autoskipReady = false;
@@ -1467,6 +1468,8 @@
     // firstPaint: only load critical board plugins — never unload deferred ones.
     // playback / fullBoard: load all enabled (no unload of the enabled set).
     await Promise.all(targetPlugins.map((pluginRef) => loadPlugin(pluginRef)));
+    // Settings UI waits for this. firstPaint omits player plugins that register schemas.
+    if (resolvedMode !== 'firstPaint') window.__mystremioPluginsReady = 1;
   }
 
   /**
@@ -1634,9 +1637,9 @@
         return;
       }
       if (attempts >= maxAttempts) {
-        // Last resort: only first ~viewport rows (not 0–12).
+        // Last resort: first catalog row only. The next rows load after its poster.
         try {
-          window.__mystremioBoardLoadVisibleRange?.({ start: 0, end: 4 });
+          window.__mystremioBoardLoadVisibleRange?.({ start: 0, end: 1 });
         } catch (error) {
           console.warn('[StremioCustom] Board LoadVisibleRange fallback failed:', error);
         }

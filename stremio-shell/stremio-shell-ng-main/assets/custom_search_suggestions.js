@@ -1633,6 +1633,7 @@
   let lastRouteHash = location.hash || '';
 
   function onSearchRouteTransition(prev, next) {
+    try {
     rememberSearchOrigin(prev, next);
     if (
       isSearchRoute(prev) &&
@@ -1668,6 +1669,10 @@
     if (suppressUntilUserInput && isSearchRoute(next)) {
       keepSearchClosed();
       startCollapseLoop();
+    }
+    } finally {
+      watchSearchNav();
+      scan();
     }
   }
 
@@ -1794,14 +1799,31 @@
   window.addEventListener('resize', onReposition);
   window.addEventListener('scroll', onReposition, true);
 
-  const observer = new MutationObserver(() => scan());
+  let observedNav = null;
+  function searchNav() {
+    return document.querySelector('#app nav[class*="horizontal-nav-bar"]');
+  }
+  function watchSearchNav() {
+    const nav = searchNav();
+    const root = nav || document.documentElement;
+    if (observedNav === root) return;
+    observer.disconnect();
+    observer.observe(root, { childList: true, subtree: true });
+    observedNav = root;
+  }
+  const observer = new MutationObserver(() => {
+    if (!searchNav()) return;
+    if (observedNav !== searchNav()) watchSearchNav();
+    if (observedNav === document.documentElement) return;
+    scan();
+  });
   function start() {
     ensureStyles();
     if (!document.body) {
       document.addEventListener('DOMContentLoaded', start, { once: true });
       return;
     }
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    watchSearchNav();
     scan();
   }
 
@@ -1809,6 +1831,7 @@
     try {
       observer.disconnect();
     } catch (_) {}
+    observedNav = null;
   };
   window.__stremioSearchSuggestionsResume = function () {
     start();

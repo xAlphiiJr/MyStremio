@@ -190,9 +190,9 @@ html {
     transform: none !important;
 }
 
-/* Installed addons: hide stock list on first paint (custom manager owns this page). */
-[class*="addons-container"] [class*="addons-list-container"],
-[class*="addons-container"] [class*="addons-content"] [class*="message-container"] {
+/* Installed view only. Official/Community keep the stock list. */
+html.mystremio-own-addons [class*="addons-container"] [class*="addons-list-container"],
+html.mystremio-own-addons [class*="addons-container"] [class*="addons-content"] [class*="message-container"] {
     display: none !important;
     visibility: hidden !important;
     opacity: 0 !important;
@@ -1252,31 +1252,32 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
     border-radius: 4px;
     cursor: pointer;
     color: white;
-    transition: all 0.3s ease;
+    transition: background-color 0.3s ease;
 }
 
 .hero-overlay-button {
-    background: rgba(70, 70, 70, 0.22) !important;
+    background: rgba(32, 32, 32, 0.72) !important;
     border-radius: 999px !important;
     box-shadow:
         0 8px 32px rgba(0, 0, 0, 0.1),
         0 2px 8px rgba(0, 0, 0, 0.05),
         inset 0 1px 0 rgba(255, 255, 255, 0.2),
         inset 0 -1px 0 rgba(0, 0, 0, 0.1);
-    backdrop-filter: var(--backdrop-filter);
+    /* No live blur: it resamples the fading hero every frame in WebView2. */
+    backdrop-filter: none;
     border: 1px solid rgba(255, 255, 255, 0.1) !important;
     opacity: 1 !important;
 }
 
 .hero-overlay-button-watch {
-    background: rgb(0 0 0 / 41%) !important;
+    background: rgb(0 0 0 / 62%) !important;
     border-radius: 999px !important;
     box-shadow:
         0 8px 32px rgba(0, 0, 0, 0.1),
         0 2px 8px rgba(0, 0, 0, 0.05),
         inset 0 1px 0 rgba(255, 255, 255, 0.2),
         inset 0 -1px 0 rgba(0, 0, 0, 0.1);
-    backdrop-filter: var(--backdrop-filter);
+    backdrop-filter: none;
     opacity: 1 !important;
 }
 
@@ -1886,8 +1887,8 @@ html.stremio-custom-player-route .context-menu-portal [class*="menu-container"][
     cursor: pointer;
     font-size: 12px;
     font-weight: 500;
-    transition: all 0.2s ease;
-    backdrop-filter: blur(10px);
+    transition: background 0.2s ease, transform 0.2s ease;
+    backdrop-filter: none;
     border: 1px solid rgba(255, 255, 255, 0.1);
     visibility: hidden;
 }
@@ -4280,6 +4281,13 @@ body.ghost-clicking #heroLoadingScreen {
 
 [class*="hero-row"] {
     margin-bottom: 0.25rem !important;
+    /* Drop the bitmap once the row is off screen. auto keeps the height from the last paint. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 100vh;
+}
+
+#app [class*="board-content"] [class*="hero-image-stack"] {
+    transform: translateZ(0);
 }
 
 [class*="hero-row"] + [class*="board-row"] {

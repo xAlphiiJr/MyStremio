@@ -37,12 +37,56 @@
     return false;
   }
 
-  function hasRealHeroImage(slot) {
-    const img = slot.querySelector('[class*="hero-container"] img[src], [class*="hero-image-stack"] img[src]');
-    const src = img?.getAttribute('src') || img?.src || '';
-    if (!src || PLACEHOLDER_SRC.test(src)) return false;
-    if (src.includes(FALLBACK_HERO_ID) || /breaking[\s_-]?bad/i.test(src)) return false;
-    return true;
+  function firstRealPoster() {
+    const imgs = document.querySelectorAll('[class*="board-content"] img[class*="poster-image"]');
+    for (const img of imgs) {
+      const src = img.currentSrc || img.getAttribute('src') || '';
+      if (src && !PLACEHOLDER_SRC.test(src)) return img;
+    }
+    return null;
+  }
+
+  function firstPosterReady() {
+    const img = firstRealPoster();
+    return Boolean(img && img.complete && img.naturalWidth > 0);
+  }
+
+  // shortcut: a board with no poster slot and no catalog row; a slow addon keeps the bar
+  function nothingToWaitFor() {
+    const board = document.querySelector('[class*="board-content"]');
+    if (!board || board.children.length < 2) return false;
+    return !board.querySelector('img[class*="poster-image"], [class*="placeholder"], [class*="meta-row-container"], [class*="continue-watching-row"]');
+  }
+
+  function posterGateOpen() {
+    return firstPosterReady() || nothingToWaitFor();
+  }
+
+  function prioritizeFirstPoster() {
+    if (window.__mystremioFirstPosterReady) return;
+    const imgs = document.querySelectorAll('[class*="board-content"] img[class*="poster-image"]');
+    let first = null;
+    for (const img of imgs) {
+      const src = img.currentSrc || img.getAttribute('src') || '';
+      if (!src || PLACEHOLDER_SRC.test(src)) continue;
+      if (!first) {
+        first = img;
+        if (img.fetchPriority !== 'high') img.fetchPriority = 'high';
+      } else if (img.fetchPriority !== 'low') {
+        img.fetchPriority = 'low';
+      }
+    }
+    if (!first || first.dataset.mystremioPosterWatch) return;
+    first.dataset.mystremioPosterWatch = '1';
+    first.addEventListener('load', () => tick(), { once: true });
+  }
+
+  function releaseNextRows() {
+    if (window.__mystremioBoardFollowUp) return;
+    const load = window.__mystremioBoardLoadVisibleRange;
+    if (typeof load !== 'function') return;
+    window.__mystremioBoardFollowUp = true;
+    load({ start: 0, end: 4 });
   }
 
   /**
@@ -122,7 +166,7 @@
       [class*="hero-slot"][data-state="loading"] [class*="hero-slot-progress"],
       [class*="hero-slot"][data-state="loading"] [class*="hero-slot-spinner"] {
         position: relative !important;
-        width: min(320px, 70vw) !important;
+        width: 100% !important;
         height: 4px !important;
         border: none !important;
         border-radius: 999px !important;
@@ -185,23 +229,19 @@
   }
 
   function markLoadingSlots() {
-    if (!isBoardRoute()) return;
+    if (!isBoardRoute() || window.__mystremioFirstPosterReady) return;
     document.querySelectorAll('[class*="hero-slot"]').forEach((slot) => {
-      if (isFallbackHeroContent(slot)) {
-        setSlotLoading(slot);
-        return;
-      }
-      if (hasRealHeroImage(slot)) return;
-      const hasHero = slot.querySelector('[class*="hero-container"], [class*="hero-image-stack"]');
-      if (!hasHero) return;
       setSlotLoading(slot);
     });
   }
 
   function clearLoadingWhenReady() {
+    const done = posterGateOpen();
+    window.__mystremioFirstPosterReady = done;
+    if (!done) return;
+    releaseNextRows();
     document.querySelectorAll('[class*="hero-slot"][data-state="loading"]').forEach((slot) => {
       if (isFallbackHeroContent(slot)) return;
-      if (!hasRealHeroImage(slot)) return;
       clearSlotLoading(slot);
     });
   }
@@ -213,6 +253,7 @@
     }
     ensureHeroInterval();
     ensureStyles();
+    prioritizeFirstPoster();
     markLoadingSlots();
     clearLoadingWhenReady();
   }
@@ -248,12 +289,19 @@
     return reveal >= 1 && delta > 4 ? 0 : reveal;
   }
 
+  // getComputedStyle flushes layout for the whole board. Keep the node; look again only when it is gone.
+  let boardScrollerEl = null;
   function boardScroller() {
+    if (boardScrollerEl && boardScrollerEl.isConnected) return boardScrollerEl;
+    boardScrollerEl = null;
     const board = document.querySelector('[class*="board-container"]');
     if (!board) return null;
     for (const el of board.querySelectorAll('[class*="board-content"]')) {
       const overflowY = getComputedStyle(el).overflowY;
-      if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') return el;
+      if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') {
+        boardScrollerEl = el;
+        return el;
+      }
     }
     return null;
   }
@@ -279,10 +327,22 @@
     btn.setAttribute('aria-label', hidden ? 'Show continue watching' : 'Hide continue watching');
   }
 
+  function heroWaitDone(posterReady, hasContinueRow, hasToggle) {
+    return Boolean(posterReady) && (!hasContinueRow || hasToggle);
+  }
+
+  function boardHeroSettled() {
+    const scroller = boardScroller();
+    const row = scroller ? continueRow(scroller) : null;
+    const hasToggle = Boolean(scroller?.querySelector('[class*="hero-indicators"] > .mystremio-cw-toggle'));
+    return heroWaitDone(posterGateOpen(), Boolean(row), hasToggle);
+  }
+
   function ensureCwToggle() {
     const scroller = boardScroller();
     if (!scroller) return;
     const row = continueRow(scroller);
+    watchCwHost();
     const indicators = scroller.querySelector('[class*="hero-indicators"]');
     if (!row) {
       indicators?.querySelector(':scope > .mystremio-cw-toggle')?.remove();
@@ -305,7 +365,6 @@
     }
     paintCwToggle(btn);
     row.toggleAttribute('aria-hidden', cwReveal >= 1);
-    watchCwHost();
   }
 
   if (!isBoardHash('#/?streamingServerUrl=http%3A%2F%2F127.0.0.1%3A11470%2F')) throw new Error('shell board hash');
@@ -315,6 +374,9 @@
   if (cwRevealAfterScroll(1, 5) !== 0) throw new Error('scroll down restores cw');
   if (cwRevealAfterScroll(1, 4) !== 1 || cwRevealAfterScroll(1, -8) !== 1) throw new Error('scroll jitter keeps hero');
   if (cwRevealAfterScroll(0, 20) !== 0) throw new Error('shown cw stays');
+  if (heroWaitDone(false, false, false) || heroWaitDone(false, true, true)) throw new Error('hero wait stops before the poster');
+  if (!heroWaitDone(true, false, false) || !heroWaitDone(true, true, true)) throw new Error('hero wait stays after the poster');
+  if (heroWaitDone(true, true, false)) throw new Error('hero wait stops before the toggle');
 
   let cwScrollTop = 0;
   let cwScrollIgnore = false;
@@ -364,20 +426,22 @@
     if (!isBoardRoute()) return;
     applyCwReveal(boardScroller());
     ensureCwToggle();
+    if (boardHeroSettled()) stopHeroInterval();
   };
 
   let cwWatch = null;
   const cwObserver = new MutationObserver(() => {
-    if (!isBoardRoute()) return;
-    ensureCwToggle();
+    if (!isBoardRoute() || boardHeroSettled()) return;
+    tick();
   });
 
   function watchCwHost() {
     const scroller = boardScroller();
-    const host = scroller?.querySelector('[class*="hero-slot"]') || scroller;
+    const hero = scroller?.querySelector('[class*="hero-row"]');
+    const host = hero?.parentElement || scroller;
     if (!host || cwWatch === host) return;
     cwObserver.disconnect();
-    cwObserver.observe(host, { childList: true, subtree: true });
+    cwObserver.observe(host, { childList: true });
     cwWatch = host;
   }
   window.__stremioCustomHeroLoadingEnsure = tick;

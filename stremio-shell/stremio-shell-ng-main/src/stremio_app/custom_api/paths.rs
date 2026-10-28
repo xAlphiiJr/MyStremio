@@ -373,6 +373,40 @@ fn load_plugin_sync_state(_bundled_stems: &HashSet<String>) -> (HashSet<String>,
     (present, HashSet::new())
 }
 
+fn is_plugin_script(relative: &str) -> bool {
+    relative.replace('\\', "/").ends_with(PLUGIN_EXT)
+}
+
+/// What to do when a bundled plugin file is not in AppData yet.
+/// A missing `.plugin.js` can mean the user deleted the plugin.
+/// A missing schema next to an installed script does not.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MissingBundledFile {
+    Skip,
+    RememberRemoved,
+    Install,
+}
+
+fn missing_bundled_file(is_script: bool, seen: bool, removed: bool) -> MissingBundledFile {
+    if removed {
+        return MissingBundledFile::Skip;
+    }
+    if is_script && seen {
+        return MissingBundledFile::RememberRemoved;
+    }
+    MissingBundledFile::Install
+}
+
+fn install_bundled_file(from: &Path, to: &Path) -> bool {
+    if to.exists() && files_content_equal(from, to) {
+        return true;
+    }
+    if let Some(parent) = to.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    fs::copy(from, to).is_ok()
+}
+
 /// Sync install plugins → AppData without restoring plugins the user deleted.
 fn sync_bundled_plugins() {
     let source = bundled_plugins_dir();
@@ -390,7 +424,7 @@ fn sync_bundled_plugins() {
     let bundled_stems: HashSet<String> = bundled_rels.iter().map(|rel| plugin_stem(rel)).collect();
     let (mut seen, mut removed) = load_plugin_sync_state(&bundled_stems);
 
-    for rel in &bundled_rels {
+    for rel in bundled_rels.iter().filter(|rel| is_plugin_script(rel)) {
         let stem = plugin_stem(rel);
         let from = source.join(rel);
         let to = target.join(rel);
@@ -398,30 +432,33 @@ fn sync_bundled_plugins() {
         if to.exists() {
             removed.remove(&stem);
             seen.insert(stem);
-            if !files_content_equal(&from, &to) {
-                if let Some(parent) = to.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                let _ = fs::copy(&from, &to);
+            let _ = install_bundled_file(&from, &to);
+            continue;
+        }
+
+        match missing_bundled_file(true, seen.contains(&stem), removed.contains(&stem)) {
+            MissingBundledFile::Skip => {}
+            MissingBundledFile::RememberRemoved => {
+                removed.insert(stem);
             }
-            continue;
+            MissingBundledFile::Install => {
+                if install_bundled_file(&from, &to) {
+                    seen.insert(stem);
+                }
+            }
         }
+    }
 
-        // Destination missing.
-        if removed.contains(&stem) {
+    for rel in bundled_rels.iter().filter(|rel| !is_plugin_script(rel)) {
+        let stem = plugin_stem(rel);
+        if missing_bundled_file(false, seen.contains(&stem), removed.contains(&stem))
+            == MissingBundledFile::Skip
+        {
             continue;
         }
-        if seen.contains(&stem) {
-            // Previously present, now gone → user deleted; remember and skip.
-            removed.insert(stem);
-            continue;
-        }
-
-        // New plugin introduced by this app version.
-        if let Some(parent) = to.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        if fs::copy(&from, &to).is_ok() {
+        let from = source.join(rel);
+        let to = target.join(rel);
+        if install_bundled_file(&from, &to) {
             seen.insert(stem);
         }
     }
@@ -636,5 +673,21 @@ mod tests {
     fn open_folder_rejects_empty_and_files() {
         assert!(!is_allowed_open_folder(""));
         assert!(!is_allowed_open_folder(r"C:\Windows\System32\cmd.exe"));
+    }
+
+    #[test]
+    fn missing_schema_is_installed_when_plugin_stays() {
+        assert_eq!(
+            missing_bundled_file(false, true, false),
+            MissingBundledFile::Install
+        );
+        assert_eq!(
+            missing_bundled_file(true, true, false),
+            MissingBundledFile::RememberRemoved
+        );
+        assert_eq!(
+            missing_bundled_file(false, true, true),
+            MissingBundledFile::Skip
+        );
     }
 }

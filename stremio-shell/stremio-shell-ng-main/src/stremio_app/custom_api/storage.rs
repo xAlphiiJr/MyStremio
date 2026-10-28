@@ -482,7 +482,7 @@ fn default_preferences() -> Value {
         "autoskip": default_autoskip_preferences(),
         "metadataAddon": "",
         "disabledAddonUrls": [],
-        "preload": "120",
+        "preload": "10",
         "volume": {
             "level": null,
             "muted": null
@@ -591,7 +591,7 @@ fn normalize_preferences(value: Value) -> Value {
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "120".to_string());
+        .unwrap_or_else(|| "10".to_string());
     let volume = value
         .get("volume")
         .and_then(|v| v.as_object())

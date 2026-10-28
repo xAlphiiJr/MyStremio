@@ -86,11 +86,21 @@
     return id;
   }
 
+  let persistTimer = null;
+
+  function writeSavedScroll() {
+    try {
+      sessionStorage.setItem(SCROLL_TOP_KEY, String(savedScrollTop));
+    } catch (_) {}
+  }
+
   function clearSavedPosition() {
     savedScrollTop = 0;
-    try {
-      sessionStorage.setItem(SCROLL_TOP_KEY, '0');
-    } catch (_) {}
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    writeSavedScroll();
   }
 
   function shouldResetToTopOnReturn() {
@@ -122,9 +132,22 @@
   function persistScroll(el) {
     if (!el) return;
     savedScrollTop = Math.max(0, Math.round(el.scrollTop));
-    try {
-      sessionStorage.setItem(SCROLL_TOP_KEY, String(savedScrollTop));
-    } catch (_) {}
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    writeSavedScroll();
+  }
+
+  /** Keep the position in memory; write sessionStorage once scrolling pauses. */
+  function rememberScroll(el) {
+    if (!el) return;
+    savedScrollTop = Math.max(0, Math.round(el.scrollTop));
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      writeSavedScroll();
+    }, 200);
   }
 
   function loadPersistedScroll() {
@@ -457,7 +480,7 @@
       const target = event.target;
       if (!target || !String(target.className || '').includes('board-content')) return;
       if (!programmaticScroll && !isRestoreSessionActive()) {
-        persistScroll(target);
+        rememberScroll(target);
       }
     },
     { capture: true, passive: true }

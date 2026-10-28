@@ -1710,18 +1710,32 @@
     refreshListPreserveScroll();
   }
 
+  function installAddonPageSearch() {
+    if (window.__mystremioAddonPageSearch) return;
+    window.__mystremioAddonPageSearch = true;
+    document.addEventListener(
+      'input',
+      (event) => {
+        if (!isInstalledAddonsRoute()) return;
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement)) return;
+        if (!target.closest('[class*="addons-container"] [class*="search-bar"]')) return;
+        filterQuery = target.value;
+        refreshListPreserveScroll();
+      },
+      true
+    );
+  }
+
+  function readAddonPageSearch() {
+    const input = findSelectableInputs()?.querySelector('[class*="search-bar"] input');
+    if (input instanceof HTMLInputElement) filterQuery = input.value || '';
+  }
+
   function bindStockFilters() {
     const inputs = findSelectableInputs();
     if (!inputs) return;
-    const search = inputs.querySelector('input');
-    if (search && search.dataset.msAmSearch !== '1') {
-      search.dataset.msAmSearch = '1';
-      filterQuery = search.value || filterQuery;
-      search.addEventListener('input', () => {
-        filterQuery = search.value;
-        refreshListPreserveScroll();
-      });
-    }
+    readAddonPageSearch();
     if (inputs.dataset.msAmType !== '1') {
       inputs.dataset.msAmType = '1';
       inputs.addEventListener(
@@ -2265,9 +2279,9 @@
       (document.head || document.documentElement).appendChild(style);
     }
     style.textContent = `
-      /* Hide stock list as soon as React mounts addons-container — do not wait for PAGE_CLASS. */
-      [class*="addons-container"] [class*="addons-list-container"],
-      [class*="addons-container"] [class*="addons-content"] [class*="message-container"] {
+      /* Only the Installed view. Official/Community keep the stock marketplace list. */
+      html.${PAGE_CLASS} [class*="addons-container"] [class*="addons-list-container"],
+      html.${PAGE_CLASS} [class*="addons-container"] [class*="addons-content"] [class*="message-container"] {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
@@ -3283,6 +3297,7 @@
   }
 
   function fillAddonList(list) {
+    readAddonPageSearch();
     const addons = workingAddons();
     const visible = addons
       .map((addon, index) => ({ addon, index }))
@@ -3470,7 +3485,13 @@
       }
       return;
     }
-    document.documentElement.classList.remove(PAGE_CLASS);
+    if (
+      document.getElementById(ROOT_ID) ||
+      document.getElementById(TOOLBAR_ID) ||
+      document.documentElement.classList.contains(PAGE_CLASS)
+    ) {
+      teardown();
+    }
   }
 
   function hrefLooksLikeInstalledAddons(href) {
@@ -3578,6 +3599,7 @@
       return;
     }
     installCatalogSearchFilter();
+    installAddonPageSearch();
     observer.observe(root, { childList: true, subtree: true });
     pretouchInstalledRoute();
     scheduleMount();

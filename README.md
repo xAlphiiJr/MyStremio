@@ -181,6 +181,10 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 
 ## 🛠️ Patch Notes
 
+### 2.5.1
+- Shell, plugins, and web UI rebuilt with the current desktop changes
+
+
 ### 2.5.0
 - **Library** — Fixed bug where library export always exports 0 titles and improved the feature overall
 - **Dybamic Hero Banner** — Now features a slider displaying the time until the banner rotates. Additional you can now fullscreen the banner and hide the cataloges

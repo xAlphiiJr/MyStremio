@@ -18,7 +18,6 @@
   const PUNCHED_CLASS = 'mystremio-mpv-punched';
   const APP_LOADING_MASK_ID = 'stremio-custom-app-loading-mask';
   const APP_LOADING_STYLE_ID = 'stremio-custom-app-loading-style';
-  const LOADING_COVER_ID = 'mystremio-player-loading-cover';
 
   const Phase = { IDLE: 'idle', LOADING: 'loading', VIDEO: 'video' };
 
@@ -102,6 +101,17 @@
     return Boolean(src && /stremio_symbol|\/logo\.png/i.test(src));
   }
 
+  function showCenterTitle(logoSrc) {
+    return !logoSrc || isStremioDefaultLogo(logoSrc);
+  }
+
+  if (!showCenterTitle('images/stremio_symbol.png') || !showCenterTitle('')) {
+    throw new Error('purple logo stays on the loading poster');
+  }
+  if (showCenterTitle('https://images.metahub.space/logo/medium/tt1234567/img')) {
+    throw new Error('title logo replaced by text');
+  }
+
   function enrichArtwork(background, logo, idHint) {
     const hub = metahubFromId(idHint || background || '');
     let bg = background || null;
@@ -120,10 +130,6 @@
 
   function resolveBackgroundUrl() {
     return metahubFromId(artwork.imdbId || artwork.background)?.background || artwork.background;
-  }
-
-  function resolveLogoUrl() {
-    return metahubFromId(artwork.imdbId || artwork.background)?.logo || artwork.logo;
   }
 
   function injectSessionStyles() {
@@ -153,40 +159,33 @@
       html.${SESSION_CLASS} [class*="player-container"] [class*="buffering-layer"] {
         pointer-events: none !important;
       }
-      html.${SESSION_CLASS}.${PUNCHED_CLASS} [class*="player-container"] [class*="background-layer"],
-      html.${SESSION_CLASS}.${PUNCHED_CLASS} [class*="player-container"] [class*="buffering-layer"] {
+      html.${SESSION_CLASS}.${PUNCHED_CLASS} [class*="player-container"] [class*="background-layer"] {
         display: none !important;
         visibility: hidden !important;
         pointer-events: none !important;
       }
-      html.${SESSION_CLASS}:not(.${MPV_VISIBLE_CLASS}) [class*="player-container"] [class*="buffering-layer"] img[src*="stremio_symbol"],
-      html.${SESSION_CLASS}:not(.${MPV_VISIBLE_CLASS}) [class*="player-container"] [class*="buffering-layer"] img[src*="/logo.png"] {
-        display: none !important;
-      }
-      html.${SESSION_CLASS}:not(.${MPV_VISIBLE_CLASS}) [class*="player-container"] [class*="buffering-layer"] [class*="logo"],
-      html.${SESSION_CLASS}:not(.${MPV_VISIBLE_CLASS}) [class*="player-container"] [class*="buffering-layer"] img[class*="logo"] {
-        max-width: 15rem !important;
-        max-height: 15rem !important;
-      }
       html.${SESSION_CLASS}:not(.${MPV_VISIBLE_CLASS}) [class*="player-container"] [class*="background-layer"] [class*="image"] {
         object-fit: cover !important;
       }
-      #${LOADING_COVER_ID} {
-        position: absolute;
-        inset: 0;
-        z-index: 1;
-        pointer-events: none;
-        overflow: hidden;
-        background: rgb(20, 20, 20);
-      }
-      #${LOADING_COVER_ID} img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        display: block;
-      }
-      html.${PUNCHED_CLASS} #${LOADING_COVER_ID} {
+      [class*="background-layer"] img[src*="stremio_symbol"],
+      [class*="background-layer"] img[src*="/logo.png"],
+      [class*="loading-modal"] [class*="loader-container"] > [class*="icon"] {
         display: none !important;
+      }
+      .mystremio-load-title {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 2;
+        max-width: 70%;
+        color: #fff;
+        font-size: 2.4rem;
+        font-weight: 600;
+        line-height: 1.2;
+        text-align: center;
+        text-shadow: 0 2px 18px #000;
+        pointer-events: none;
       }
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -280,56 +279,38 @@
     return !root.querySelector('[class*="background-layer"]');
   }
 
-  function removeLoadingCover() {
-    document.getElementById(LOADING_COVER_ID)?.remove();
-  }
-
-  function ensureLoadingCover() {
-    if (phase !== Phase.LOADING || !isPlayerRoute()) {
-      if (phase !== Phase.LOADING) removeLoadingCover();
-      return;
-    }
-    const root = playerRoot();
-    if (!root) return;
-    if (root.querySelector('[class*="background-layer"]')) return;
-    const bgUrl = resolveBackgroundUrl();
-    if (!isUsableImageSrc(bgUrl)) return;
-    let cover = document.getElementById(LOADING_COVER_ID);
-    if (!cover) {
-      cover = document.createElement('div');
-      cover.id = LOADING_COVER_ID;
-      cover.setAttribute('aria-hidden', 'true');
-      const img = document.createElement('img');
-      img.alt = '';
-      cover.appendChild(img);
-      root.appendChild(cover);
-    }
-    const img = cover.querySelector('img');
-    if (img && img.getAttribute('src') !== bgUrl) img.setAttribute('src', bgUrl);
-  }
-
   function applySeriesBranding() {
     if (phase !== Phase.LOADING || !isPlayerRoute()) return;
     const root = playerRoot();
     if (!root) return;
+    const layer = root.querySelector('[class*="background-layer"]');
+    if (!layer) return;
 
     const bgUrl = resolveBackgroundUrl();
-    if (isUsableImageSrc(bgUrl)) {
-      const poster = root.querySelector('[class*="background-layer"] img');
-      if (poster && poster.getAttribute('src') !== bgUrl) poster.setAttribute('src', bgUrl);
+    const poster = layer.querySelector('img');
+    if (poster && isUsableImageSrc(bgUrl) && poster.getAttribute('src') !== bgUrl) {
+      poster.setAttribute('src', bgUrl);
     }
 
-    const logoUrl = resolveLogoUrl();
-    if (isUsableImageSrc(logoUrl)) {
-      for (const logo of root.querySelectorAll('[class*="buffering-layer"] img')) {
-        const src = logo.getAttribute('src') || '';
-        if (isStremioDefaultLogo(src) || !isUsableImageSrc(src)) {
-          logo.setAttribute('src', logoUrl);
-          logo.style.display = '';
-        }
-      }
+    const titleLogo = artwork.logo && !isStremioDefaultLogo(artwork.logo) ? artwork.logo : '';
+    const imgs = layer.querySelectorAll('img');
+    for (let i = 1; i < imgs.length; i++) {
+      if (!titleLogo) continue;
+      if (imgs[i].getAttribute('src') !== titleLogo) imgs[i].setAttribute('src', titleLogo);
     }
-    ensureLoadingCover();
+
+    const name = root.querySelector('[class*="nav-bar"] [class*="title"]')?.textContent?.trim() || '';
+    let label = layer.querySelector('.mystremio-load-title');
+    if (!showCenterTitle(titleLogo) || !name) {
+      label?.remove();
+      return;
+    }
+    if (!label) {
+      label = document.createElement('div');
+      label.className = 'mystremio-load-title';
+      layer.appendChild(label);
+    }
+    if (label.textContent !== name) label.textContent = name;
   }
 
   function mergeArtwork(patch) {
@@ -398,13 +379,14 @@
     } catch (_) {}
   }
 
-  function punchMpvViewport() {
+  function punchMpvViewport(force) {
     if (phase !== Phase.VIDEO) {
       setPunched(false);
       ensureOpaqueReconcile();
       return;
     }
-    if (!mpvReadyForVideo()) {
+    // force: fullscreen resize. A brief buffer must not leave the black sheet up.
+    if (!force && !mpvReadyForVideo()) {
       return;
     }
 
@@ -428,7 +410,6 @@
     }
     startLayerObserver();
     setPunched(true);
-    removeLoadingCover();
   }
 
   function maintainMpvViewport() {
@@ -480,7 +461,6 @@
       html.classList.remove(MPV_VISIBLE_CLASS);
       stopBrandObserver();
       clearViewportTimers();
-      removeLoadingCover();
     }
   }
 
@@ -652,20 +632,19 @@
   }
 
   function repunchMpvViewport() {
-    if (phase !== Phase.VIDEO || !isPlayerRoute() || !mpvReadyForVideo()) return;
-    punchMpvViewport();
+    if (phase !== Phase.VIDEO || !isPlayerRoute() || !hasLiveStream()) return;
+    lastViewportMaintainAt = 0;
+    punchMpvViewport(true);
   }
 
   function onPlayerLeave(options = {}) {
     const hadActiveSession = phase !== Phase.IDLE || pendingSession;
+    // Idle navigations must not call put_DefaultBackgroundColor again — that white-flashes.
+    if (!hadActiveSession) return;
+    if (!options.silent) showAppLoadingMask(190, { contentOnly: true });
     sealOpaqueDocument();
     endSession();
     ensureOpaqueReconcile();
-    if (!options.silent && hadActiveSession) {
-      showAppLoadingMask(190, { contentOnly: true });
-    } else {
-      hideAppLoadingMask();
-    }
   }
 
   window.StremioCustomPlayerSplash = { cacheArtwork: mergeArtwork };

@@ -7,7 +7,10 @@ use std::{
     path::{Path, PathBuf},
     process::{self, Command},
     str,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread, time,
 };
 use winapi::um::{winbase::CREATE_BREAKAWAY_FROM_JOB, winuser::WS_EX_TOPMOST};
@@ -27,6 +30,10 @@ use crate::stremio_app::{
     window_settings::WindowSettings,
     PipeServer,
 };
+
+/// Sleep+close hides the window, then blocks in `SetSuspendState` until wake.
+/// The resume handler must not show the window again before quit.
+static QUIT_AFTER_SLEEP: AtomicBool = AtomicBool::new(false);
 
 use super::stremio_server::StremioServer;
 
@@ -636,9 +643,11 @@ impl MainWindow {
         }
     }
     fn on_toggle_fullscreen_notice(&self) {
-        // Opaque before the client rect changes. Alpha 0 leaves white strips
-        // where the WebView has not been resized yet.
-        self.webview.set_background_transparent(false);
+        // Opaque only while the poster is up. Forcing it over a playing video
+        // leaves a black sheet when the resize makes mpv buffer.
+        if !self.webview.is_background_transparent() {
+            self.webview.set_background_transparent(false);
+        }
         if let Some(hwnd) = self.window.handle.hwnd() {
             if let Ok(mut saved_style) = self.saved_window_style.try_borrow_mut() {
                 // Coalesce to the latest explicit target. Never toggle on empty notice —
@@ -791,13 +800,11 @@ impl MainWindow {
             .find(|part| matches!(*part, "sleep" | "shutdown" | "restart"));
         if let Some(power) = power {
             if power == "sleep" && wants_close {
-                if let Err(err) = crate::stremio_app::power_actions::spawn_sleep_after_exit() {
-                    eprintln!("Power action sleep failed: {err}");
-                    if let Err(err) = crate::stremio_app::power_actions::apply("sleep") {
-                        eprintln!("Power action sleep failed: {err}");
-                    }
-                }
-            } else if let Err(err) = crate::stremio_app::power_actions::apply(power) {
+                // A hidden second copy of this exe is what Defender scores as a dropper.
+                self.window.set_visible(false);
+                QUIT_AFTER_SLEEP.store(true, Ordering::Relaxed);
+            }
+            if let Err(err) = crate::stremio_app::power_actions::apply(power) {
                 eprintln!("Power action {power} failed: {err}");
             }
         }
@@ -807,6 +814,9 @@ impl MainWindow {
         }
     }
     fn on_power_resume_notice(&self) {
+        if QUIT_AFTER_SLEEP.load(Ordering::Relaxed) {
+            return;
+        }
         self.server
             .recover_after_resume(self.streaming_server_ready_notice.sender());
         self.webview.wake_after_resume();

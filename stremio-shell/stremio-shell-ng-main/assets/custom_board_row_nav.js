@@ -27,7 +27,7 @@
   const CATALOG_PREVIEW_SIZE = 10;
   /** Debounce enhance while the board mutates during fast vertical scroll. */
   const ENHANCE_DEBOUNCE_MS = 180;
-  /** Pause MutationObserver during fast vertical board scroll; resume after idle. */
+  /** After vertical scroll idle, enhance only rows queued during the scroll. */
   const SCROLL_IDLE_MS = 180;
   const WIDTH_RETRY_MS = 200;
   /** Short TTL for catalog index / buffer count getState round-trips. */
@@ -57,6 +57,8 @@
   let enterRouteCoalesce = false;
   /** @type {Map<Element, ResizeObserver|{disconnect(): void}>} */
   const chevronLayoutObservers = new Map();
+  /** Last cover height we placed chevrons for. Skips layout writes while scrolling. */
+  const chevronCoverHeight = new WeakMap();
   /** Named scroll handlers so catalog teardown can remove listeners. */
   const rowScrollHandlers = new WeakMap();
   /** Per-catalog LoadNextPage in-flight lock. */
@@ -118,7 +120,7 @@
 
   /**
    * Inject layout CSS: board x-lock, stock item sizes, hidden scrollbars, chevrons.
-   * Catalog scrollport / content-visibility rules only when Horizontal Navigation is on.
+   * Catalog scrollport rules only when Horizontal Navigation is on.
    */
   function injectStyles() {
     let style = document.getElementById(STYLE_ID);
@@ -138,14 +140,9 @@
         #app [class*="board-container"] [class*="meta-row-container"]:not([class*="continue-watching"]) {
           overflow-x: hidden;
         }
-      }
-      #app [class*="board-container"] [class*="meta-row-container"]:not([class*="continue-watching"])
-        [class*="meta-items-container"].${ROW_SCROLLPORT_CLASS} > [class*="meta-item"] {
-        content-visibility: auto;
-        contain-intrinsic-size: auto 280px;
       }`
       : '';
-    style.textContent = `
+    const css = `
       /* Never overflow-x on board-content (clips hero → grey stripe).
          Contain row ancestors only — exclude hero-row so hero can stay full-bleed. */
       #app [class*="board-container"] [class*="board-content"] > :not([class*="hero-row"]),
@@ -247,6 +244,7 @@
         pointer-events: none;
       }
     `;
+    if (style.textContent !== css) style.textContent = css;
   }
 
   /**
@@ -844,9 +842,16 @@
 
     if (!(cover instanceof Element)) return;
 
+    const h = Math.round(cover.offsetHeight);
+    const placed =
+      (leftBtn instanceof HTMLElement && leftBtn.style.top) ||
+      (rightBtn instanceof HTMLElement && rightBtn.style.top);
+    if (h < 8 || (placed && chevronCoverHeight.get(rowItems) === h)) return;
+
     const rowRect = root.getBoundingClientRect();
     const coverRect = cover.getBoundingClientRect();
-    if (coverRect.height < 8 || rowRect.width < 8) return;
+    if (rowRect.width < 8) return;
+    chevronCoverHeight.set(rowItems, h);
 
     const midY = coverRect.top + coverRect.height / 2 - rowRect.top;
 
@@ -983,10 +988,6 @@
     if (typeof ResizeObserver !== 'undefined') {
       const ro = new ResizeObserver(schedule);
       ro.observe(rowItems);
-      const cover = rowItems.querySelector(
-        '[class*="poster-container"], [class*="poster-image-layer"], [class*="meta-item-poster"]'
-      );
-      if (cover && cover !== rowItems) ro.observe(cover);
       chevronLayoutObservers.set(rowItems, ro);
     } else {
       chevronLayoutObservers.set(rowItems, /** @type {any} */ ({ disconnect() {} }));
@@ -1287,7 +1288,6 @@
 
   let observer = null;
   let tickTimer = null;
-  let boardScrollBound = false;
 
   function scheduleEnhance() {
     if (enhancing) {
@@ -1343,37 +1343,16 @@
     return rows;
   }
 
-  function ensureBoardScrollLock() {
-    if (boardScrollBound) return;
-    boardScrollBound = true;
-    document.addEventListener(
-      'scroll',
-      (event) => {
-        if (!isBoardRoute()) return;
-        const target = event.target;
-        if (!(target instanceof Element)) return;
-        if (!String(target.className || '').includes('board-content')) return;
-        if (target.scrollLeft !== 0) target.scrollLeft = 0;
-      },
-      { capture: true, passive: true }
-    );
-  }
-
   /**
-   * Pause DOM observation while the user scrolls the board vertically.
+   * Pause chevron work while the user scrolls the board vertically.
+   * Rows added during the pause stay queued and run once scrolling stops.
    */
   function pauseObserverForScroll() {
-    if (!observer || observerPaused) return;
     observerPaused = true;
-    try {
-      observer.disconnect();
-    } catch (_) {
-      /* ignore */
-    }
   }
 
   /**
-   * Resume observation after scroll idle and catch up chevrons.
+   * After scroll idle, enhance only rows that were added while scrolling.
    */
   function resumeObserverAfterScroll() {
     if (scrollIdleTimer) clearTimeout(scrollIdleTimer);
@@ -1382,7 +1361,7 @@
       observerPaused = false;
       if (!isBoardRoute()) return;
       ensureObserver();
-      scheduleEnhance();
+      if (pendingEnhanceRows.size > 0) scheduleEnhance();
     }, SCROLL_IDLE_MS);
   }
 
@@ -1423,7 +1402,7 @@
     if (!root) return;
     if (!observer) {
       observer = new MutationObserver((records) => {
-        if (enhancing || observerPaused || !isBoardRoute()) return;
+        if (enhancing || !isBoardRoute()) return;
         const affected = collectAffectedMetaItemRows(records);
         if (affected.size === 0) return;
         let queued = false;
@@ -1432,7 +1411,7 @@
           pendingEnhanceRows.add(row);
           queued = true;
         }
-        if (queued) scheduleEnhance();
+        if (queued && !observerPaused) scheduleEnhance();
       });
     }
     if (observerPaused) return;
@@ -1463,7 +1442,6 @@
     clearEnterRetryTimers();
     injectStyles();
     patchFocusPreventScroll();
-    ensureBoardScrollLock();
     ensureBoardScrollPause();
     ensureObserver();
     lockBoardScrollLeft();

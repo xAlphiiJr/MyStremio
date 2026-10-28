@@ -37,6 +37,22 @@ PATCHES: list[tuple[str, str]] = [
         "case 4:return A(r.FALLBACK_TITLES.map(function(e){return i({},e)})),[4,H()];",
         "case 4:return A([]),[4,H()];",
     ),
+    (
+        "G=(0,n.useCallback)(function(e){e.forEach(function(e){(0,_.preloadHeroImages)(e)})},[])",
+        "G=(0,n.useCallback)(function(e){var t=e&&e[0]?e[0]:e;(0,_.preloadHeroImages)(t)},[])",
+    ),
+    (
+        "case 0:return t=(0,_.loadCachedTitles)(),a=null!==(o=null==t?void 0:t[0])&&void 0!==o?o:null,[4,(0,_.preloadHeroImages)(a)];case 1:return E.sent(),e?[2]:(c(!0),(null==t?void 0:t.length)?(A(t),G(t),(0,_.shouldRefreshCachedTitles)()?[4,H()]:[3,3]):[3,4]);",
+        "case 0:return t=(0,_.loadCachedTitles)(),c(!0),(null==t?void 0:t.length)?(A(t),(0,_.preloadHeroImages)(t[0]),(0,_.shouldRefreshCachedTitles)()?[4,H()]:[2]):(A([]),[4,H()]);case 1:return E.sent(),e?[2]:[2];",
+    ),
+    (
+        '"data-state":I?"ready":"loading"',
+        '"data-state":I&&window.__mystremioFirstPosterReady?"ready":"loading"',
+    ),
+    (
+        '!I&&_.default.createElement("div",{className:(0,T.default)("mystremio-hero-slot-loader"',
+        '!(I&&window.__mystremioFirstPosterReady)&&_.default.createElement("div",{className:(0,T.default)("mystremio-hero-slot-loader"',
+    ),
 ]
 
 REGEX_PATCHES: list[tuple[re.Pattern[str], str]] = [
@@ -75,7 +91,12 @@ def patch_main_js(path: Path) -> None:
         text = pattern.sub(replacement, text)
 
     if text == original:
-        if "FALLBACK_TITLES[0]" not in text and "if(!e)return Promise.resolve({background:!1,logo:!1})" in text:
+        if (
+            "FALLBACK_TITLES[0]" not in text
+            and "if(!e)return Promise.resolve({background:!1,logo:!1})" in text
+            and "window.__mystremioFirstPosterReady" in text
+            and "e.forEach(function(e){(0,_.preloadHeroImages)(e)})" not in text
+        ):
             print(f"Hero fallback patch already applied in {path}")
             return
         print(

@@ -235,7 +235,19 @@ pub fn init() {
     std::thread::spawn(|| {
         ensure_asset_dirs();
         storage::migrate_root_plugin_litter();
+        reload_registered_schemas();
     });
+}
+
+/// Settings UI reads the in-memory schema map. Plugin sync can copy a schema
+/// after that map was first loaded, so replace it from disk when sync finishes.
+fn reload_registered_schemas() {
+    let Some(lock) = REGISTERED_SCHEMAS.get() else {
+        return;
+    };
+    if let Ok(mut guard) = lock.lock() {
+        *guard = load_registered_schemas();
+    }
 }
 
 pub fn webview_user_data_dir() -> std::path::PathBuf {

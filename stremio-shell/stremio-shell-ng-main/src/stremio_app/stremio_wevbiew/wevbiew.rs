@@ -82,6 +82,8 @@ pub struct WebView {
     pub controller: Rc<OnceCell<Controller>>,
     /// Desired visibility before/while the controller is still creating.
     pub deferred_visible: Rc<Cell<bool>>,
+    /// Last applied DefaultBackgroundColor alpha. True means MPV is showing through.
+    background_transparent: Cell<bool>,
     pub channel: ipc::Channel,
     notice: nwg::Notice,
     compute: RefCell<Option<thread::JoinHandle<()>>>,
@@ -111,6 +113,12 @@ impl WebView {
         }
     }
 
+    /// True after a successful punch-through. Fullscreen resize uses this so it
+    /// does not paint a black sheet over a video that is already on screen.
+    pub fn is_background_transparent(&self) -> bool {
+        self.background_transparent.get()
+    }
+
     /// Opaque dark background for board/boot; transparent for MPV punch-through.
     ///
     /// WebView2 only accepts alpha 0 or 255.
@@ -121,14 +129,17 @@ impl WebView {
         let Ok(controller2) = controller.get_controller2() else {
             return;
         };
-        controller2
+        if controller2
             .put_default_background_color(webview2_sys::Color {
                 r: 20,
                 g: 20,
                 b: 20,
                 a: if transparent { 0 } else { 255 },
             })
-            .ok();
+            .is_ok()
+        {
+            self.background_transparent.set(transparent);
+        }
     }
 
     /// Run JS in the top WebView document (splash dismiss, warm resume wake).

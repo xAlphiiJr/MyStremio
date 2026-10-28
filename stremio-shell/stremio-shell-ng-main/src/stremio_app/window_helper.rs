@@ -31,6 +31,8 @@ const DWMWA_CAPTION_COLOR: DWORD = 35;
 const DWMWA_TEXT_COLOR: DWORD = 36;
 /// Hide the Win11 1px window stroke (DwmSetWindowAttribute).
 const DWMWA_COLOR_NONE: DWORD = 0xFFFFFFFE;
+/// Put the modern frame back. A custom COLORREF does not, once COLOR_NONE latched the legacy one.
+const DWMWA_COLOR_DEFAULT: DWORD = 0xFFFFFFFF;
 const DWMWCP_DONOTROUND: DWORD = 1;
 const STREMIO_CAPTION_COLOR: DWORD = colorref(20, 20, 20);
 const WHITE_TEXT_COLOR: DWORD = colorref(0xff, 0xff, 0xff);
@@ -279,6 +281,26 @@ impl WindowStyle {
      */
     pub fn set_title_bar_color(&self, hwnd: HWND) {
         self.apply_dwm_chrome_colors(hwnd, false);
+    }
+
+    /// COLOR_NONE left set across a frame restore latches the Windows 7 basic border.
+    fn reset_dwm_legacy_frame(&self, hwnd: HWND) {
+        let border = DWMWA_COLOR_DEFAULT;
+        let corner = 0u32;
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_BORDER_COLOR,
+                &border as *const _ as *const c_void,
+                mem::size_of_val(&border) as DWORD,
+            );
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                &corner as *const _ as *const c_void,
+                mem::size_of_val(&corner) as DWORD,
+            );
+        }
     }
 
     fn apply_dwm_chrome_colors(&self, hwnd: HWND, hide_border: bool) {
@@ -559,6 +581,7 @@ impl WindowStyle {
     }
 
     fn apply_framed_styles(&self, hwnd: HWND) {
+        self.reset_dwm_legacy_frame(hwnd);
         let style = if self.style != 0 {
             (self.style | WS_OVERLAPPEDWINDOW as i32 | WS_VISIBLE as i32) & !(WS_MAXIMIZE as i32)
         } else {
@@ -573,6 +596,9 @@ impl WindowStyle {
             unsafe { GetWindowLongA(hwnd, GWL_EXSTYLE) }
         };
         unsafe {
+            // Paint only after the dark caption is set. A frame restore with the
+            // default border draws the Windows 7 basic window.
+            SendMessageW(hwnd, WM_SETREDRAW, 0, 0);
             SetWindowLongA(hwnd, GWL_STYLE, style);
             SetWindowLongA(hwnd, GWL_EXSTYLE, ex_style);
             SetWindowPos(
@@ -584,7 +610,16 @@ impl WindowStyle {
                 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
             );
-            InvalidateRect(hwnd, std::ptr::null(), 1);
+        }
+        self.apply_dwm_chrome_colors(hwnd, false);
+        unsafe {
+            SendMessageW(hwnd, WM_SETREDRAW, 1, 0);
+            RedrawWindow(
+                hwnd,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
+            );
         }
     }
 
@@ -803,7 +838,11 @@ impl WindowStyle {
                 self.ex_style = unsafe { GetWindowLongA(hwnd, GWL_EXSTYLE) };
             }
 
+            // Before caption/placement. SW_RESTORE while COLOR_NONE is still set draws the Win7 frame.
+            self.reset_dwm_legacy_frame(hwnd);
+
             unsafe {
+                SendMessageW(hwnd, WM_SETREDRAW, 0, 0);
                 if self.borderless {
                     SetWindowLongA(
                         hwnd,
@@ -821,11 +860,13 @@ impl WindowStyle {
                     SetWindowLongA(hwnd, GWL_EXSTYLE, self.ex_style);
                 }
 
-                // Maximized session: skip WINDOWPLACEMENT — applied after this unsafe block.
+                // Maximized session: footprint is applied after this block.
+                // SW_RESTORE while the border color was COLOR_NONE draws the Win7 frame.
+                // rcNormalPosition is workspace coordinates — SetWindowPlacement, not SetWindowPos.
                 if !self.was_maximized_before_borderless {
                     if self.has_fs_placement {
                         let mut placement = self.fs_placement;
-                        placement.showCmd = SW_RESTORE as u32;
+                        placement.showCmd = SW_SHOWNORMAL as u32;
                         placement.rcNormalPosition =
                             Self::clamp_rect_to_work_area(hwnd, placement.rcNormalPosition);
                         SetWindowPlacement(hwnd, &placement);
@@ -885,7 +926,6 @@ impl WindowStyle {
                     0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
                 );
-                InvalidateRect(hwnd, std::ptr::null(), 1);
             }
 
             if self.was_maximized_before_borderless {
@@ -899,6 +939,15 @@ impl WindowStyle {
             };
             self.sync_mode_flags();
             self.apply_dwm_chrome_colors(hwnd, self.borderless);
+            unsafe {
+                SendMessageW(hwnd, WM_SETREDRAW, 1, 0);
+                RedrawWindow(
+                    hwnd,
+                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
+                );
+            }
         }
     }
 

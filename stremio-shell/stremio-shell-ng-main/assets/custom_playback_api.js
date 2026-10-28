@@ -5,7 +5,6 @@
   window.__stremioCustomPlaybackApi = true;
 
   const VIDEO_ATTR = 'data-stremio-custom-shell-video';
-  const STARTUP_CACHE_SECS = 12;
   const RS = {
     NOTHING: 0,
     METADATA: 1,
@@ -31,6 +30,7 @@
   let mpvPausedForCache = false;
   let currentStreamPath = '';
   let preloadBoostApplied = false;
+  let appliedPreloadSecs = 0;
   let recoveryMutedUntil = 0;
   let streamStartedAt = 0;
   let sessionNudgeGen = 0;
@@ -651,6 +651,7 @@
     currentStreamPath = streamPath;
     streamStartedAt = Date.now();
     preloadBoostApplied = false;
+    appliedPreloadSecs = 0;
     recoveryMutedUntil = 0;
     lastMpvTimeAt = 0;
     mpvCacheAheadSec = 0;
@@ -967,7 +968,7 @@
   }
 
   function maybeBoostPreload() {
-    if (preloadBoostApplied || !isPlayerRoute() || !playbackAdvanced) return;
+    if (!isPlayerRoute() || !playbackAdvanced) return;
     applyPreloadSettings();
   }
 
@@ -982,38 +983,48 @@
     return 10;
   }
 
-  function resolvePreloadSecs() {
-    const mode = getPreloadMode();
+  function knownDurationSec() {
+    const duration = shimState.duration || readDurationFromDom();
+    return Number.isFinite(duration) && duration > 0 ? duration : 0;
+  }
+
+  /**
+   * Chosen buffer length → mpv cache target.
+   * shortcut: byte cap assumes 80 Mbit/s and stops at 8 GiB; a heavier file fills fewer seconds than the setting.
+   * @param {number|'full'} mode
+   * @param {number} durationSec
+   * @returns {{ secs: number, maxBytes: string } | null}
+   */
+  function planPreloadBuffer(mode, durationSec) {
+    const BITRATE_BPS = 80_000_000;
+    const MAX_MIB = 8 * 1024;
+    const maxBytes = (secs) => {
+      const mib = Math.ceil((secs * BITRATE_BPS) / 8 / (1024 * 1024));
+      return `${Math.max(32, Math.min(MAX_MIB, mib))}MiB`;
+    };
     if (mode === 'full') {
-      const duration = shimState.duration || readDurationFromDom();
-      if (Number.isFinite(duration) && duration > 0) return Math.ceil(duration);
-      return 86400;
+      if (!Number.isFinite(durationSec) || durationSec <= 0) return null;
+      const secs = Math.ceil(durationSec);
+      return { secs, maxBytes: maxBytes(secs) };
     }
-    return Math.min(600, mode);
+    const stored = Number(mode);
+    const secs = Math.min(600, Number.isFinite(stored) && stored >= 10 ? stored : 10);
+    return { secs, maxBytes: maxBytes(secs) };
   }
 
   function applyPreloadSettings() {
     if (!playbackAdvanced) return 0;
-    const isFull = getPreloadMode() === 'full';
-    const secs = resolvePreloadSecs();
-    if (!isFull && secs <= STARTUP_CACHE_SECS) {
-      preloadBoostApplied = true;
-      return secs;
-    }
+    const plan = planPreloadBuffer(getPreloadMode(), knownDurationSec());
+    if (!plan) return 0;
+    if (preloadBoostApplied && plan.secs === appliedPreloadSecs) return plan.secs;
 
-    sendMpvSetProp('cache-secs', secs);
-    sendMpvSetProp('demuxer-readahead-secs', secs);
-    sendMpvSetProp('back-buffer', secs);
+    sendMpvSetProp('cache-secs', plan.secs);
+    sendMpvSetProp('demuxer-readahead-secs', plan.secs);
+    sendMpvSetProp('demuxer-max-bytes', plan.maxBytes);
     sendMpvSetProp('demuxer-seekable-cache', 'yes');
-    if (isFull) {
-      sendMpvSetProp('demuxer-max-bytes', '8GiB');
-    } else if (secs >= 240) {
-      sendMpvSetProp('demuxer-max-bytes', '1GiB');
-    } else if (secs > STARTUP_CACHE_SECS) {
-      sendMpvSetProp('demuxer-max-bytes', '500MiB');
-    }
     preloadBoostApplied = true;
-    return secs;
+    appliedPreloadSecs = plan.secs;
+    return plan.secs;
   }
 
   function pollDomFallback() {
@@ -1116,6 +1127,7 @@
     mpvPausedForCache = false;
     currentStreamPath = '';
     preloadBoostApplied = false;
+    appliedPreloadSecs = 0;
     recoveryMutedUntil = 0;
     streamStartedAt = 0;
     shimVideo = null;
@@ -1158,6 +1170,7 @@
     getBufferStartRatio: () => getBufferStartRatio(),
     getCacheAheadSec: () => mpvCacheAheadSec,
     applyPreloadSettings,
+    planPreloadBuffer,
     isVideoGateOpen,
     openVideoGate,
     closeVideoGate,

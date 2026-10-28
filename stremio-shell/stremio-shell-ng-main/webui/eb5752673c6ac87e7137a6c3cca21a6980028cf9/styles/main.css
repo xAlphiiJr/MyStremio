@@ -3971,11 +3971,11 @@ kbd {
 }
 .hero-slot-szdy9 {
   position: relative;
-  left: 50%;
-  right: 50%;
-  margin-left: -50vw;
-  margin-right: -50vw;
-  width: 100vw;
+  left: 0;
+  right: auto;
+  margin-left: 0;
+  margin-right: 0;
+  width: 100%;
   aspect-ratio: auto;
   display: flex;
   flex-direction: column;
@@ -4019,7 +4019,7 @@ kbd {
 .hero-slot-spinner-PmL7q,
 .hero-slot-progress-PmL7q {
   position: relative;
-  width: min(320px, 70vw);
+  width: 100%;
   height: 4px;
   border: none;
   border-radius: 999px;

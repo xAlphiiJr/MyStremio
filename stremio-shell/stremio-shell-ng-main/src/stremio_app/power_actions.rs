@@ -141,69 +141,6 @@ pub fn parse_actions(raw: &str) -> Option<String> {
     }
 }
 
-/// `SetSuspendState` blocks until resume, so sleep-and-close runs in a child
-/// that waits until this process has exited.
-pub fn spawn_sleep_after_exit() -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|err| err.to_string())?;
-    let pid = std::process::id().to_string();
-    let args = ["--sleep-now", "--sleep-parent", pid.as_str()];
-    spawn_detached(&exe, &args).map_err(|err| format!("Could not start sleep: {err}"))
-}
-
-pub fn sleep_after_parent(pid: u32) {
-    wait_until_dead(pid);
-    let _ = sleep_pc();
-}
-
-fn spawn_detached(exe: &std::path::Path, args: &[&str]) -> std::io::Result<()> {
-    use winapi::um::winbase::{CREATE_BREAKAWAY_FROM_JOB, CREATE_NO_WINDOW, DETACHED_PROCESS};
-
-    let flags = CREATE_BREAKAWAY_FROM_JOB | CREATE_NO_WINDOW | DETACHED_PROCESS;
-    if start_detached(exe, args, flags).is_ok() {
-        return Ok(());
-    }
-    start_detached(exe, args, CREATE_NO_WINDOW | DETACHED_PROCESS).map(|_| ())
-}
-
-fn start_detached(
-    exe: &std::path::Path,
-    args: &[&str],
-    flags: u32,
-) -> std::io::Result<std::process::Child> {
-    use std::os::windows::process::CommandExt;
-    use std::process::{Command, Stdio};
-    Command::new(exe)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(flags)
-        .spawn()
-}
-
-fn wait_until_dead(pid: u32) {
-    if pid == 0 {
-        return;
-    }
-    use std::thread;
-    use std::time::{Duration, Instant};
-    use winapi::um::handleapi::CloseHandle;
-    use winapi::um::processthreadsapi::OpenProcess;
-    use winapi::um::winnt::PROCESS_QUERY_LIMITED_INFORMATION;
-    // shortcut: stop waiting after 3s, upgrade if exit ever takes longer than that.
-    let deadline = Instant::now() + Duration::from_secs(3);
-    while Instant::now() < deadline {
-        unsafe {
-            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-            if handle.is_null() {
-                return;
-            }
-            CloseHandle(handle);
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::parse_actions;

@@ -118,8 +118,12 @@ pub fn apply_ui_scale(controller: &Controller, hwnd: HWND) {
         None => pending_user.unwrap_or(previous),
     };
     let zoom = compute_zoom_factor(hwnd, percent);
-    controller.put_zoom_factor(zoom).ok();
-    publish_ui_zoom(controller, zoom);
+    // put_ZoomFactor clears the surface to white. Paint calls this on every resize.
+    let current = controller.get_zoom_factor().unwrap_or(0.0);
+    if (current - zoom).abs() > 0.001 {
+        controller.put_zoom_factor(zoom).ok();
+        publish_ui_zoom(controller, zoom);
+    }
     if percent != previous || pending_user.is_some() {
         sync_ui_scale_to_webview(controller, percent);
     }
