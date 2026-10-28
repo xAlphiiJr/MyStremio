@@ -182,7 +182,13 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 ## 🛠️ Patch Notes
 
 ### 2.5.1
-- Shell, plugins, and web UI rebuilt with the current desktop changes
+- **Library** —
+- **Sleep Timer** — Fixed issue where it would start a ghost process when selecting sleep + close triggering MS Defender for some users
+- **UI** — Page/-state changes reduced visual artifacts
+- **Player** — Better caching behavior at stream start
+- **Shell** — Decreased system load and stuttering issues
+- **Plugin Settings** — Fixed bug where plugin settings would flicker after opening
+- **Addons** — Fixed issues with addon search and marketplace
 
 
 ### 2.5.0
