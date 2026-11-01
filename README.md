@@ -188,8 +188,8 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 ## 🛠️ Patch Notes
 
 ### 2.5.3
-- **Search** — The movie and series search in the navigation bar are now Board only. Discover and Library have their own fields, labeled Search Discover and Search Library, which filter the titles on that page instead of opening a results page
-- **Addon Manager** — Fixed an issue where hiding a catalog from the board also disabled it in Discover
+- **Search** — The movie and series search in the navigation bar are now board only. Discover and Library have their own fields, labeled Search Discover and Search Library, which filter the titles on that page instead of opening a results page
+- **Addon Manager** — Fixed an issue where hiding a catalog from the board also disabled it in discover
 - **Seek Preview** — Removed the plugin's own hover timestamp. Preview frames now use the Hover Timestamps plugin, so they can be shown with or without a time label
 - **Intro Skip** — Fixed timestamp submission to TheIntroDB after the submit endpoint moved to API v4
 
