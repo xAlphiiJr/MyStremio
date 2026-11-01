@@ -155,6 +155,13 @@ Built in shader plugin by [bloc97/Anime4K](https://github.com/bloc97/Anime4K) de
 
 Built in Sleep Timer with the options to Shutdown, Sleep or Close. Can be set as countdown, a certain time or until the end of the file. You can also pick actions simultaneously for example close and sleep together.
 
+#### 🪟 Seek Preview
+
+This plugin displays a preview frame when hovering the seek bar, also includes a hover timestamp, so disable the hover timestamp plugin to avoid duplication.
+
+#### ⿻ Picture in Picture (PiP)
+
+This plugin allows to open the stream in a small resizable always on top window with minimal UI.
 
 ---
 
@@ -162,8 +169,8 @@ Built in Sleep Timer with the options to Shutdown, Sleep or Close. Can be set as
 
 ### 🎞️ Addon Manager
 
-A self made addon manager is integrated so you can reorder, rename or dis/enable catalogues inside Stremio.
-Additionally you can pick which addons can contribute metadata for your streams. This can help to avoid having duplicate titles in the library.
+A self made addon manager is integrated so you can reorder, rename or dis/enable catalogues inside Stremio. Those edits are stored in the addon manifest on your Stremio account when you sync, the same way the community addon managers do.
+Additionally you can pick which addons can contribute metadata for your streams. This can help to avoid having duplicate titles in the library. That choice is stored in the same manifest: addons you did not pick lose their metadata resource until you turn them back on.
 MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay installed but stop contributing catalogs/streams in this desktop client. This only works locally!
 
 ---
@@ -171,8 +178,7 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 
 ### 💡 Planned Features
 
-- **PiP:** I want to implement a picture in picture video mode.
-- **Seek Bar Thumbnail:** I want to add a thumbnail when hovering over the seek bar in the player.
+- Right now there are no planned features on my side.
 - **Your suggestions:** Please let me know if you have any feature requests for MyStremio, I'd be happy to further improve the app for everyone! <3
 
 ---
@@ -180,6 +186,13 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 
 
 ## 🛠️ Patch Notes
+
+### 2.5.2
+- **Addon Manager** — Reorder, rename, home hide, search, catalog removal, and metadata choice are now saved into the Stremio account on Sync so they are consistent across devices
+- **Streaming Server** — Fixed issue with streaming server not starting 
+- **UI** — Loading screen no longer mistakenly displays plain name or native Stremio logos
+- **Seek preview** — NEW player plugin that displays a preview frame when hovering the seek bar, also includes a hover timestamp, so disable the hover timestamp plugin to avoid duplication
+- **PiP** — NEW player plugin allows to open the stream in a small resizable always on top window with minimal UI
 
 ### 2.5.1
 - **Sleep Timer** — Fixed issue where it would start a ghost process when selecting sleep + close triggering MS Defender for some users

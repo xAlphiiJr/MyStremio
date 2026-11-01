@@ -57,6 +57,8 @@ pub struct MainWindow {
     /// Pending allowlisted power action, canonical: "sleep", "close", "sleep,close", …
     pub requested_power: Arc<Mutex<Option<String>>>,
     pub saved_window_style: RefCell<WindowStyle>,
+    /// Not owned by the main window: an owned window hides when the main window is minimized.
+    pub pip: RefCell<Option<crate::stremio_app::pip::Session>>,
     #[nwg_resource]
     pub embed: nwg::EmbedResource,
     #[nwg_resource(source_embed: Some(&data.embed), source_embed_str: Some("MAINICON"))]
@@ -113,6 +115,9 @@ pub struct MainWindow {
     #[nwg_control]
     #[nwg_events(OnNotice: [Self::on_toggle_pip_notice] )]
     pub toggle_pip_notice: nwg::Notice,
+    #[nwg_control]
+    #[nwg_events(OnNotice: [Self::on_pip_close_notice] )]
+    pub pip_close_notice: nwg::Notice,
     #[nwg_control]
     #[nwg_events(OnNotice: [Self::on_apply_ui_scale_notice] )]
     pub apply_ui_scale_notice: nwg::Notice,
@@ -402,6 +407,12 @@ impl MainWindow {
                     // HTTP fan-out (ratings, intro submit, AniSkip, layout) must not
                     // block the WebView IPC loop — a hung IntroDB POST used to time out
                     // every other custom-api call, including the submit itself.
+                    if value.get("method").and_then(|method| method.as_str())
+                        == Some("seek-preview")
+                    {
+                        custom_api::enqueue_seek_preview(value, web_tx_web.clone());
+                        continue;
+                    }
                     if value
                         .get("method")
                         .and_then(|method| method.as_str())
@@ -769,14 +780,54 @@ impl MainWindow {
         self.wake_webview_after_show();
     }
     fn on_toggle_pip_notice(&self) {
-        if let Some(hwnd) = self.window.handle.hwnd() {
-            if let Ok(mut saved_style) = self.saved_window_style.try_borrow_mut() {
-                let active = saved_style.toggle_pip_mode(hwnd);
-                custom_api::complete_pip_toggle(active);
-                return;
-            }
+        let open = self.pip.borrow().is_some();
+        let active = if open {
+            self.close_pip(false);
+            false
+        } else {
+            self.open_pip()
+        };
+        custom_api::complete_pip_toggle(active);
+    }
+
+    fn on_pip_close_notice(&self) {
+        self.close_pip(true);
+    }
+
+    fn open_pip(&self) -> bool {
+        if self.pip.borrow().is_some() {
+            return true;
         }
-        custom_api::complete_pip_toggle(false);
+        let Some(main) = self.window.handle.hwnd() else {
+            return false;
+        };
+        let Some(mpv) = self.player.mpv() else {
+            return false;
+        };
+        let Some(session) = crate::stremio_app::pip::open(main, mpv, self.pip_close_notice.sender())
+        else {
+            return false;
+        };
+        *self.pip.borrow_mut() = Some(session);
+        true
+    }
+
+    fn close_pip(&self, notify_js: bool) {
+        let Some(mut session) = self.pip.borrow_mut().take() else {
+            return;
+        };
+        // Unhook before mpv drops its child window, then point the stream back
+        // at the main window while that window still exists.
+        session.disarm();
+        if let Some(hwnd) = self.window.handle.hwnd() {
+            self.player.set_video_window(hwnd);
+        }
+        drop(session);
+        if notify_js {
+            self.webview.execute_script(
+                "try{window.__stremioPipOnClosed&&window.__stremioPipOnClosed()}catch(e){}",
+            );
+        }
     }
     fn on_apply_ui_scale_notice(&self) {
         if let (Some(hwnd), Some(controller)) =
@@ -885,6 +936,7 @@ impl MainWindow {
         self.transmit_window_visibility_change();
     }
     fn on_exit(&self) {
+        self.close_pip(false);
         self.save_window_settings();
         nwg::stop_thread_dispatch();
     }

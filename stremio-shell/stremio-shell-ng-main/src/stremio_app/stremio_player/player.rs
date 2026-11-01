@@ -5,6 +5,7 @@ use flume::{Receiver, Sender};
 use libmpv2::{events::Event, events::EventContext, Format, Mpv, SetData};
 use native_windows_gui::{self as nwg, PartialUi};
 use std::{
+    cell::RefCell,
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
 };
@@ -57,6 +58,7 @@ struct ObserveProperty {
 #[derive(Default)]
 pub struct Player {
     pub channel: ipc::Channel,
+    mpv: RefCell<Option<Arc<Mpv>>>,
 }
 
 impl Player {
@@ -78,6 +80,31 @@ impl Player {
             tx.send(payload).ok();
         }
     }
+
+    pub fn mpv(&self) -> Option<Arc<Mpv>> {
+        self.mpv.try_borrow().ok().and_then(|slot| slot.clone())
+    }
+
+    /// Point the video (and mpv subtitles) at another HWND.
+    /// A live `wid` change stays black until the VO is created again.
+    pub fn set_video_window(&self, hwnd: HWND) -> bool {
+        let Some(mpv) = self.mpv() else {
+            return false;
+        };
+        retarget_window(&mpv, hwnd)
+    }
+}
+
+pub(crate) fn retarget_window(mpv: &Mpv, hwnd: HWND) -> bool {
+    if let Err(error) = mpv.set_property("wid", hwnd as isize as i64) {
+        eprintln!("cannot retarget MPV window: {error:#}");
+        return false;
+    }
+    // Same list the resume `mpv-set-prop` path produces after its gpu-next suffix.
+    if let Err(error) = mpv.set_property("vo", "gpu-next,gpu,gpu-next,") {
+        eprintln!("cannot reinit MPV vo: {error:#}");
+    }
+    true
 }
 
 impl PartialUi for Player {
@@ -100,6 +127,7 @@ impl PartialUi for Player {
         data.channel = ipc::Channel::new(Some((in_msg_sender, rpc_response_receiver)));
 
         let mpv = create_shareable_mpv(window_handle);
+        *data.mpv.borrow_mut() = Some(Arc::clone(&mpv));
 
         let _event_thread = create_event_thread(
             Arc::clone(&mpv),

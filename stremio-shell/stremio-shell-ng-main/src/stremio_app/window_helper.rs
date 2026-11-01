@@ -34,6 +34,9 @@ const DWMWA_COLOR_NONE: DWORD = 0xFFFFFFFE;
 /// Put the modern frame back. A custom COLORREF does not, once COLOR_NONE latched the legacy one.
 const DWMWA_COLOR_DEFAULT: DWORD = 0xFFFFFFFF;
 const DWMWCP_DONOTROUND: DWORD = 1;
+const PIP_WIDTH: i32 = 480;
+const PIP_HEIGHT: i32 = 270;
+const PIP_MARGIN: i32 = 16;
 const STREMIO_CAPTION_COLOR: DWORD = colorref(20, 20, 20);
 const WHITE_TEXT_COLOR: DWORD = colorref(0xff, 0xff, 0xff);
 
@@ -75,9 +78,6 @@ pub struct WindowStyle {
     pub borderless: bool,
     /// Window was maximized when player borderless started — restore that on leave.
     was_maximized_before_borderless: bool,
-    pub pip_mode: bool,
-    pub pip_restore_pos: (i32, i32),
-    pub pip_restore_size: (i32, i32),
     pub pos: (i32, i32),
     pub size: (i32, i32),
     /// Last known framed (overlapped) styles for restore.
@@ -95,9 +95,6 @@ impl Default for WindowStyle {
             full_screen: false,
             borderless: false,
             was_maximized_before_borderless: false,
-            pip_mode: false,
-            pip_restore_pos: (0, 0),
-            pip_restore_size: (0, 0),
             pos: (0, 0),
             size: (0, 0),
             style: 0,
@@ -973,33 +970,41 @@ impl WindowStyle {
         self.ex_style = unsafe { GetWindowLongA(hwnd, GWL_EXSTYLE) };
     }
 
-    pub fn toggle_pip_mode(&mut self, hwnd: HWND) -> bool {
-        if !self.pip_mode {
-            unsafe {
-                let mut rect = mem::zeroed();
-                GetWindowRect(hwnd, &mut rect);
-                self.pip_restore_pos = (rect.left, rect.top);
-                self.pip_restore_size = (rect.right - rect.left, rect.bottom - rect.top);
-            }
-            self.pip_mode = true;
-            let target_x = self.pip_restore_pos.0 + (self.pip_restore_size.0 - 400).max(0);
-            let target_y = self.pip_restore_pos.1 + 48;
-            self.pos = (target_x, target_y);
-            self.size = (400, 225);
-            self.show_window_at(hwnd, HWND_TOPMOST);
-            return true;
-        }
-
-        self.pip_mode = false;
-        self.pos = self.pip_restore_pos;
-        self.size = self.pip_restore_size;
-        self.show_window_at(hwnd, HWND_NOTOPMOST);
-        false
-    }
-
     pub fn set_active(&mut self, hwnd: HWND) {
         unsafe {
             SetForegroundWindow(hwnd);
         }
+    }
+}
+
+pub(crate) fn work_area(hwnd: HWND) -> Option<(i32, i32, i32, i32)> {
+    WindowStyle::monitor_work_area(hwnd)
+        .map(|work| (work.left, work.top, work.right - work.left, work.bottom - work.top))
+}
+
+/// Outer size and bottom-right origin of the PiP window, in physical pixels.
+pub fn pip_placement(hwnd: HWND) -> (i32, i32, i32, i32) {
+    let (x, y) = match WindowStyle::monitor_work_area(hwnd) {
+        Some(work) => pip_origin(work.left, work.top, work.right, work.bottom),
+        None => (PIP_MARGIN, PIP_MARGIN),
+    };
+    (x, y, PIP_WIDTH, PIP_HEIGHT)
+}
+
+fn pip_origin(work_left: i32, work_top: i32, work_right: i32, work_bottom: i32) -> (i32, i32) {
+    (
+        (work_right - PIP_WIDTH - PIP_MARGIN).max(work_left),
+        (work_bottom - PIP_HEIGHT - PIP_MARGIN).max(work_top),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pip_origin;
+
+    #[test]
+    fn pip_sits_in_the_bottom_right_of_the_work_area() {
+        assert_eq!(pip_origin(0, 0, 1920, 1080), (1424, 794));
+        assert_eq!(pip_origin(10, 20, 100, 80), (10, 20));
     }
 }

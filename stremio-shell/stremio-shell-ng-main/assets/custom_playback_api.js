@@ -649,6 +649,7 @@
     leaveStopPending = false;
     leaveTeardownGen += 1;
     currentStreamPath = streamPath;
+    window.__stremioStreamPath = streamPath;
     streamStartedAt = Date.now();
     preloadBoostApplied = false;
     appliedPreloadSecs = 0;
@@ -1126,6 +1127,7 @@
     mpvPause = false;
     mpvPausedForCache = false;
     currentStreamPath = '';
+    window.__stremioStreamPath = '';
     preloadBoostApplied = false;
     appliedPreloadSecs = 0;
     recoveryMutedUntil = 0;

@@ -75,6 +75,44 @@ fn clear_pid(slot: &Arc<Mutex<Option<u32>>>) {
     }
 }
 
+/// PIDs listening on `port`. Remote `0.0.0.0:0` / `[::]:0` so locale-specific
+/// state names (LISTENING / ABHÖREN) do not matter.
+fn listening_pids(netstat: &str, port: u16) -> Vec<u32> {
+    let suffix = format!(":{port}");
+    let mut pids = Vec::new();
+    for line in netstat.lines() {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 4 || !cols[0].eq_ignore_ascii_case("tcp") {
+            continue;
+        }
+        if !cols[1].ends_with(&suffix) {
+            continue;
+        }
+        let remote = cols[2];
+        if remote != "0.0.0.0:0" && remote != "[::]:0" && remote != "*:*" {
+            continue;
+        }
+        let Ok(pid) = cols[cols.len() - 1].parse::<u32>() else {
+            continue;
+        };
+        if pid > 4 && !pids.contains(&pid) {
+            pids.push(pid);
+        }
+    }
+    pids
+}
+
+fn engine_listener_pids() -> Vec<u32> {
+    let Ok(output) = Command::new("netstat")
+        .args(["-ano", "-p", "tcp"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    else {
+        return Vec::new();
+    };
+    listening_pids(&String::from_utf8_lossy(&output.stdout), 11470)
+}
+
 /**
  * Spawn EngineFS + local webui. Shared by first start and wake recovery.
  */
@@ -155,111 +193,160 @@ fn spawn_server_thread(
             }
         }
 
+        // A leftover can answer once, then die with the previous process's job.
         if StremioServer::is_engine_reachable() {
-            println!("Stremio server already ready at http://127.0.0.1:11470");
-            tx.send("http://127.0.0.1:11470".to_string()).ok();
-            return;
+            thread::sleep(Duration::from_millis(500));
+            if StremioServer::is_engine_reachable() {
+                println!("Stremio server already ready at http://127.0.0.1:11470");
+                tx.send("http://127.0.0.1:11470".to_string()).ok();
+                return;
+            }
+            eprintln!("Stremio server dropped; starting a new one");
         }
 
-        let mut server_command = Command::new(runtime_path);
-        server_command
-            .arg(server_path)
-            .env("NO_CORS", "1")
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if local_webui_available {
-            server_command.env("WEBUI_LOCATION", local_webui_location);
-        }
+        // shortcut: 3 bind attempts, raise if the runtime still dies before listen.
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            if !StremioServer::is_engine_reachable() {
+                let self_pid = std::process::id();
+                for pid in engine_listener_pids() {
+                    if pid != self_pid {
+                        terminate_pid(pid);
+                    }
+                }
+                thread::sleep(Duration::from_millis(300));
+            }
+            if StremioServer::is_engine_reachable() {
+                tx.send("http://127.0.0.1:11470".to_string()).ok();
+                return;
+            }
 
-        match server_command.spawn() {
-            Ok(mut child) => {
-                store_pid(&server_pid, child.id());
-                let mut stdout = child.stdout.take().unwrap();
-                let out_lines = lines.clone();
-                let tx = tx.clone();
-                let out_thread = thread::spawn(move || {
-                    let http_endpoint = String::new();
-                    loop {
-                        let mut buffer = [0; SRV_BUFFER_SIZE];
-                        let on = match stdout.read(&mut buffer[..]) {
-                            Ok(0) => break,
-                            Ok(n) => n,
-                            Err(err) => {
-                                eprintln!("server stdout read error: {err}");
-                                break;
+            let mut server_command = Command::new(&runtime_path);
+            server_command
+                .arg(&server_path)
+                .env("NO_CORS", "1")
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            if local_webui_available {
+                server_command.env("WEBUI_LOCATION", local_webui_location);
+            }
+
+            match server_command.spawn() {
+                Ok(mut child) => {
+                    store_pid(&server_pid, child.id());
+                    let http_ready = Arc::new(AtomicBool::new(false));
+                    let stop_poll = Arc::new(AtomicBool::new(false));
+                    let poll_ready = http_ready.clone();
+                    let poll_stop = stop_poll.clone();
+                    let poll_tx = tx.clone();
+                    let poll = thread::spawn(move || {
+                        while !poll_stop.load(Ordering::SeqCst) {
+                            if StremioServer::is_engine_reachable() {
+                                poll_ready.store(true, Ordering::SeqCst);
+                                poll_tx.send("http://127.0.0.1:11470".to_string()).ok();
+                                return;
                             }
-                        };
-                        std::io::stdout().write_all(&buffer).ok();
-                        let string_data = String::from_utf8_lossy(&buffer[..on]);
-                        {
-                            let lines = &mut *out_lines.lock().unwrap();
-                            *lines += string_data.deref();
-                            if http_endpoint.is_empty() {
-                                if let Some(http_endpoint) = string_data
-                                    .lines()
-                                    .find(|line| line.starts_with("EngineFS server started at"))
-                                {
-                                    let http_endpoint =
-                                        http_endpoint.split_whitespace().last().unwrap();
-                                    println!("HTTP endpoint: {http_endpoint}");
-                                    tx.send(http_endpoint.to_string()).ok();
+                            thread::sleep(Duration::from_millis(300));
+                        }
+                    });
+                    let mut stdout = child.stdout.take().unwrap();
+                    let out_lines = lines.clone();
+                    let tx = tx.clone();
+                    let out_thread = thread::spawn(move || {
+                        let http_endpoint = String::new();
+                        loop {
+                            let mut buffer = [0; SRV_BUFFER_SIZE];
+                            let on = match stdout.read(&mut buffer[..]) {
+                                Ok(0) => break,
+                                Ok(n) => n,
+                                Err(err) => {
+                                    eprintln!("server stdout read error: {err}");
+                                    break;
                                 }
-                            }
-                            *lines = lines
-                                .lines()
-                                .rev()
-                                .take(SRV_LOG_SIZE)
-                                .collect::<Vec<&str>>()
-                                .into_iter()
-                                .rev()
-                                .collect::<Vec<&str>>()
-                                .join("\n");
-                        };
-                    }
-                });
+                            };
+                            std::io::stdout().write_all(&buffer).ok();
+                            let string_data = String::from_utf8_lossy(&buffer[..on]);
+                            {
+                                let lines = &mut *out_lines.lock().unwrap();
+                                *lines += string_data.deref();
+                                if http_endpoint.is_empty() {
+                                    if let Some(http_endpoint) = string_data
+                                        .lines()
+                                        .find(|line| line.starts_with("EngineFS server started at"))
+                                    {
+                                        let http_endpoint =
+                                            http_endpoint.split_whitespace().last().unwrap();
+                                        println!("HTTP endpoint: {http_endpoint}");
+                                        tx.send(http_endpoint.to_string()).ok();
+                                    }
+                                }
+                                *lines = lines
+                                    .lines()
+                                    .rev()
+                                    .take(SRV_LOG_SIZE)
+                                    .collect::<Vec<&str>>()
+                                    .into_iter()
+                                    .rev()
+                                    .collect::<Vec<&str>>()
+                                    .join("\n");
+                            };
+                        }
+                    });
 
-                let mut stderr = child.stderr.take().unwrap();
-                let err_lines = lines.clone();
-                let err_thread = thread::spawn(move || {
-                    let mut buffer = [0; SRV_BUFFER_SIZE];
-                    loop {
-                        let en = match stderr.read(&mut buffer[..]) {
-                            Ok(0) => break,
-                            Ok(n) => n,
-                            Err(err) => {
-                                eprintln!("server stderr read error: {err}");
-                                break;
-                            }
-                        };
-                        std::io::stderr().write_all(&buffer).ok();
-                        let string_data = String::from_utf8_lossy(&buffer[..en]);
-                        {
-                            let lines = &mut *err_lines.lock().unwrap();
-                            *lines += string_data.deref();
-                            *lines = lines
-                                .lines()
-                                .rev()
-                                .take(SRV_LOG_SIZE)
-                                .collect::<Vec<&str>>()
-                                .into_iter()
-                                .rev()
-                                .collect::<Vec<&str>>()
-                                .join("\n");
-                        };
+                    let mut stderr = child.stderr.take().unwrap();
+                    let err_lines = lines.clone();
+                    let err_thread = thread::spawn(move || {
+                        let mut buffer = [0; SRV_BUFFER_SIZE];
+                        loop {
+                            let en = match stderr.read(&mut buffer[..]) {
+                                Ok(0) => break,
+                                Ok(n) => n,
+                                Err(err) => {
+                                    eprintln!("server stderr read error: {err}");
+                                    break;
+                                }
+                            };
+                            std::io::stderr().write_all(&buffer).ok();
+                            let string_data = String::from_utf8_lossy(&buffer[..en]);
+                            {
+                                let lines = &mut *err_lines.lock().unwrap();
+                                *lines += string_data.deref();
+                                *lines = lines
+                                    .lines()
+                                    .rev()
+                                    .take(SRV_LOG_SIZE)
+                                    .collect::<Vec<&str>>()
+                                    .into_iter()
+                                    .rev()
+                                    .collect::<Vec<&str>>()
+                                    .join("\n");
+                            };
+                        }
+                    });
+                    out_thread.join().ok();
+                    err_thread.join().ok();
+                    stop_poll.store(true, Ordering::SeqCst);
+                    poll.join().ok();
+                    clear_pid(&server_pid);
+                    if !http_ready.load(Ordering::SeqCst) && attempt < 3 {
+                        eprintln!(
+                        "Stremio server exited before accepting connections (attempt {attempt})"
+                    );
+                        thread::sleep(Duration::from_millis(400));
+                        continue;
                     }
-                });
-                out_thread.join().ok();
-                err_thread.join().ok();
-                clear_pid(&server_pid);
+                }
+                Err(err) => {
+                    nwg::error_message(
+                        "Stremio server",
+                        format!("Cannot execute stremio-runtime: {}", &err).as_str(),
+                    );
+                }
             }
-            Err(err) => {
-                nwg::error_message(
-                    "Stremio server",
-                    format!("Cannot execute stremio-runtime: {}", &err).as_str(),
-                );
-            }
-        };
+            break;
+        }
 
         {
             let mut logs = logs.lock().unwrap();
@@ -396,27 +483,18 @@ impl StremioServer {
         if self.development {
             return;
         }
-        let rx = {
-            let mut slot = self.ready_rx.lock().unwrap();
-            slot.take()
-        };
-        let Some(rx) = rx else {
-            return;
-        };
-        match rx.recv_timeout(timeout) {
-            Ok(endpoint) => {
-                println!("Stremio server ready at {endpoint}");
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if Self::is_engine_reachable() {
+                println!("Stremio server ready at http://{ENGINE_HOST}");
+                return;
             }
-            Err(flume::RecvTimeoutError::Timeout) => {
-                eprintln!(
-                    "Timed out waiting for Stremio server after {}ms; continuing startup",
-                    timeout.as_millis()
-                );
-            }
-            Err(flume::RecvTimeoutError::Disconnected) => {
-                eprintln!("Stremio server thread ended before ready signal");
-            }
+            thread::sleep(Duration::from_millis(200));
         }
+        eprintln!(
+            "Timed out waiting for Stremio server after {}ms; continuing startup",
+            timeout.as_millis()
+        );
     }
 }
 
@@ -459,5 +537,21 @@ impl PartialUi for StremioServer {
             self.start();
             self.wait_ready(Duration::from_secs(15));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::listening_pids;
+
+    #[test]
+    fn listening_pids_ignores_established_and_other_ports() {
+        let netstat = "\
+  TCP    127.0.0.1:11470        127.0.0.1:54000        HERGESTELLT     999\n\
+  TCP    127.0.0.1:11470        0.0.0.0:0              ABHÖREN         4321\n\
+  TCP    127.0.0.1:11475        0.0.0.0:0              ABHÖREN         111\n\
+  TCP    [::1]:11470            [::]:0                 LISTENING       4321\n\
+  TCP    0.0.0.0:11470          0.0.0.0:0              LISTENING       4\n";
+        assert_eq!(listening_pids(netstat, 11470), vec![4321]);
     }
 }

@@ -27,22 +27,6 @@
   const VISIBILITY_KEY = 'stremio-custom-catalog-visibility';
   const ADDON_SEARCH_KEY = 'stremio-custom-addon-search-disabled';
   const DUMMY_EXTRAS = new Set([HOME_HIDE_EXTRA, META_HIDE_EXTRA, DISCOVER_HIDE_EXTRA, SEARCH_HIDE_EXTRA]);
-  const DISCOVER_TYPE_LABELS = new Set([
-    'movie',
-    'movies',
-    'film',
-    'filme',
-    'series',
-    'serien',
-    'tv',
-    'channel',
-    'channels',
-    'kanäle',
-    'kanale',
-    'anime',
-    'all',
-    'alle',
-  ]);
 
   /** @type {object[]|null} */
   let liveAddons = null;
@@ -67,7 +51,8 @@
   let dragFrom = -1;
   let dragOver = -1;
   let domLock = 0;
-  let discoverSwitching = false;
+  /** @type {Map<string, object|null>} */
+  const remoteManifestByTransport = new Map();
   /** @type {MutationObserver|null} */
   let observer = null;
   /** @type {Set<string>} */
@@ -94,18 +79,6 @@
 
   function isInstalledAddonsRoute() {
     return /#\/addons\/?(?:\?.*)?$/.test(location.hash || '');
-  }
-
-  function isDiscoverRoute() {
-    return /#\/discover/.test(location.hash || '');
-  }
-
-  function isBoardRoute() {
-    const hash = location.hash || '';
-    if (!hash || hash === '#/' || hash === '#') return true;
-    if (hash.includes('/board')) return true;
-    if (/^#\/?\?/.test(hash)) return true;
-    return false;
   }
 
   function normalizeTransport(url) {
@@ -223,9 +196,7 @@
   }
 
   function catalogKind(catalog) {
-    if (looksLikeSearchCatalog(catalog)) return 'search';
-    if (hasNamedExtra(catalog, SEARCH_EXTRA, true) && !isLegacyHomeHideSearch(catalog)) return 'search';
-    return 'catalog';
+    return isPureSearchCatalog(catalog) ? 'search' : 'catalog';
   }
 
   function visibilityId(addon, catalog) {
@@ -241,23 +212,6 @@
     writeJson(VISIBILITY_KEY, map);
   }
 
-  function catalogFlags(addon, catalog) {
-    const stored = readVisibilityMap()[visibilityId(addon, catalog)] || {};
-    return {
-      disabled: stored.disabled === true,
-      home: stored.home !== false,
-      discover: stored.discover !== false,
-      search: stored.search !== false,
-    };
-  }
-
-  function patchCatalogFlags(addon, catalog, patch) {
-    const map = readVisibilityMap();
-    const key = visibilityId(addon, catalog);
-    map[key] = Object.assign({}, map[key] || {}, patch);
-    writeVisibilityMap(map);
-  }
-
   function readDisabledAddonSearch() {
     const stored = readJson(ADDON_SEARCH_KEY, []);
     return new Set(Array.isArray(stored) ? stored.map(normalizeTransport).filter(Boolean) : []);
@@ -267,42 +221,80 @@
     writeJson(ADDON_SEARCH_KEY, [...set]);
   }
 
-  function isAddonSearchDisabled(addon) {
-    return readDisabledAddonSearch().has(addonTransport(addon));
+  function extraNamed(catalog, name) {
+    return normalizeExtras(catalog).find((extra) => extra.name === name) || null;
   }
 
-  function setAddonSearchDisabled(addon, disabled) {
-    const set = readDisabledAddonSearch();
-    const key = addonTransport(addon);
-    if (!key) return;
-    if (disabled) set.add(key);
-    else set.delete(key);
-    writeDisabledAddonSearch(set);
+  function isPureSearchCatalog(catalog) {
+    if (isLegacyHomeHideSearch(catalog)) return false;
+    return looksLikeSearchCatalog(catalog);
   }
 
-  function effectiveCatalogFlags(addon, catalog) {
-    const flags = catalogFlags(addon, catalog);
-    const kind = catalogKind(catalog);
-    const disabled = flags.disabled;
-    return {
-      disabled,
-      home: !disabled && flags.home && kind !== 'search',
-      discover: !disabled && flags.discover && kind !== 'search',
-      search: !disabled && flags.search && !isAddonSearchDisabled(addon),
-    };
+  function pinSearchOnlyCatalogs(addons) {
+    let changed = false;
+    for (const addon of addons || []) {
+      for (const catalog of getCatalogs(addon)) {
+        if (!isPureSearchCatalog(catalog)) continue;
+        const extras = normalizeExtras(catalog);
+        const search = extras.find((extra) => extra.name === SEARCH_EXTRA);
+        if (search?.isRequired === true) continue;
+        if (search) search.isRequired = true;
+        else extras.push({ name: SEARCH_EXTRA, isRequired: true });
+        writeExtras(catalog, extras);
+        changed = true;
+      }
+    }
+    return changed;
   }
 
-  function isCatalogDisabled(addon, catalog) {
-    return effectiveCatalogFlags(addon, catalog).disabled;
+  function isHomeVisible(catalog) {
+    return !normalizeExtras(catalog).some((extra) => extra.isRequired === true);
   }
 
-  function isCatalogHomeHidden(addon, catalog) {
-    return !effectiveCatalogFlags(addon, catalog).home;
+  function isDiscoverVisible(catalog) {
+    const search = extraNamed(catalog, SEARCH_EXTRA);
+    return !(search && search.isRequired === true);
   }
 
-  function setCatalogHomeVisible(addon, catalog, visible) {
-    if (catalogKind(catalog) !== 'catalog') return;
-    patchCatalogFlags(addon, catalog, { home: Boolean(visible) });
+  function setHomeVisible(catalog, visible) {
+    const extras = normalizeExtras(catalog);
+    if (!visible) {
+      const genre = extras.find((extra) => extra.name === 'genre');
+      if (genre) genre.isRequired = true;
+      else extras.push({ name: 'genre', isRequired: true, options: [], optionsLimit: 1 });
+      writeExtras(catalog, extras);
+      return;
+    }
+    for (const extra of extras) {
+      if (extra.name === SEARCH_EXTRA && isPureSearchCatalog(catalog)) {
+        extra.isRequired = true;
+        continue;
+      }
+      delete extra.isRequired;
+    }
+    writeExtras(
+      catalog,
+      extras.filter((extra) => extra.name !== 'genre' || extra.isRequired || extraOptions(extra).length > 0)
+    );
+  }
+
+  function setDiscoverVisible(catalog, visible) {
+    const extras = normalizeExtras(catalog);
+    const search = extras.find((extra) => extra.name === SEARCH_EXTRA);
+    if (!search) return false;
+    if (visible) delete search.isRequired;
+    else search.isRequired = true;
+    writeExtras(catalog, extras);
+    return true;
+  }
+
+  function toggleHomeVisibility(catalog) {
+    setHomeVisible(catalog, !isHomeVisible(catalog));
+  }
+
+  function isSearchShown(catalog) {
+    if (isPureSearchCatalog(catalog)) return true;
+    return Boolean(extraNamed(catalog, SEARCH_EXTRA));
   }
 
   function catalogHasOptionalSearch(catalog) {
@@ -313,10 +305,6 @@
     return catalogKind(catalog) === 'search' ||
       catalogHasOptionalSearch(catalog) ||
       addonCanSearch(addon);
-  }
-
-  function isCatalogSearchVisible(addon, catalog) {
-    return effectiveCatalogFlags(addon, catalog).search && catalogCanContributeSearch(addon, catalog);
   }
 
   function stripOptionalSearch(catalog) {
@@ -336,28 +324,6 @@
     writeExtras(catalog, extras);
   }
 
-  function setCatalogSearchVisible(addon, catalog, visible, originalCatalog) {
-    patchCatalogFlags(addon, catalog, { search: Boolean(visible) });
-    if (catalogKind(catalog) === 'search') return;
-    const original = originalCatalog || originalCatalogFor(addon, catalog);
-    if (!catalogHasOptionalSearch(catalog) && !catalogHasOptionalSearch(original)) return;
-    if (visible) restoreOptionalSearch(catalog, original);
-    else stripOptionalSearch(catalog);
-  }
-
-  function isCatalogDiscoverHidden(addon, catalog) {
-    return !effectiveCatalogFlags(addon, catalog).discover;
-  }
-
-  function setCatalogDiscoverVisible(addon, catalog, visible) {
-    if (catalogKind(catalog) !== 'catalog') return;
-    patchCatalogFlags(addon, catalog, { discover: Boolean(visible) });
-  }
-
-  function setCatalogDisabled(addon, catalog, disabled) {
-    patchCatalogFlags(addon, catalog, { disabled: Boolean(disabled) });
-  }
-
   function resourceHasSearch(resource) {
     if (resourceName(resource) !== 'catalog') return false;
     const extras = Array.isArray(resource?.extra) ? resource.extra : [];
@@ -367,28 +333,22 @@
     });
   }
 
+  function originalCatalogFor(addon, catalog) {
+    if (isCinemeta(addon) && originalCinemeta) {
+      const catalogs = Array.isArray(originalCinemeta.catalogs) ? originalCinemeta.catalogs : [];
+      return catalogs.find((item) => catalogKey(item) === catalogKey(catalog)) || null;
+    }
+    const live = (liveAddons || []).find((item) => sameTransport(item, addonTransport(addon)));
+    return getCatalogs(live).find((item) => catalogKey(item) === catalogKey(catalog)) || null;
+  }
+
   function catalogShowsSearchToggle(addon, catalog) {
     if (catalogCanContributeSearch(addon, catalog)) return true;
     const original = originalCatalogFor(addon, catalog);
     return Boolean(original && catalogHasOptionalSearch(original));
   }
 
-  function catalogsWithSearchToggle(addon) {
-    return getCatalogs(addon).filter((catalog) => catalogShowsSearchToggle(addon, catalog));
-  }
-
-  function syncAddonSearchFromCatalogs(addon) {
-    const relevant = catalogsWithSearchToggle(addon);
-    if (relevant.length === 0) return;
-    const allOff = relevant.every((catalog) => {
-      const flags = catalogFlags(addon, catalog);
-      return flags.search === false || flags.disabled;
-    });
-    setAddonSearchDisabled(addon, allOff);
-  }
-
   function addonCanSearch(addon) {
-    if (isAddonSearchDisabled(addon)) return true;
     if ((addon?.manifest?.resources || []).some(resourceHasSearch)) return true;
     return getCatalogs(addon).some((catalog) => {
       if (catalogKind(catalog) === 'search') return true;
@@ -404,11 +364,10 @@
     const extras = normalizeExtras(catalog).filter((extra) => !DUMMY_EXTRAS.has(extra.name));
     const search = extras.find((extra) => extra.name === SEARCH_EXTRA && extra.isRequired);
     if (search && isLegacyHomeHideSearch({ extra: [search] })) {
-      const leftover = extraOptions(search).filter(
+      search.options = extraOptions(search).filter(
         (option) => option !== HOME_HIDE_EXTRA && option !== META_HIDE_EXTRA
       );
-      if (!leftover.length) extras.splice(extras.indexOf(search), 1);
-      else search.options = leftover;
+      search.isRequired = true;
     }
     writeExtras(catalog, extras);
   }
@@ -421,423 +380,95 @@
     return next;
   }
 
-  function applyVisibilityToExtras(addons) {
-    const next = stripDummyExtrasFromAddons(addons);
-    for (const addon of next) {
-      for (const catalog of getCatalogs(addon)) {
-        const flags = effectiveCatalogFlags(addon, catalog);
-        if (catalogKind(catalog) !== 'search' && !flags.search && catalogHasOptionalSearch(catalog)) {
-          stripOptionalSearch(catalog);
-        }
-      }
-    }
-    return next;
-  }
-
-  function migrateVisibilityFromExtras(addons) {
+  function migrateLocalVisibilityIntoDraft(addons) {
+    const map = readVisibilityMap();
+    const searchOff = readDisabledAddonSearch();
+    let changed = false;
     for (const addon of addons || []) {
-      for (const catalog of getCatalogs(addon)) {
-        const patch = {};
-        if (hasNamedExtra(catalog, HOME_HIDE_EXTRA, true) || isLegacyHomeHideSearch(catalog)) patch.home = false;
-        if (hasNamedExtra(catalog, DISCOVER_HIDE_EXTRA)) patch.discover = false;
-        if (hasNamedExtra(catalog, SEARCH_HIDE_EXTRA, true)) patch.search = false;
-        if (Object.keys(patch).length) patchCatalogFlags(addon, catalog, patch);
-      }
-    }
-  }
-
-  let visibilityMigrated = false;
-
-  function ensureVisibilityMigrated(addons) {
-    if (visibilityMigrated) return;
-    migrateVisibilityFromExtras(addons);
-    visibilityMigrated = true;
-  }
-
-  function refreshVisibilitySurfaces() {
-    applyDiscoverCatalogFilter();
-    applyBoardCatalogFilter();
-  }
-
-  async function ensureLiveAddons() {
-    if (Array.isArray(liveAddons) && liveAddons.length) return liveAddons;
-    return loadLiveAddons();
-  }
-
-  function scheduleVisibilityRefresh() {
-    const run = () => {
-      void ensureLiveAddons().then((addons) => {
-        ensureVisibilityMigrated(addons);
-        refreshVisibilitySurfaces();
-      });
-    };
-    run();
-    window.requestAnimationFrame(run);
-    window.setTimeout(run, 300);
-    window.setTimeout(run, 1200);
-  }
-
-  function parseCatalogRequest(url) {
-    try {
-      const parsed = new URL(String(url || ''), location.href);
-      const match = parsed.pathname.match(/\/catalog\/([^/]+)\/([^/]+?)(?:\/([^/]+))?\.json$/i);
-      if (!match) return null;
-      const extra = match[3] ? decodeURIComponent(match[3]) : '';
-      const extras = {};
-      extra.split('&').filter(Boolean).forEach((pair) => {
-        const eq = pair.indexOf('=');
-        const key = eq >= 0 ? pair.slice(0, eq) : pair;
-        const value = eq >= 0 ? pair.slice(eq + 1) : '';
-        extras[decodeURIComponent(key)] = decodeURIComponent(value);
-      });
-      parsed.searchParams.forEach((value, key) => {
-        extras[key] = value;
-      });
-      return {
-        href: parsed.href,
-        type: decodeURIComponent(match[1]),
-        id: decodeURIComponent(match[2]),
-        extras,
-        hasSearch: Object.prototype.hasOwnProperty.call(extras, 'search'),
-      };
-    } catch (_) {
-      return null;
-    }
-  }
-
-  function addonForCatalogRequest(href) {
-    const addons = liveAddons || workingAddons() || [];
-    return (
-      addons.find((addon) => {
-        const base = addonTransport(addon);
-        if (!base) return false;
-        return href === base || href.startsWith(`${base}/`);
-      }) || null
-    );
-  }
-
-  function shouldEmptyCatalogRequest(url) {
-    const request = parseCatalogRequest(url);
-    if (!request) return false;
-    const addon = addonForCatalogRequest(request.href);
-    if (!addon) return false;
-    const catalog = getCatalogs(addon).find(
-      (item) => String(item?.type || '') === request.type && String(item?.id || '') === request.id
-    );
-    if (isAddonSearchDisabled(addon) && (request.hasSearch || (catalog && catalogKind(catalog) === 'search'))) {
-      return true;
-    }
-    if (!catalog) return isAddonSearchDisabled(addon) && request.hasSearch;
-    const flags = effectiveCatalogFlags(addon, catalog);
-    if (flags.disabled) return true;
-    if (request.hasSearch && !flags.search) return true;
-    if (catalogKind(catalog) === 'search' && !flags.search) return true;
-    return false;
-  }
-
-  function emptyCatalogResponse() {
-    return Promise.resolve(
-      new Response('{"metas":[]}', {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    );
-  }
-
-  function installCatalogSearchFilter() {
-    if (window.__mystremioCatalogSearchFetchFiltered) return;
-    window.__mystremioCatalogSearchFetchFiltered = true;
-
-    const originalFetch = window.fetch?.bind(window);
-    if (typeof originalFetch === 'function') {
-      window.fetch = function (input, init) {
-        const url =
-          typeof input === 'string'
-            ? input
-            : input && typeof input === 'object' && 'url' in input
-              ? String(input.url)
-              : String(input || '');
-        if (shouldEmptyCatalogRequest(url)) return emptyCatalogResponse();
-        return originalFetch(input, init);
-      };
-    }
-
-    const XHR = window.XMLHttpRequest;
-    if (!XHR || XHR.__mystremioCatalogSearchPatched) return;
-    const proto = XHR.prototype;
-    const originalOpen = proto.open;
-    const originalSend = proto.send;
-    proto.open = function (method, url, ...rest) {
-      this.__mystremioCatalogSearchUrl = String(url || '');
-      return originalOpen.call(this, method, url, ...rest);
-    };
-    proto.send = function (...args) {
-      if (shouldEmptyCatalogRequest(this.__mystremioCatalogSearchUrl)) {
-        const self = this;
-        const body = '{"metas":[]}';
-        Object.defineProperty(this, 'readyState', { configurable: true, get: () => 4 });
-        Object.defineProperty(this, 'status', { configurable: true, get: () => 200 });
-        Object.defineProperty(this, 'responseText', { configurable: true, get: () => body });
-        Object.defineProperty(this, 'response', { configurable: true, get: () => body });
-        queueMicrotask(() => {
-          self.dispatchEvent(new Event('readystatechange'));
-          self.dispatchEvent(new Event('load'));
-          self.dispatchEvent(new Event('loadend'));
-        });
-        return;
-      }
-      return originalSend.apply(this, args);
-    };
-    XHR.__mystremioCatalogSearchPatched = true;
-  }
-
-  function originalCatalogFor(addon, catalog) {
-    if (isCinemeta(addon) && originalCinemeta) {
-      return (originalCinemeta.catalogs || []).find((item) => catalogKey(item) === catalogKey(catalog)) || null;
-    }
-    const live = (liveAddons || []).find((item) => sameTransport(item, addonTransport(addon)));
-    return getCatalogs(live).find((item) => catalogKey(item) === catalogKey(catalog)) || null;
-  }
-
-  function catalogMatchKeys(addon, catalog) {
-    const keys = new Set();
-    const name = String(catalog?.name || '').trim().toLowerCase();
-    const id = String(catalog?.id || '').trim().toLowerCase();
-    const type = String(catalog?.type || '').trim().toLowerCase();
-    const addonName = String(addon?.manifest?.name || '').trim().toLowerCase();
-    const label = catalogLabel(catalog).toLowerCase();
-    if (name) keys.add(name);
-    if (id) keys.add(id);
-    if (label) keys.add(label);
-    if (addonName) keys.add(addonName);
-    if (name && type) keys.add(`${name} · ${type}`);
-    if (addonName && name) {
-      keys.add(`${addonName} ${name}`);
-      keys.add(`${name} ${addonName}`);
-      keys.add(`${addonName} · ${name}`);
-    }
-    if (id === 'top' || name === 'popular') {
-      keys.add('popular');
-      keys.add('top');
-    }
-    return [...keys].filter(Boolean);
-  }
-
-  function isDiscoverTypeText(text) {
-    return DISCOVER_TYPE_LABELS.has(String(text || '').trim().toLowerCase());
-  }
-
-  function isDiscoverSearchText(text) {
-    const value = String(text || '').trim().toLowerCase();
-    return value === 'search' || value === 'suche' || value === 'buscar';
-  }
-
-  function isDiscoverExtraText(text) {
-    const value = String(text || '').trim().toLowerCase();
-    return (
-      value === 'genre' ||
-      value === 'year' ||
-      value === 'jahr' ||
-      value === 'select' ||
-      value === 'auswahl' ||
-      value === 'none' ||
-      value === 'keine'
-    );
-  }
-
-  function isNonCatalogDiscoverControl(text) {
-    return isDiscoverTypeText(text) || isDiscoverSearchText(text) || isDiscoverExtraText(text);
-  }
-
-  function discoverHashUsesCinemeta() {
-    return /cinemeta/i.test(String(location.hash || ''));
-  }
-
-  function cinemetaDiscoverIsOff(addon) {
-    if (!addon) return true;
-    return isSoftDisabled(addon) || cinemetaCatalogsRemoved(addon);
-  }
-
-  function pushHiddenDiscoverEntry(entries, addon, catalog) {
-    entries.push({
-      keys: catalogMatchKeys(addon, catalog),
-      reason: catalogKind(catalog) === 'search' ? 'search' : 'marked',
-    });
-  }
-
-  function hiddenDiscoverEntries() {
-    const entries = [];
-    const addons = liveAddons || workingAddons() || [];
-    for (const addon of addons) {
-      if (isCinemeta(addon)) {
-        const hideAll = cinemetaDiscoverIsOff(addon);
-        const live = getCatalogs(addon);
-        const storedBackup = readJson(CINEMETA_CATALOG_BACKUP_KEY, []);
-        const backup = Array.isArray(storedBackup) && storedBackup.length
-          ? storedBackup
-          : Array.isArray(originalCinemeta?.catalogs)
-            ? originalCinemeta.catalogs
-            : [];
-        const catalogs = hideAll ? [...live, ...backup] : live.length ? live : backup;
-        for (const catalog of catalogs) {
-          if (!hideAll && !isCatalogDiscoverHidden(addon, catalog)) continue;
-          pushHiddenDiscoverEntry(entries, addon, catalog);
+      const catalogs = getCatalogs(addon);
+      const addonSearchOff = searchOff.has(addonTransport(addon));
+      for (let i = catalogs.length - 1; i >= 0; i -= 1) {
+        const catalog = catalogs[i];
+        const stored = map[visibilityId(addon, catalog)] || {};
+        if (stored.disabled === true) {
+          catalogs.splice(i, 1);
+          changed = true;
+          continue;
         }
-        continue;
-      }
-      for (const catalog of getCatalogs(addon)) {
-        if (!isCatalogDiscoverHidden(addon, catalog)) continue;
-        pushHiddenDiscoverEntry(entries, addon, catalog);
-      }
-    }
-    if (discoverHashUsesCinemeta()) {
-      const cinemeta = findCinemeta(addons);
-      if (cinemetaDiscoverIsOff(cinemeta)) {
-        const backup =
-          (cinemeta && cinemetaCatalogSource(cinemeta)) ||
-          readJson(CINEMETA_CATALOG_BACKUP_KEY, []) ||
-          originalCinemeta?.catalogs ||
-          [];
-        if (Array.isArray(backup)) {
-          const stub = cinemeta || { manifest: { name: 'Cinemeta' } };
-          for (const catalog of backup) pushHiddenDiscoverEntry(entries, stub, catalog);
+        if (stored.discover === false && isDiscoverVisible(catalog)) {
+          if (setDiscoverVisible(catalog, false)) changed = true;
+          else {
+            catalogs.splice(i, 1);
+            changed = true;
+            continue;
+          }
         }
-        entries.push({ keys: ['popular', 'top', 'cinemeta'], reason: 'marked' });
+        if (stored.home === false && isHomeVisible(catalog)) {
+          setHomeVisible(catalog, false);
+          changed = true;
+        }
+        const hideSearch = stored.search === false || addonSearchOff;
+        if (!hideSearch) continue;
+        if (isPureSearchCatalog(catalog)) {
+          catalogs.splice(i, 1);
+          changed = true;
+          continue;
+        }
+        if (catalogHasOptionalSearch(catalog)) {
+          stripOptionalSearch(catalog);
+          changed = true;
+        }
       }
     }
-    return entries;
+    return changed;
   }
 
-  function textMatchesKeys(text, keys) {
-    const value = String(text || '').trim().toLowerCase().replace(/\s+/g, ' ');
-    if (!value || isDiscoverTypeText(value)) return false;
-    return keys.some((key) => {
-      if (!key) return false;
-      if (value === key) return true;
-      if (value.startsWith(`${key} ·`) || value.startsWith(`${key}·`) || value.startsWith(`${key} -`)) return true;
-      if (value.startsWith(`${key} (`)) return true;
-      return value.includes(` ${key}`) && value.length - key.length < 28;
-    });
-  }
-
-  function isDummyExtraText(text) {
-    const value = String(text || '').trim().toLowerCase();
-    if (!value) return false;
-    if (DUMMY_EXTRAS.has(value)) return true;
-    return /mystremio-(?:home|discover|search|meta)-hi/i.test(value);
-  }
-
-  function optionMatchesHidden(text, entries) {
-    if (isDummyExtraText(text)) return true;
-    const value = String(text || '').trim().toLowerCase().replace(/\s+/g, ' ');
-    return (entries || []).some((entry) => {
-      if (textMatchesKeys(text, entry.keys)) return true;
-      if (entry.reason === 'search' && /\bsearch\b/i.test(value)) {
-        return (entry.keys || []).some(
-          (key) => key && key.length >= 3 && (value.includes(key) || key.includes(value))
-        );
-      }
-      return false;
-    });
-  }
-
-  function discoverOptionNodes(scope) {
-    return [
-      ...scope.querySelectorAll(
-        '[class*="menu-container"] [class*="option"], [class*="selectable-inputs"] [class*="option"], [class*="select-input-container"] [class*="option"]'
-      ),
-    ];
-  }
-
-  function applyDiscoverCatalogFilter() {
-    if (!isDiscoverRoute() || discoverSwitching) return;
-    const entries = hiddenDiscoverEntries();
-    const forceLeaveCinemeta =
-      discoverHashUsesCinemeta() &&
-      cinemetaDiscoverIsOff(findCinemeta(liveAddons || workingAddons() || []));
-    const scope =
-      document.querySelector('[class*="discover-container"]') ||
-      document.querySelector('[class*="discover-"]') ||
-      document;
-    const options = discoverOptionNodes(scope);
-    options.forEach((option) => {
-      const text = String(option.textContent || '');
-      const hide = optionMatchesHidden(text, entries);
-      const next = hide ? '1' : '0';
-      if (option.dataset.msDiscoverHide !== next) {
-        option.dataset.msDiscoverHide = next;
-        option.style.display = hide ? 'none' : '';
-      }
-    });
-    const inputs = [...scope.querySelectorAll('[class*="select-input-container"]')];
-    for (const input of inputs) {
-      const label = input.querySelector('[class*="label"]');
-      const labelText = String(label?.textContent || '');
-      if (isDiscoverTypeText(labelText) || isDiscoverSearchText(labelText)) {
-        delete input.dataset.msDiscoverOpenAttempt;
-        continue;
-      }
-      const labelHidden = optionMatchesHidden(labelText, entries);
-      if (!labelHidden && !(forceLeaveCinemeta && !isNonCatalogDiscoverControl(labelText))) {
-        delete input.dataset.msDiscoverOpenAttempt;
-        continue;
-      }
-      const visible = [...input.querySelectorAll('[class*="option"]')].find((option) => {
-        const text = String(option.textContent || '');
-        if (option.dataset.msDiscoverHide === '1' || option.style.display === 'none') return false;
-        if (isDiscoverTypeText(text) || isDiscoverSearchText(text)) return false;
-        return true;
-      });
-      if (visible) {
-        discoverSwitching = true;
-        delete input.dataset.msDiscoverOpenAttempt;
-        visible.click();
-        window.setTimeout(() => {
-          discoverSwitching = false;
-        }, 0);
-        return;
-      }
-      if (input.dataset.msDiscoverOpenAttempt === '1') continue;
-      input.dataset.msDiscoverOpenAttempt = '1';
-      discoverSwitching = true;
-      (label || input).click();
-      window.setTimeout(() => {
-        discoverSwitching = false;
-        applyDiscoverCatalogFilter();
-      }, 60);
-      return;
+  function assertManifestVisibility() {
+    const browse = {
+      id: 'top',
+      type: 'movie',
+      name: 'Popular',
+      extra: [{ name: 'search' }, { name: 'genre', options: ['Action'] }],
+    };
+    toggleHomeVisibility(browse);
+    if (isHomeVisible(browse) || !isDiscoverVisible(browse) || extraNamed(browse, 'search').isRequired === true) {
+      throw new Error('home hide failed');
     }
-  }
-
-  function hiddenBoardEntries() {
-    const entries = [];
-    for (const addon of liveAddons || workingAddons() || []) {
-      for (const catalog of getCatalogs(addon)) {
-        if (!isCatalogHomeHidden(addon, catalog)) continue;
-        entries.push({ keys: catalogMatchKeys(addon, catalog) });
-      }
+    toggleHomeVisibility(browse);
+    if (!isHomeVisible(browse) || !isDiscoverVisible(browse)) throw new Error('home show failed');
+    const bare = { id: 'list', type: 'movie', name: 'List', extra: [{ name: 'skip' }] };
+    if (!isHomeVisible(bare)) throw new Error('optional extra hid home');
+    toggleHomeVisibility(bare);
+    if (isHomeVisible(bare) || !isDiscoverVisible(bare)) throw new Error('genre hide failed');
+    toggleHomeVisibility(bare);
+    if (!isHomeVisible(bare)) throw new Error('genre show failed');
+    const searchOn = { id: 'top', type: 'movie', name: 'Popular', extra: [{ name: 'search' }] };
+    if (!setDiscoverVisible(searchOn, false) || isDiscoverVisible(searchOn) || isHomeVisible(searchOn)) {
+      throw new Error('discover hide failed');
     }
-    return entries;
-  }
-
-  function applyBoardCatalogFilter() {
-    if (!isBoardRoute()) return;
-    const board = document.querySelector('[class*="board-container"]');
-    if (!board) return;
-    const entries = hiddenBoardEntries();
-    const rows = [...board.querySelectorAll('[class*="meta-row-container"]')];
-    for (const row of rows) {
-      const className = String(row.className || '');
-      if (className.includes('continue-watching') || className.includes('placeholder')) continue;
-      const title = row.querySelector('[class*="title-container"]');
-      const text = String(title?.textContent || '');
-      const hide = optionMatchesHidden(text, entries);
-      const next = hide ? '1' : '0';
-      if (row.dataset.msBoardHide !== next) {
-        row.dataset.msBoardHide = next;
-        row.style.display = hide ? 'none' : '';
-      }
+    if (setDiscoverVisible({ id: 'list', type: 'movie', name: 'List', extra: [] }, false)) {
+      throw new Error('discover hide turned search on');
     }
+    const allOff = { id: 'list', type: 'movie', name: 'List', extra: [{ name: 'search' }, { name: 'skip' }] };
+    setHomeVisible(allOff, false);
+    hideSearchExtra(allOff);
+    if (isHomeVisible(allOff) || extraNamed(allOff, 'search') || !isDiscoverVisible(allOff)) {
+      throw new Error('home and search off failed');
+    }
+    if (setDiscoverVisible(allOff, false)) throw new Error('all off turned search on');
+    const searchOnly = { manifest: { catalogs: [{ id: 'movie-search', type: 'movie', name: 'Search', extra: [{ name: 'search' }] }] } };
+    if (!pinSearchOnlyCatalogs([searchOnly]) || isHomeVisible(searchOnly.manifest.catalogs[0])) {
+      throw new Error('search catalog stayed on board');
+    }
+    setHomeVisible(searchOnly.manifest.catalogs[0], true);
+    if (extraNamed(searchOnly.manifest.catalogs[0], 'search').isRequired !== true) {
+      throw new Error('show home unhid search catalog');
+    }
+    const plain = { id: 'plain', type: 'movie', name: 'Plain', extra: [] };
+    catalogShowsSearchToggle(
+      { transportUrl: 'https://example.test/manifest.json', manifest: { catalogs: [plain], resources: ['stream'] } },
+      plain
+    );
   }
 
   function isCinemeta(addon) {
@@ -925,14 +556,7 @@
     if (remove) {
       const current = getCatalogs(addon);
       if (current.length) writeJson(CINEMETA_CATALOG_BACKUP_KEY, JSON.parse(JSON.stringify(current)));
-      addon.manifest.catalogs = current.filter((catalog) => {
-        if (catalogKind(catalog) === 'search') return true;
-        if (catalogHasOptionalSearch(catalog)) {
-          patchCatalogFlags(addon, catalog, { home: false, discover: false });
-          return true;
-        }
-        return false;
-      });
+      addon.manifest.catalogs = current.filter((catalog) => catalogKind(catalog) === 'search');
       return;
     }
     const backup = readJson(CINEMETA_CATALOG_BACKUP_KEY, null);
@@ -1082,6 +706,7 @@
   function healPrefixMetaAddons(addons) {
     for (const addon of addons || []) {
       if (isCinemeta(addon) || !looksLikeKitsuAddon(addon)) continue;
+      if (hasExplicitMetadataSelection() && !addonWantsMeta(addon)) continue;
       if (!hasMetaResource(addon)) applyAddonMetadataPatch(addon, false);
     }
     return addons;
@@ -1139,12 +764,6 @@
       if (used.has(index)) return false;
       return sameMetadataValue(metadataKeyForAddon(addon), value);
     });
-  }
-
-  function uniqueMetadataValues(values) {
-    return (Array.isArray(values) ? values : [values])
-      .map((item) => String(item ?? ''))
-      .filter((item, index, list) => list.findIndex((entry) => sameMetadataValue(entry, item)) === index);
   }
 
   function metaIdPrefixes(addon) {
@@ -1220,6 +839,16 @@
     } catch (_) {
       return null;
     }
+  }
+
+  async function ensureRemoteManifest(addon) {
+    const key = addonTransport(addon);
+    if (!key) return null;
+    if (remoteManifestByTransport.has(key)) return remoteManifestByTransport.get(key);
+    remoteManifestByTransport.set(key, null);
+    const manifest = await fetchAddonManifest(addon);
+    remoteManifestByTransport.set(key, manifest);
+    return manifest;
   }
 
   async function hydrateOriginalMetaResources(addons) {
@@ -1300,21 +929,51 @@
     return Boolean(String(getMetadataAddon() || '').trim()) || metadataTouchedThisSession;
   }
 
-  function restoreAllAddonMetadata(addons) {
-    const next = cloneAddons(addons);
-    const selected = uniqueMetadataValues(selectedMetadataValues());
-    const want = new Set(selected.filter(Boolean).map((item) => normalizeTransport(item)));
-    for (const addon of next) {
-      if (isCinemeta(addon)) {
-        applyCinemetaMetadataPatch(addon, false);
-        continue;
-      }
-      const transport = addonTransport(addon);
-      if (isMetadataCapable(addon) || hasMetaResource(addon) || (transport && want.has(transport))) {
-        applyAddonMetadataPatch(addon, false);
-      }
+  function addonWantsMeta(addon) {
+    if (!hasExplicitMetadataSelection()) return hasMetaResource(addon);
+    const value = isCinemeta(addon) ? '' : addonTransport(addon);
+    return selectedMetadataValues().some((item) => sameMetadataValue(item, value));
+  }
+
+  function stripMetaResource(addon) {
+    if (!addon?.manifest) return;
+    const resources = Array.isArray(addon.manifest.resources) ? addon.manifest.resources.slice() : [];
+    addon.manifest.resources = resources.filter((resource) => resourceName(resource) !== 'meta');
+  }
+
+  function stripUnselectedMeta(addons) {
+    if (!hasExplicitMetadataSelection()) return addons;
+    for (const addon of addons || []) {
+      if (addonWantsMeta(addon) || !hasMetaResource(addon)) continue;
+      rememberOriginalMetaResources([addon]);
+      stripMetaResource(addon);
     }
-    return next;
+    return addons;
+  }
+
+  async function ensureSelectedMeta(addons) {
+    if (!hasExplicitMetadataSelection()) return addons;
+    await Promise.all(
+      (addons || []).map(async (addon) => {
+        if (!addonWantsMeta(addon) || hasMetaResource(addon) || !addon.manifest) return;
+        const manifest = await fetchAddonManifest(addon);
+        const resource = (manifest?.resources || []).find((item) => resourceName(item) === 'meta');
+        if (!resource) return;
+        const resources = Array.isArray(addon.manifest.resources) ? addon.manifest.resources.slice() : [];
+        resources.push(cloneMetaResource(resource));
+        addon.manifest.resources = resources;
+      })
+    );
+    return addons;
+  }
+
+  async function applyMetadataToDraft() {
+    const next = cloneAddons(workingAddons());
+    rememberOriginalMetaResources(next);
+    stripUnselectedMeta(next);
+    await ensureSelectedMeta(next);
+    healPrefixMetaAddons(next);
+    markDirty(next);
   }
 
   function implicitMetadataValues(addons) {
@@ -1334,7 +993,7 @@
     rememberOriginalMetaResources(liveAddons);
     rememberOriginalMetaResourcesFromBackup();
     rememberMetadataCapableFromBackup();
-    return restoreAllAddonMetadata(addons);
+    return stripUnselectedMeta(addons);
   }
 
   function syncMetadataOrderFromAddons(addons) {
@@ -1406,7 +1065,6 @@
       void hydrateOriginalMetaResources(liveAddons);
       const cinemeta = findCinemeta(liveAddons);
       if (cinemeta) rememberOriginalCinemeta(cinemeta);
-      refreshVisibilitySurfaces();
       return liveAddons;
     } catch (_) {
       return liveAddons || [];
@@ -1443,7 +1101,6 @@
       draft = cloneAddons(nextLive);
       paintSyncButton();
       paintMetadataChip();
-      refreshVisibilitySurfaces();
       if (changed) refreshListPreserveScroll();
       return;
     }
@@ -1457,7 +1114,6 @@
     dirty = collectionSignature(draft || []) !== collectionSignature(liveAddons);
     paintSyncButton();
     paintMetadataChip();
-    refreshVisibilitySurfaces();
     if (extras.length) refreshListPreserveScroll();
   }
 
@@ -2155,8 +1811,8 @@
       rememberOriginalMetaResources(nextAddons);
       void hydrateOriginalMetaResources(current);
       void hydrateOriginalMetaResources(nextAddons);
-      const preferred = restoreAllAddonMetadata(cloneAddons(nextAddons));
-      const cleaned = applyVisibilityToExtras(preferred);
+      const cleaned = stripDummyExtrasFromAddons(cloneAddons(nextAddons));
+      pinSearchOnlyCatalogs(cleaned);
       healPrefixMetaAddons(cleaned);
       const addons = toDescriptors(cleaned);
       const response = await fetch(`${API_BASE}/addonCollectionSet`, {
@@ -2176,9 +1832,22 @@
       if (core?.dispatch) {
         await core.dispatch({ action: 'Ctx', args: { action: 'PullAddonsFromAPI' } });
       }
-      liveAddons = cloneAddons(cleaned);
-      draft = cloneAddons(cleaned);
-      dirty = false;
+      const uploaded = collectionSignature(cleaned);
+      const requested = collectionSignature(nextAddons);
+      const draftSignature = collectionSignature(draft);
+      if (!dirty || draftSignature === uploaded || draftSignature === requested) {
+        liveAddons = cloneAddons(cleaned);
+        draft = cloneAddons(cleaned);
+        dirty = false;
+      } else {
+        liveAddons = cloneAddons(cleaned);
+        dirty = collectionSignature(draft) !== collectionSignature(liveAddons);
+      }
+      const probe = cloneAddons(cleaned);
+      if (!migrateLocalVisibilityIntoDraft(probe)) {
+        writeVisibilityMap({});
+        writeDisabledAddonSearch(new Set());
+      }
       writeBackup(cleaned);
       if (!silent) showToast(t('Addons synced.', 'Addons synchronisiert.'));
       paintSyncButton();
@@ -2234,6 +1903,7 @@
     setMetadataAddons(next);
     renderSourceMenuOptions();
     paintMetadataChip();
+    void applyMetadataToDraft();
   }
 
   function moveMetadataSource(value, delta) {
@@ -2905,16 +2575,38 @@
     return button;
   }
 
+  function hideSearchExtra(catalog) {
+    const homeWasHidden = !isHomeVisible(catalog);
+    writeExtras(
+      catalog,
+      normalizeExtras(catalog).filter((extra) => extra.name !== SEARCH_EXTRA)
+    );
+    if (homeWasHidden) setHomeVisible(catalog, false);
+  }
+
+  function catalogRows(addon) {
+    const live = getCatalogs(addon);
+    const remote = remoteManifestByTransport.get(addonTransport(addon));
+    const remoteCatalogs = Array.isArray(remote?.catalogs) ? remote.catalogs : [];
+    const rows = live.map((catalog, catalogIndex) => ({ catalog, catalogIndex, removed: false }));
+    for (const catalog of remoteCatalogs) {
+      if (live.some((item) => catalogKey(item) === catalogKey(catalog))) continue;
+      rows.push({ catalog, catalogIndex: -1, removed: true });
+    }
+    return rows;
+  }
+
   function renderCatalogs(panel, addon, index) {
-    const catalogs = getCatalogs(addon);
-    if (!catalogs.length) {
+    const rows = catalogRows(addon);
+    if (!rows.length) {
       const empty = document.createElement('div');
       empty.className = 'mystremio-am-desc';
       empty.textContent = t('No catalogs', 'Keine Kataloge');
       panel.appendChild(empty);
       return;
     }
-    catalogs.forEach((catalog, catalogIndex) => {
+    const storedCount = getCatalogs(addon).length;
+    rows.forEach(({ catalog, catalogIndex, removed }) => {
       const kind = catalogKind(catalog);
       const row = document.createElement('div');
       row.className = 'mystremio-catalog-row';
@@ -2922,8 +2614,9 @@
         kind === 'search' ? t('Move search up', 'Suche nach oben') : t('Move catalog up', 'Katalog nach oben'),
         ICON_UP
       );
-      up.disabled = catalogIndex === 0;
+      up.disabled = removed || catalogIndex === 0;
       up.addEventListener('click', () => {
+        if (removed) return;
         mutateDraft((addons) => {
           const list = getCatalogs(addons[index]);
           if (catalogIndex <= 0) return;
@@ -2935,8 +2628,9 @@
         kind === 'search' ? t('Move search down', 'Suche nach unten') : t('Move catalog down', 'Katalog nach unten'),
         ICON_DOWN
       );
-      down.disabled = catalogIndex === catalogs.length - 1;
+      down.disabled = removed || catalogIndex >= storedCount - 1;
       down.addEventListener('click', () => {
+        if (removed) return;
         mutateDraft((addons) => {
           const list = getCatalogs(addons[index]);
           if (catalogIndex >= list.length - 1) return;
@@ -2950,79 +2644,118 @@
       const name = document.createElement('input');
       name.className = 'mystremio-catalog-name';
       name.value = String(catalog?.name || catalog?.id || '');
-      const flags = effectiveCatalogFlags(addon, catalog);
-      const disabled = flags.disabled;
-      const homeHidden = isCatalogHomeHidden(addon, catalog);
-      const searchVisible = isCatalogSearchVisible(addon, catalog);
-      const discoverVisible = !isCatalogDiscoverHidden(addon, catalog);
-      row.dataset.disabled = disabled ? 'true' : 'false';
-      name.dataset.hidden = (kind === 'search' ? !searchVisible : homeHidden) || disabled ? 'true' : 'false';
+      name.disabled = removed;
+      const homeHidden = removed || !isHomeVisible(catalog);
+      const searchVisible = !removed && isSearchShown(catalog);
+      const discoverVisible = !removed && isDiscoverVisible(catalog);
+      row.dataset.disabled = removed ? 'true' : 'false';
+      name.dataset.hidden = (kind === 'search' ? !searchVisible : homeHidden) || removed ? 'true' : 'false';
       name.addEventListener('change', () => {
+        if (removed) return;
         mutateDraft((addons) => {
           const item = getCatalogs(addons[index])[catalogIndex];
           if (item) item.name = name.value.trim() || item.id;
         });
       });
       row.append(up, down, kindTag, name);
+      const toggleHome = () => {
+        mutateDraft((addons) => {
+          const list = getCatalogs(addons[index]);
+          if (removed) {
+            const item = JSON.parse(JSON.stringify(catalog));
+            list.push(item);
+            writeExtras(
+              item,
+              normalizeExtras(item).filter((extra) => extra.name !== SEARCH_EXTRA)
+            );
+            setHomeVisible(item, true);
+            return;
+          }
+          const item = list[catalogIndex];
+          if (item) toggleHomeVisibility(item);
+        });
+      };
+      const toggleDiscover = () => {
+        mutateDraft((addons) => {
+          const list = getCatalogs(addons[index]);
+          if (removed) {
+            const item = JSON.parse(JSON.stringify(catalog));
+            list.push(item);
+            writeExtras(
+              item,
+              normalizeExtras(item).filter((extra) => extra.name !== SEARCH_EXTRA)
+            );
+            setHomeVisible(item, false);
+            return;
+          }
+          const item = list[catalogIndex];
+          if (!item) return;
+          if (isDiscoverVisible(item)) {
+            if (!setDiscoverVisible(item, false)) list.splice(catalogIndex, 1);
+            return;
+          }
+          const homeHidden = !isHomeVisible(item);
+          setDiscoverVisible(item, true);
+          if (homeHidden) setHomeVisible(item, false);
+        });
+      };
       if (kind === 'catalog') {
         row.appendChild(
           catalogToggle(
             'H',
             homeHidden ? t('Show on Home', 'Auf Home anzeigen') : t('Hide from Home', 'Von Home ausblenden'),
-            !homeHidden && !disabled,
-            () => {
-              if (isCatalogDisabled(workingAddons()[index], getCatalogs(workingAddons()[index])[catalogIndex])) return;
-              const current = workingAddons()[index];
-              const item = getCatalogs(current)[catalogIndex];
-              if (!item) return;
-              setCatalogHomeVisible(current, item, homeHidden);
-              refreshListPreserveScroll();
-              refreshVisibilitySurfaces();
-            }
+            !homeHidden && !removed,
+            toggleHome
           )
         );
       }
-      if (catalogShowsSearchToggle(addon, catalog)) {
+      if (catalogShowsSearchToggle(addon, catalog) || removed) {
         row.appendChild(
           catalogToggle(
             'S',
             searchVisible
               ? t('Hide from Search', 'Aus der Suche ausblenden')
               : t('Show in Search', 'In der Suche anzeigen'),
-            searchVisible && !disabled,
+            searchVisible && !removed,
             () => {
-              const current = workingAddons()[index];
-              const item = getCatalogs(current)[catalogIndex];
-              if (!item || isCatalogDisabled(current, item)) return;
-              const original = originalCatalogFor(current, item);
-              const extrasChange =
-                catalogKind(item) !== 'search' &&
-                (catalogHasOptionalSearch(item) || catalogHasOptionalSearch(original));
-              const applySearch = (addon, catalog) => {
-                setCatalogSearchVisible(
-                  addon,
-                  catalog,
-                  !searchVisible,
-                  originalCatalogFor(addon, catalog)
-                );
-                syncAddonSearchFromCatalogs(addon);
-              };
-              const turningOn = !searchVisible;
-              if (extrasChange) {
+              void (async () => {
+                if (removed) {
+                  mutateDraft((addons) => {
+                    const item = JSON.parse(JSON.stringify(catalog));
+                    getCatalogs(addons[index]).push(item);
+                    if (!extraNamed(item, SEARCH_EXTRA)) {
+                      const extras = normalizeExtras(item);
+                      extras.push({ name: SEARCH_EXTRA, isRequired: true });
+                      writeExtras(item, extras);
+                    }
+                    setDiscoverVisible(item, false);
+                  });
+                  return;
+                }
+                if (searchVisible && (isPureSearchCatalog(catalog) || !isDiscoverVisible(catalog))) {
+                  mutateDraft((addons) => {
+                    const list = getCatalogs(addons[index]);
+                    if (catalogIndex >= 0 && catalogIndex < list.length) list.splice(catalogIndex, 1);
+                  });
+                  return;
+                }
+                if (searchVisible) {
+                  mutateDraft((addons) => {
+                    const item = getCatalogs(addons[index])[catalogIndex];
+                    if (item) hideSearchExtra(item);
+                  });
+                  return;
+                }
+                const manifest = await ensureRemoteManifest(workingAddons()[index]);
+                const original = (manifest?.catalogs || []).find((item) => catalogKey(item) === catalogKey(catalog));
                 mutateDraft((addons) => {
-                  const nextItem = getCatalogs(addons[index])[catalogIndex];
-                  if (!nextItem) return;
-                  applySearch(addons[index], nextItem);
+                  const item = getCatalogs(addons[index])[catalogIndex];
+                  if (!item) return;
+                  const homeWasHidden = !isHomeVisible(item);
+                  restoreOptionalSearch(item, original);
+                  if (homeWasHidden) setHomeVisible(item, false);
                 });
-              } else {
-                applySearch(current, item);
-                refreshListPreserveScroll();
-              }
-              if (turningOn) {
-                setAddonSearchDisabled(workingAddons()[index], false);
-                if (extrasChange) void persistAddons(workingAddons());
-              }
-              refreshVisibilitySurfaces();
+              })();
             }
           )
         );
@@ -3034,49 +2767,27 @@
             discoverVisible
               ? t('Hide from Discover', 'Aus Discover ausblenden')
               : t('Show in Discover', 'In Discover anzeigen'),
-            discoverVisible && !disabled,
-            () => {
-              if (isCatalogDisabled(workingAddons()[index], getCatalogs(workingAddons()[index])[catalogIndex])) return;
-              const current = workingAddons()[index];
-              const item = getCatalogs(current)[catalogIndex];
-              if (!item) return;
-              setCatalogDiscoverVisible(current, item, !discoverVisible);
-              refreshListPreserveScroll();
-              refreshVisibilitySurfaces();
-            }
+            discoverVisible && !removed,
+            toggleDiscover
           )
         );
       }
       const remove = iconButton(
-        disabled
-          ? t('Enable catalog', 'Katalog aktivieren')
-          : t('Disable catalog', 'Katalog deaktivieren'),
+        removed ? t('Enable catalog', 'Katalog aktivieren') : t('Disable catalog', 'Katalog deaktivieren'),
         ''
       );
       remove.textContent = '×';
       remove.addEventListener('click', () => {
-        const current = workingAddons()[index];
-        const item = getCatalogs(current)[catalogIndex];
-        if (!item) return;
-        const nextDisabled = !isCatalogDisabled(current, item);
-        setCatalogDisabled(current, item, nextDisabled);
-        const original = originalCatalogFor(current, item);
-        const hasOptional = catalogHasOptionalSearch(item) || catalogHasOptionalSearch(original);
-        if (catalogKind(item) !== 'search' && hasOptional) {
+        if (removed) {
           mutateDraft((addons) => {
-            const nextItem = getCatalogs(addons[index])[catalogIndex];
-            if (!nextItem) return;
-            if (nextDisabled) stripOptionalSearch(nextItem);
-            else if (catalogFlags(addons[index], nextItem).search) {
-              restoreOptionalSearch(nextItem, originalCatalogFor(addons[index], nextItem));
-            }
-            syncAddonSearchFromCatalogs(addons[index]);
+            getCatalogs(addons[index]).push(JSON.parse(JSON.stringify(catalog)));
           });
-        } else {
-          syncAddonSearchFromCatalogs(current);
-          refreshListPreserveScroll();
+          return;
         }
-        refreshVisibilitySurfaces();
+        mutateDraft((addons) => {
+          const list = getCatalogs(addons[index]);
+          if (catalogIndex >= 0 && catalogIndex < list.length) list.splice(catalogIndex, 1);
+        });
       });
       row.appendChild(remove);
       panel.appendChild(row);
@@ -3130,9 +2841,10 @@
           } else {
             setMetadataAddons([''].concat(others));
           }
+          metadataTouchedThisSession = true;
           paintMetadataChip();
           if (sourceMenuOpen) renderSourceMenuOptions();
-          refreshListPreserveScroll();
+          void applyMetadataToDraft();
           return;
         }
         mutateDraft((addons) => {
@@ -3263,6 +2975,12 @@
       if (isCinemeta(addon)) renderCinemetaPatches(panel, addon, index);
       renderCatalogs(panel, addon, index);
       card.appendChild(panel);
+      const remoteKey = addonTransport(addon);
+      if (remoteKey && !remoteManifestByTransport.has(remoteKey)) {
+        void ensureRemoteManifest(addon).then(() => {
+          if (expanded.has(remoteKey)) refreshListPreserveScroll();
+        });
+      }
     });
     actions.appendChild(expand);
 
@@ -3291,6 +3009,12 @@
       if (isCinemeta(addon)) renderCinemetaPatches(panel, addon, index);
       renderCatalogs(panel, addon, index);
       card.appendChild(panel);
+      const remoteKey = addonTransport(addon);
+      if (remoteKey && !remoteManifestByTransport.has(remoteKey)) {
+        void ensureRemoteManifest(addon).then(() => {
+          if (expanded.has(remoteKey)) refreshListPreserveScroll();
+        });
+      }
     }
 
     return card;
@@ -3302,17 +3026,15 @@
     const visible = addons
       .map((addon, index) => ({ addon, index }))
       .filter((entry) => addonMatchesFilters(entry.addon));
-    list.replaceChildren();
     if (!visible.length) {
       const empty = document.createElement('div');
       empty.className = 'mystremio-am-desc';
       empty.textContent = t('No installed addons match this filter.', 'Keine installierten Addons passen zum Filter.');
-      list.appendChild(empty);
+      list.replaceChildren(empty);
       return;
     }
-    visible.forEach((entry) => {
-      list.appendChild(renderCard(entry.addon, entry.index));
-    });
+    const cards = visible.map((entry) => renderCard(entry.addon, entry.index));
+    list.replaceChildren(...cards);
   }
 
   function refreshListPreserveScroll() {
@@ -3392,8 +3114,8 @@
   }
 
   /**
-   * Restore stripped meta on every metadata-capable addon. The fetch gate
-   * decides which /meta/ actually runs; collection persist is only for heal.
+   * Selected metadata addons keep their meta resource. The others lose it
+   * in the stored manifest, same as Cinebye. Do not put meta back on all.
    */
   async function syncMetadataPreferenceOnBoot() {
     if (metadataBootSyncAttempted) return;
@@ -3422,7 +3144,23 @@
       }
       rememberMetadataCapable(live);
       rememberOriginalMetaResources(live);
-      const preferred = applyMetadataPreference(live, selectedMetadataValues());
+      const preferred = cloneAddons(live);
+      pinSearchOnlyCatalogs(preferred);
+      if (!hasExplicitMetadataSelection()) {
+        if (collectionSignature(preferred) === collectionSignature(live)) return;
+        const pinnedOk = await persistAddons(preferred, { silent: true });
+        if (!pinnedOk) {
+          metadataBootSyncAttempted = false;
+          if (metadataBootSyncTries >= 20) return;
+          metadataBootSyncTries += 1;
+          window.setTimeout(() => {
+            void syncMetadataPreferenceOnBoot();
+          }, 800);
+        }
+        return;
+      }
+      stripUnselectedMeta(preferred);
+      await ensureSelectedMeta(preferred);
       healPrefixMetaAddons(preferred);
       if (collectionSignature(preferred) === collectionSignature(live)) return;
       const ok = await persistAddons(preferred, { silent: true });
@@ -3446,15 +3184,30 @@
       return;
     }
     const live = await loadLiveAddons();
-    ensureVisibilityMigrated(live);
     adoptLiveCollection(live);
-    for (const addon of workingAddons()) syncAddonSearchFromCatalogs(addon);
-    const healed = cloneAddons(workingAddons());
-    healPrefixMetaAddons(healed);
-    if (collectionSignature(healed) !== collectionSignature(workingAddons())) {
-      markDirty(healed);
-      void persistAddons(healed);
+    const before = collectionSignature(workingAddons());
+    const next = cloneAddons(workingAddons());
+    const visibilityChanged = migrateLocalVisibilityIntoDraft(next);
+    for (const addon of next) {
+      const catalogs = getCatalogs(addon);
+      for (let i = catalogs.length - 1; i >= 0; i -= 1) {
+        const catalog = catalogs[i];
+        if (hasNamedExtra(catalog, DISCOVER_HIDE_EXTRA) && isDiscoverVisible(catalog)) {
+          if (!setDiscoverVisible(catalog, false)) {
+            catalogs.splice(i, 1);
+            continue;
+          }
+        }
+        if (hasNamedExtra(catalog, HOME_HIDE_EXTRA, true) && isHomeVisible(catalog)) {
+          setHomeVisible(catalog, false);
+        }
+      }
+      for (const catalog of getCatalogs(addon)) stripDummyExtras(catalog);
     }
+    const afterMigrate = collectionSignature(next);
+    healPrefixMetaAddons(next);
+    if (visibilityChanged || afterMigrate !== before) markDirty(next);
+    else if (collectionSignature(next) !== before) void persistAddons(next, { silent: true });
     if (!originalCinemeta) originalCinemeta = readJson(CINEMETA_ORIGINAL_KEY, null);
     const ours = document.getElementById(ROOT_ID);
     if (ours) {
@@ -3547,12 +3300,10 @@
   window.addEventListener('hashchange', () => {
     pretouchInstalledRoute();
     scheduleMount();
-    scheduleVisibilityRefresh();
   });
   window.addEventListener('popstate', () => {
     pretouchInstalledRoute();
     scheduleMount();
-    scheduleVisibilityRefresh();
   });
   window.addEventListener('resize', () => {
     if (isInstalledAddonsRoute()) positionOverlays();
@@ -3562,7 +3313,6 @@
   document.addEventListener('stremio-custom-route-change', () => {
     pretouchInstalledRoute();
     scheduleMount();
-    scheduleVisibilityRefresh();
   });
   document.addEventListener('stremio-custom-metadata-addon-changed', () => {
     if (isInstalledAddonsRoute()) {
@@ -3577,8 +3327,6 @@
 
   observer = new MutationObserver(() => {
     if (domLock) return;
-    if (isDiscoverRoute()) applyDiscoverCatalogFilter();
-    if (isBoardRoute()) applyBoardCatalogFilter();
     if (!isInstalledAddonsRoute()) {
       if (document.getElementById(ROOT_ID) || document.getElementById(TOOLBAR_ID)) teardown();
       return;
@@ -3592,18 +3340,17 @@
   });
 
   const boot = () => {
+    assertManifestVisibility();
     ensureStyles();
     const root = document.body || document.documentElement;
     if (!root) {
       window.setTimeout(boot, 200);
       return;
     }
-    installCatalogSearchFilter();
     installAddonPageSearch();
     observer.observe(root, { childList: true, subtree: true });
     pretouchInstalledRoute();
     scheduleMount();
-    scheduleVisibilityRefresh();
     void healKitsuMetaIfNeeded();
     void syncMetadataPreferenceOnBoot();
   };

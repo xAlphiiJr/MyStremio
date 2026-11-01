@@ -101,17 +101,6 @@
     return Boolean(src && /stremio_symbol|\/logo\.png/i.test(src));
   }
 
-  function showCenterTitle(logoSrc) {
-    return !logoSrc || isStremioDefaultLogo(logoSrc);
-  }
-
-  if (!showCenterTitle('images/stremio_symbol.png') || !showCenterTitle('')) {
-    throw new Error('purple logo stays on the loading poster');
-  }
-  if (showCenterTitle('https://images.metahub.space/logo/medium/tt1234567/img')) {
-    throw new Error('title logo replaced by text');
-  }
-
   function enrichArtwork(background, logo, idHint) {
     const hub = metahubFromId(idHint || background || '');
     let bg = background || null;
@@ -166,26 +155,6 @@
       }
       html.${SESSION_CLASS}:not(.${MPV_VISIBLE_CLASS}) [class*="player-container"] [class*="background-layer"] [class*="image"] {
         object-fit: cover !important;
-      }
-      [class*="background-layer"] img[src*="stremio_symbol"],
-      [class*="background-layer"] img[src*="/logo.png"],
-      [class*="loading-modal"] [class*="loader-container"] > [class*="icon"] {
-        display: none !important;
-      }
-      .mystremio-load-title {
-        position: absolute;
-        left: 50%;
-        top: 50%;
-        transform: translate(-50%, -50%);
-        z-index: 2;
-        max-width: 70%;
-        color: #fff;
-        font-size: 2.4rem;
-        font-weight: 600;
-        line-height: 1.2;
-        text-align: center;
-        text-shadow: 0 2px 18px #000;
-        pointer-events: none;
       }
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -283,6 +252,7 @@
     if (phase !== Phase.LOADING || !isPlayerRoute()) return;
     const root = playerRoot();
     if (!root) return;
+    root.querySelector('.mystremio-load-title')?.remove();
     const layer = root.querySelector('[class*="background-layer"]');
     if (!layer) return;
 
@@ -291,26 +261,6 @@
     if (poster && isUsableImageSrc(bgUrl) && poster.getAttribute('src') !== bgUrl) {
       poster.setAttribute('src', bgUrl);
     }
-
-    const titleLogo = artwork.logo && !isStremioDefaultLogo(artwork.logo) ? artwork.logo : '';
-    const imgs = layer.querySelectorAll('img');
-    for (let i = 1; i < imgs.length; i++) {
-      if (!titleLogo) continue;
-      if (imgs[i].getAttribute('src') !== titleLogo) imgs[i].setAttribute('src', titleLogo);
-    }
-
-    const name = root.querySelector('[class*="nav-bar"] [class*="title"]')?.textContent?.trim() || '';
-    let label = layer.querySelector('.mystremio-load-title');
-    if (!showCenterTitle(titleLogo) || !name) {
-      label?.remove();
-      return;
-    }
-    if (!label) {
-      label = document.createElement('div');
-      label.className = 'mystremio-load-title';
-      layer.appendChild(label);
-    }
-    if (label.textContent !== name) label.textContent = name;
   }
 
   function mergeArtwork(patch) {

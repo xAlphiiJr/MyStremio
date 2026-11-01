@@ -4,6 +4,7 @@ mod imdb_suggest;
 mod introdb_proxy;
 mod paths;
 mod ratings_proxy;
+mod seek_preview;
 mod storage;
 mod theintrodb_proxy;
 
@@ -120,6 +121,10 @@ fn is_ratings_method(method: &str) -> bool {
 /// Disk reads run on their own thread so a ratings fetch cannot delay settings.
 pub fn is_slow_http_method(method: &str) -> bool {
     is_disk_method(method) || is_ratings_method(method)
+}
+
+pub fn enqueue_seek_preview(message: Value, tx: flume::Sender<String>) {
+    seek_preview::enqueue(message, tx);
 }
 
 fn disk_queue() -> &'static flume::Sender<RatingsJob> {

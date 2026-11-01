@@ -8,6 +8,7 @@ pub mod stremio_player;
 pub mod stremio_server;
 pub mod stremio_wevbiew;
 pub use ipc::RPCResponse;
+pub mod pip;
 pub mod named_pipe;
 pub mod splash;
 pub mod systray;

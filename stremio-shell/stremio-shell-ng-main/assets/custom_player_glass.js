@@ -182,6 +182,7 @@
     'mystremio-cast-overlay-btn',
     'mystremio-anime4k-btn',
     'mystremio-sleep-timer-btn',
+    'mystremio-pip-btn',
   ];
   let layingOutPlayerButtons = false;
 

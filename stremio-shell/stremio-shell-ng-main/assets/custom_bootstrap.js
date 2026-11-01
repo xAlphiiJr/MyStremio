@@ -205,6 +205,8 @@
     setApiKey: (serviceId, value) => invoke('set-api-key', { serviceId, value }),
     getPluginApiKeyStatus: (pluginBaseName) =>
       invoke('get-plugin-api-key-status', { pluginBaseName }),
+    seekPreview: (path, seconds, local) =>
+      invoke('seek-preview', { path, seconds, local: Boolean(local) }, 20000),
     invoke,
     info: (pluginBaseName, message) => console.info(`[${pluginBaseName}]`, message),
     warn: (pluginBaseName, message) => console.warn(`[${pluginBaseName}]`, message),
@@ -314,10 +316,12 @@
   const BRIGHTNESS_TO_PICTURE_MIGRATED_KEY = 'stremio-custom-migrate-brightness-to-picture-v1';
   const ANIME4K_PLUGIN_MIGRATED_KEY = 'stremio-custom-migrate-anime4k-v1';
   const HORIZONTAL_NAV_MIGRATED_KEY = 'stremio-custom-migrate-horizontal-nav-v1';
+  const PIP_MIGRATED_KEY = 'stremio-custom-migrate-pip-v1';
   const DEFAULT_DISABLED_PLUGIN_PATTERNS = [
     /slash[-_ ]?to[-_ ]?search/i,
     /anime4k/i,
     /sleep[-_ ]?timer/i,
+    /seek[-_ ]?preview/i,
   ];
   const DYNAMIC_HERO_PLUGIN = 'interface/hero-div.plugin.js';
   const DYNAMIC_HERO_ENABLED_KEY = 'mystremio_dynamic_hero_enabled_v1';
@@ -1322,6 +1326,9 @@
     if (/seek[-_ ]?buttons/i.test(normalized) || /seek[-_ ]?buttons/i.test(baseName || '')) {
       window.__stremioSeekButtonsUnload?.();
     }
+    if (/seek[-_ ]?preview/i.test(normalized) || /seek[-_ ]?preview/i.test(baseName || '')) {
+      window.__stremioSeekPreviewUnload?.();
+    }
     if (/brightness/i.test(normalized) || /brightness/i.test(baseName || '') ||
         /picture/i.test(normalized) || /picture/i.test(baseName || '')) {
       window.__stremioPictureUnload?.();
@@ -1369,6 +1376,9 @@
     }
     if (/tidb/i.test(normalized) || /tidb/i.test(baseName || '') || /intro[-_ ]?skip/i.test(normalized)) {
       window.__stremioTidbUnload?.() || window.__stremioTidbSuspend?.();
+    }
+    if (/pip\.plugin\.js$/i.test(normalized) || /^pip\.plugin\.js$/i.test(baseName || '')) {
+      window.__stremioPipUnload?.();
     }
     let removed = false;
     const direct = document.getElementById(toScriptId(normalized));
@@ -1773,6 +1783,38 @@
 
   window.__stremioCustomOnStreamingServerReady = reconnectStreamingServerUi;
 
+  /**
+   * Cold start used to give up when EngineFS was still booting. Keep asking
+   * until it answers, then tell the core to reload.
+   */
+  function ensureStreamingServerConnected() {
+    const deadline = Date.now() + 45000;
+    let sawDown = false;
+    const tick = async () => {
+      while (Date.now() < deadline) {
+        let up = false;
+        try {
+          const res = await fetch('http://127.0.0.1:11470/settings', { cache: 'no-store' });
+          up = res.ok;
+        } catch (_) {
+          up = false;
+        }
+        if (!up) sawDown = true;
+        if (up && sawDown && typeof window.core?.dispatch === 'function') {
+          try {
+            window.core.dispatch({
+              action: 'StreamingServer',
+              args: { action: 'Reload' },
+            });
+          } catch (_) {}
+          sawDown = false;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    };
+    tick().catch(() => {});
+  }
+
   function injectPlaybackGuard() {
     if (document.getElementById('stremio-custom-playback-guard')) return;
     const script = document.createElement('script');
@@ -1839,6 +1881,7 @@
       '__stremioTidbSuspend',
       '__stremioAnime4kSuspend',
       '__stremioSleepTimerUnload',
+      '__stremioPipSuspend',
     ];
     for (const name of hooks) {
       try {
@@ -1998,6 +2041,25 @@
   async function migrateAnime4kPluginEnabled() {
     if (localStorage.getItem(ANIME4K_PLUGIN_MIGRATED_KEY) === 'true') return;
     localStorage.setItem(ANIME4K_PLUGIN_MIGRATED_KEY, 'true');
+    persistUserPreferences();
+  }
+
+  /**
+   * One-shot: enable Picture in Picture for existing installs.
+   * Default ON; users can disable afterward. Updates never re-enable after this migration.
+   * @returns {Promise<void>}
+   */
+  async function migratePipPluginEnabled() {
+    if (localStorage.getItem(PIP_MIGRATED_KEY) === 'true') return;
+    const ref = 'player/pip.plugin.js';
+    const resolved = (await resolvePluginRef(ref)) || ref;
+    const enabled = await migrateEnabledPlugins();
+    const next = [...enabled];
+    if (!isPluginEnabled(resolved, next)) {
+      next.push(resolved);
+      setEnabledPlugins(next);
+    }
+    localStorage.setItem(PIP_MIGRATED_KEY, 'true');
     persistUserPreferences();
   }
 
@@ -2214,6 +2276,7 @@
 
   async function bootstrap() {
     hookShellMessages();
+    ensureStreamingServerConnected();
     injectPlaybackGuard();
     settleBoardRouteBeforePlugins();
 
@@ -2258,6 +2321,7 @@
         migrateBrightnessToPicturePlugin(),
         migrateAnime4kPluginEnabled(),
         migrateHorizontalNavPluginEnabled(),
+        migratePipPluginEnabled(),
       ]);
       syncDynamicHeroEnabledFlag();
       scheduleAuthProfilePersistence();
