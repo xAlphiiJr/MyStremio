@@ -1380,6 +1380,9 @@
     if (/pip\.plugin\.js$/i.test(normalized) || /^pip\.plugin\.js$/i.test(baseName || '')) {
       window.__stremioPipUnload?.();
     }
+    if (/sleep[-_ ]?timer/i.test(normalized) || /sleep[-_ ]?timer/i.test(baseName || '')) {
+      window.__stremioSleepTimerDisable?.();
+    }
     let removed = false;
     const direct = document.getElementById(toScriptId(normalized));
     if (direct) {

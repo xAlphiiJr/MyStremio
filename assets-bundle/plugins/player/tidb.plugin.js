@@ -15,6 +15,8 @@
 	const CONTRIBUTE_TOAST_ID = "tidb-contribute-toast";
 	const PLUGIN_ID = "tidb";
 	const THEINTRODB_SERVER_URL = "https://api.theintrodb.org/v3";
+	// Writes live on v4. Frozen v3 only still serves GET /media.
+	const THEINTRODB_SUBMIT_URL = "https://api.theintrodb.org/v4/submit";
 	const INTRODB_SERVER_URL = "https://api.introdb.app";
 	const ACTIVE_BTN_ID = "tidb-active-btn";
 	const CONTRIBUTE_BTN_ID = "tidb-contribute-btn";
@@ -4462,7 +4464,7 @@
 			try {
 				const controller = new AbortController();
 				const timer = window.setTimeout(() => controller.abort(), 5000);
-				const res = await fetch(`${THEINTRODB_SERVER_URL}/submit`, {
+				const res = await fetch(THEINTRODB_SUBMIT_URL, {
 					method: "POST",
 					headers: {
 						...this.getTidbHeaders(),

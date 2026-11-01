@@ -46,7 +46,7 @@ HOOK_V2 = (
     'return !!(c&&c.content&&c.content.type==="Err"&&c.content.content==="EmptyContent");'
     '}'
     'function mystremioIsRenderedMetaRow(c){'
-    'if(!c||mystremioIsEmptyCatalog(c))return false;'
+    'if(!c||mystremioIsEmptyCatalog(c)||(window.__mystremioCatalogHiddenFromHome&&window.__mystremioCatalogHiddenFromHome(c)))return false;'
     'var t=c.content&&c.content.type;'
     'return t==="Ready"||t==="Err";'
     '}'
@@ -193,12 +193,40 @@ BOARD_RANGE_REPLACEMENT = (
 BOARD_RANGE_DEFAULT_NEEDLE = 'range||{start:0,end:4}'
 BOARD_RANGE_DEFAULT_REPLACEMENT = 'range||{start:0,end:1}'
 
+# Skip board rows the addon manager marked with mystremio-home-hide.
+# The same predicate is used by the row renderer and by index sync, so chevrons
+# keep the core catalog index.
+HOME_HIDE_RENDER_OLD = (
+    'function mystremioIsRenderedMetaRow(c){if(!c||mystremioIsEmptyCatalog(c))return false;'
+    'var t=c.content&&c.content.type;return t==="Ready"||t==="Err";}'
+)
+HOME_HIDE_RENDER_NEW = (
+    'function mystremioIsRenderedMetaRow(c){if(!c||mystremioIsEmptyCatalog(c)||'
+    '(window.__mystremioCatalogHiddenFromHome&&window.__mystremioCatalogHiddenFromHome(c)))return false;'
+    'var t=c.content&&c.content.type;return t==="Ready"||t==="Err";}'
+)
+HOME_HIDE_MAP_OLD = 'T.catalogs.map(function(t,a){var i;switch'
+HOME_HIDE_MAP_NEW = (
+    'T.catalogs.map(function(t,a){if(window.__mystremioCatalogHiddenFromHome&&'
+    'window.__mystremioCatalogHiddenFromHome(t))return null;var i;switch'
+)
+
 
 def patch_file(path: Path) -> int:
     text = path.read_text(encoding="utf-8", errors="strict")
     original = text
     changed = 0
     missing = 0
+
+    if HOME_HIDE_MAP_NEW in text:
+        print(f"Board home-hide render skip already present in {path}")
+    elif HOME_HIDE_MAP_OLD in text:
+        text = text.replace(HOME_HIDE_MAP_OLD, HOME_HIDE_MAP_NEW, 1)
+        changed += 1
+        print(f"Patched board render to skip home-hidden catalogs in {path}")
+    else:
+        print(f"ERROR: board catalog map not found in {path}", file=sys.stderr)
+        missing += 1
 
     if (
         "window.__mystremioBoardLoadNextPage" in text
@@ -213,6 +241,16 @@ def patch_file(path: Path) -> int:
         print(f"Patched Board LoadNextPage hook in {path}")
     else:
         print(f"ERROR: Board LoadRange needle not found in {path}", file=sys.stderr)
+        missing += 1
+
+    if HOME_HIDE_RENDER_NEW in text:
+        print(f"Board home-hide row skip already present in {path}")
+    elif HOME_HIDE_RENDER_OLD in text:
+        text = text.replace(HOME_HIDE_RENDER_OLD, HOME_HIDE_RENDER_NEW, 1)
+        changed += 1
+        print(f"Patched board index sync to skip home-hidden catalogs in {path}")
+    else:
+        print(f"ERROR: board row predicate not found in {path}", file=sys.stderr)
         missing += 1
 
     if SYNC_ROWS_FILTER_V3 in text:

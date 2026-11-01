@@ -1,7 +1,7 @@
 /**
  * @name Seek Preview
  * @description Show a nearby frame when hovering the player seek bar
- * @version 1.0.7
+ * @version 1.0.8
  * @author MyStremio
  * @category player
  */
@@ -10,11 +10,12 @@
 (function () {
   'use strict';
 
-  const PLUGIN_VERSION = '1.0.7';
+  const PLUGIN_VERSION = '1.0.8';
   const PLUGIN_REF = 'player/seek-preview.plugin.js';
+  const HOVER_TS_REF = 'player/hover-timestamps.plugin.js';
   const STYLE_ID = 'stremio-seek-preview-styles';
   const CARD_ID = 'stremio-seek-preview-card';
-  const TIME_ID = 'stremio-seek-preview-time';
+  const LEGACY_TIME_ID = 'stremio-seek-preview-time';
   const FAST_POLL_MS = 200;
   const SLOW_POLL_MS = 2000;
   const DEBOUNCE_MS = 180;
@@ -23,22 +24,31 @@
   if (window.__stremioSeekPreviewVersion !== PLUGIN_VERSION) {
     window.__stremioSeekPreviewReady = false;
     document.getElementById(CARD_ID)?.remove();
-    document.getElementById(TIME_ID)?.remove();
+    document.getElementById(LEGACY_TIME_ID)?.remove();
     document.getElementById(STYLE_ID)?.remove();
   }
 
-  function isPluginEnabled() {
+  function pluginOn(ref) {
     const helpers = window.StremioCustom?.helpers;
     if (!helpers?.isPluginEnabled) return false;
-    return helpers.isPluginEnabled(PLUGIN_REF);
+    return helpers.isPluginEnabled(ref);
+  }
+
+  function isPluginEnabled() {
+    return pluginOn(PLUGIN_REF);
+  }
+
+  function timestampsOn() {
+    return pluginOn(HOVER_TS_REF);
   }
 
   function teardown() {
     document.getElementById(CARD_ID)?.remove();
-    document.getElementById(TIME_ID)?.remove();
+    document.getElementById(LEGACY_TIME_ID)?.remove();
     document.getElementById(STYLE_ID)?.remove();
     if (hoverTimer) window.clearTimeout(hoverTimer);
     hoverTimer = null;
+    hoverBucket = null;
     hoverBoundSlider = null;
   }
 
@@ -68,6 +78,7 @@
   let streamPath = '';
   let requestGen = 0;
   let inflightKey = '';
+  let hoverBucket = null;
   /** @type {Map<string, {w:number,h:number,rgb:string}>} */
   const frames = new Map();
 
@@ -76,27 +87,6 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
-      #${TIME_ID} {
-        position: fixed !important;
-        z-index: 2147482000 !important;
-        pointer-events: none !important;
-        padding: 0.28rem 0.62rem !important;
-        border-radius: 999px !important;
-        background: rgba(30, 30, 30, 0.78) !important;
-        color: #fff !important;
-        font-size: 0.85rem !important;
-        line-height: 1.1 !important;
-        font-weight: 600 !important;
-        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-        box-shadow:
-          0 8px 24px rgba(0, 0, 0, 0.35),
-          inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
-        backdrop-filter: none !important;
-        -webkit-backdrop-filter: none !important;
-        transform: translate(-50%, -84%) !important;
-        display: none;
-        white-space: nowrap;
-      }
       #${CARD_ID} {
         position: fixed !important;
         z-index: 2147482001 !important;
@@ -107,11 +97,14 @@
         padding: 0 !important;
         border: 1px solid rgba(255, 255, 255, 0.18) !important;
         background: rgba(20, 20, 20, 0.92) !important;
-        transform: translate(-50%, calc(-100% - 2.15rem)) !important;
+        transform: translate(-50%, -100%) !important;
         display: none;
         border-radius: 6px;
         overflow: hidden;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      }
+      #${CARD_ID}.is-raised {
+        transform: translate(-50%, calc(-100% - 2.15rem)) !important;
       }
       #${CARD_ID} canvas {
         display: block;
@@ -135,15 +128,6 @@
       @keyframes stremio-seek-preview-spin { to { transform: rotate(360deg); } }
     `;
     (document.head || document.documentElement).appendChild(style);
-  }
-
-  function formatTime(seconds) {
-    const total = Math.max(0, Math.floor(Number(seconds) || 0));
-    const h = Math.floor(total / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    return `${m}:${String(s).padStart(2, '0')}`;
   }
 
   function rememberDuration(value) {
@@ -179,16 +163,6 @@
     }
   }
 
-  function getTime() {
-    let time = document.getElementById(TIME_ID);
-    if (!time) {
-      time = document.createElement('div');
-      time.id = TIME_ID;
-      document.body.appendChild(time);
-    }
-    return time;
-  }
-
   function getCard() {
     let card = document.getElementById(CARD_ID);
     if (!card) {
@@ -206,11 +180,9 @@
     return card;
   }
 
-  function placeAt(x, top) {
-    const time = getTime();
+  function placeCard(x, top) {
     const card = getCard();
-    time.style.left = `${x}px`;
-    time.style.top = `${top}px`;
+    card.classList.toggle('is-raised', timestampsOn());
     card.style.left = `${x}px`;
     card.style.top = `${top}px`;
   }
@@ -286,15 +258,12 @@
       if (gen !== requestGen) return;
       if (!result?.rgb) return;
       rememberFrame(key, result);
-      const time = document.getElementById(TIME_ID);
-      if (!time || time.style.display === 'none') return;
-      if (time.dataset.bucket !== String(bucket)) return;
+      if (hoverBucket !== bucket) return;
       paintFrame(result);
     }).catch(() => {
       finish();
       if (gen !== requestGen) return;
-      const time = document.getElementById(TIME_ID);
-      if (!time || time.dataset.bucket !== String(bucket)) return;
+      if (hoverBucket !== bucket) return;
       hideFrame();
     });
   }
@@ -306,8 +275,7 @@
     const hide = () => {
       requestGen += 1;
       inflightKey = '';
-      const time = document.getElementById(TIME_ID);
-      if (time) time.style.display = 'none';
+      hoverBucket = null;
       hideFrame();
       if (hoverTimer) window.clearTimeout(hoverTimer);
     };
@@ -318,19 +286,18 @@
         return;
       }
       const rect = slider.getBoundingClientRect();
-      if (rect.width <= 0 || !(durationSec > 0)) {
+      // shortcut: misses a duration that only hover-timestamps cached privately, upgrade when that value is on StremioCustomPlayback
+      const duration = Number(window.StremioCustomPlayback?.getDuration?.()) || durationSec;
+      if (rect.width <= 0 || !(duration > 0)) {
         hide();
         return;
       }
       const x = Math.max(rect.left, Math.min(event.clientX, rect.right));
       const ratio = Math.max(0, Math.min(1, (x - rect.left) / rect.width));
-      const seconds = durationSec * ratio;
+      const seconds = duration * ratio;
       const bucket = bucketOf(seconds);
-      const time = getTime();
-      time.textContent = formatTime(seconds);
-      placeAt(x, rect.top);
-      time.style.display = 'block';
-      time.dataset.bucket = String(bucket);
+      hoverBucket = bucket;
+      placeCard(x, rect.top);
 
       const path = currentPath();
       const cached = frames.get(frameKey(path, bucket));
@@ -347,7 +314,7 @@
       if (!buffered) showLoading();
       if (hoverTimer) window.clearTimeout(hoverTimer);
       hoverTimer = window.setTimeout(() => {
-        if (time.dataset.bucket !== String(bucket) || time.style.display === 'none') return;
+        if (hoverBucket !== bucket) return;
         requestFrame(path, seconds, bucket, buffered);
       }, DEBOUNCE_MS);
     };
@@ -362,8 +329,7 @@
     if (loopTimer) window.clearInterval(loopTimer);
     loopTimer = null;
     loopIntervalMs = 0;
-    const time = document.getElementById(TIME_ID);
-    if (time) time.style.display = 'none';
+    hoverBucket = null;
     hideFrame();
   }
 
@@ -387,6 +353,7 @@
     injectStyles();
     const slider = getSeekSlider();
     bindHoverPreview(slider);
+    document.getElementById(CARD_ID)?.classList.toggle('is-raised', timestampsOn());
     ensureLoop(hoverBoundSlider && hoverBoundSlider === slider ? SLOW_POLL_MS : FAST_POLL_MS);
   }
 

@@ -26,7 +26,7 @@
   const SEARCH_HIDE_EXTRA = 'mystremio-search-hide';
   const VISIBILITY_KEY = 'stremio-custom-catalog-visibility';
   const ADDON_SEARCH_KEY = 'stremio-custom-addon-search-disabled';
-  const DUMMY_EXTRAS = new Set([HOME_HIDE_EXTRA, META_HIDE_EXTRA, DISCOVER_HIDE_EXTRA, SEARCH_HIDE_EXTRA]);
+  const DUMMY_EXTRAS = new Set([META_HIDE_EXTRA, DISCOVER_HIDE_EXTRA, SEARCH_HIDE_EXTRA]);
 
   /** @type {object[]|null} */
   let liveAddons = null;
@@ -248,7 +248,9 @@
   }
 
   function isHomeVisible(catalog) {
-    return !normalizeExtras(catalog).some((extra) => extra.isRequired === true);
+    return !normalizeExtras(catalog).some(
+      (extra) => extra.name === HOME_HIDE_EXTRA || extra.isRequired === true
+    );
   }
 
   function isDiscoverVisible(catalog) {
@@ -256,21 +258,82 @@
     return !(search && search.isRequired === true);
   }
 
-  function setHomeVisible(catalog, visible) {
-    const extras = normalizeExtras(catalog);
-    if (!visible) {
-      const genre = extras.find((extra) => extra.name === 'genre');
-      if (genre) genre.isRequired = true;
-      else extras.push({ name: 'genre', isRequired: true, options: [], optionsLimit: 1 });
-      writeExtras(catalog, extras);
-      return;
-    }
-    for (const extra of extras) {
-      if (extra.name === SEARCH_EXTRA && isPureSearchCatalog(catalog)) {
-        extra.isRequired = true;
-        continue;
+  // Stock Discover drops a catalog when any required extra has no options.
+  function stockDiscoverKeeps(catalog) {
+    return normalizeExtras(catalog)
+      .filter((extra) => extra.isRequired === true)
+      .every((extra) => extraOptions(extra).length > 0);
+  }
+
+  function homeHideKey(addonId, type, id) {
+    return `${String(addonId || '')}\n${String(type || '')}\n${String(id || '')}`;
+  }
+
+  function publishHomeHidden(addons) {
+    const map = Object.create(null);
+    for (const addon of addons || []) {
+      const addonId = addon?.manifest?.id;
+      if (!addonId) continue;
+      for (const catalog of getCatalogs(addon)) {
+        if (!extraNamed(catalog, HOME_HIDE_EXTRA)) continue;
+        map[homeHideKey(addonId, catalog.type, catalog.id)] = 1;
       }
-      delete extra.isRequired;
+    }
+    window.__mystremioHomeHiddenCatalogs = map;
+    const render = window.__mystremioBoardRequestRender;
+    if (typeof render === 'function') {
+      try {
+        render();
+      } catch (_) {}
+    }
+  }
+
+  window.__mystremioCatalogHiddenFromHome = function (catalog) {
+    const map = window.__mystremioHomeHiddenCatalogs;
+    const addonId = catalog?.addon?.manifest?.id;
+    const id = catalog?.id;
+    if (!map || !addonId || id == null || id === '') return false;
+    return map[homeHideKey(addonId, catalog.type, id)] === 1;
+  };
+
+  function repairHomeHide(catalog) {
+    const extras = normalizeExtras(catalog);
+    let changed = false;
+    const genre = extras.find((extra) => extra.name === 'genre');
+    if (genre && genre.isRequired === true && extraOptions(genre).length === 0) {
+      extras.splice(extras.indexOf(genre), 1);
+      changed = true;
+    }
+    let marker = extras.find((extra) => extra.name === HOME_HIDE_EXTRA);
+    if (changed && !marker) {
+      marker = { name: HOME_HIDE_EXTRA };
+      extras.push(marker);
+    }
+    if (marker && marker.isRequired === true) {
+      marker.isRequired = false;
+      changed = true;
+    }
+    if (changed) writeExtras(catalog, extras);
+    return changed;
+  }
+
+  function repairHomeHides(addons) {
+    let changed = false;
+    for (const addon of addons || []) {
+      for (const catalog of getCatalogs(addon)) {
+        if (repairHomeHide(catalog)) changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function setHomeVisible(catalog, visible) {
+    const extras = normalizeExtras(catalog).filter((extra) => extra.name !== HOME_HIDE_EXTRA);
+    if (!visible) {
+      extras.push({ name: HOME_HIDE_EXTRA });
+    } else {
+      const genre = extras.find((extra) => extra.name === 'genre');
+      if (genre) delete genre.isRequired;
     }
     writeExtras(
       catalog,
@@ -299,12 +362,6 @@
 
   function catalogHasOptionalSearch(catalog) {
     return hasNamedExtra(catalog, SEARCH_EXTRA, false);
-  }
-
-  function catalogCanContributeSearch(addon, catalog) {
-    return catalogKind(catalog) === 'search' ||
-      catalogHasOptionalSearch(catalog) ||
-      addonCanSearch(addon);
   }
 
   function stripOptionalSearch(catalog) {
@@ -343,9 +400,16 @@
   }
 
   function catalogShowsSearchToggle(addon, catalog) {
-    if (catalogCanContributeSearch(addon, catalog)) return true;
-    const original = originalCatalogFor(addon, catalog);
-    return Boolean(original && catalogHasOptionalSearch(original));
+    if (catalogKind(catalog) === 'search') return true;
+    if (catalogHasOptionalSearch(catalog)) return true;
+    const remote = remoteManifestByTransport.get(addonTransport(addon));
+    const fromRemote = Array.isArray(remote?.catalogs)
+      ? remote.catalogs.find((item) => catalogKey(item) === catalogKey(catalog))
+      : null;
+    if (fromRemote && extraNamed(fromRemote, SEARCH_EXTRA)) return true;
+    if (!isCinemeta(addon)) return false;
+    const saved = originalCatalogFor(addon, catalog);
+    return Boolean(saved && extraNamed(saved, SEARCH_EXTRA));
   }
 
   function addonCanSearch(addon) {
@@ -361,7 +425,10 @@
   }
 
   function stripDummyExtras(catalog) {
-    const extras = normalizeExtras(catalog).filter((extra) => !DUMMY_EXTRAS.has(extra.name));
+    const extras = normalizeExtras(catalog).filter((extra) => {
+      if (extra.name === HOME_HIDE_EXTRA) return true;
+      return !DUMMY_EXTRAS.has(extra.name);
+    });
     const search = extras.find((extra) => extra.name === SEARCH_EXTRA && extra.isRequired);
     if (search && isLegacyHomeHideSearch({ extra: [search] })) {
       search.options = extraOptions(search).filter(
@@ -431,17 +498,109 @@
       extra: [{ name: 'search' }, { name: 'genre', options: ['Action'] }],
     };
     toggleHomeVisibility(browse);
-    if (isHomeVisible(browse) || !isDiscoverVisible(browse) || extraNamed(browse, 'search').isRequired === true) {
+    if (
+      isHomeVisible(browse) ||
+      !isDiscoverVisible(browse) ||
+      !stockDiscoverKeeps(browse) ||
+      extraNamed(browse, 'search').isRequired === true ||
+      extraNamed(browse, 'genre').isRequired === true ||
+      !extraNamed(browse, HOME_HIDE_EXTRA) ||
+      extraNamed(browse, HOME_HIDE_EXTRA).isRequired === true
+    ) {
       throw new Error('home hide failed');
     }
     toggleHomeVisibility(browse);
-    if (!isHomeVisible(browse) || !isDiscoverVisible(browse)) throw new Error('home show failed');
+    if (!isHomeVisible(browse) || !isDiscoverVisible(browse) || extraNamed(browse, HOME_HIDE_EXTRA)) {
+      throw new Error('home show failed');
+    }
     const bare = { id: 'list', type: 'movie', name: 'List', extra: [{ name: 'skip' }] };
     if (!isHomeVisible(bare)) throw new Error('optional extra hid home');
     toggleHomeVisibility(bare);
-    if (isHomeVisible(bare) || !isDiscoverVisible(bare)) throw new Error('genre hide failed');
+    if (isHomeVisible(bare) || !isDiscoverVisible(bare)) throw new Error('bare home hide failed');
     toggleHomeVisibility(bare);
-    if (!isHomeVisible(bare)) throw new Error('genre show failed');
+    if (!isHomeVisible(bare)) throw new Error('bare home show failed');
+    const injected = {
+      id: 'list',
+      type: 'movie',
+      name: 'List',
+      extra: [{ name: 'genre', isRequired: true, options: [] }, { name: 'search' }],
+    };
+    if (
+      !repairHomeHide(injected) ||
+      extraNamed(injected, 'genre') ||
+      !extraNamed(injected, HOME_HIDE_EXTRA) ||
+      extraNamed(injected, HOME_HIDE_EXTRA).isRequired === true ||
+      !stockDiscoverKeeps(injected) ||
+      extraNamed(injected, 'search').isRequired === true
+    ) {
+      throw new Error('genre hide migration failed');
+    }
+    const realGenre = {
+      id: 'list',
+      type: 'movie',
+      name: 'List',
+      extra: [{ name: 'genre', isRequired: true, options: ['Action'] }],
+    };
+    if (repairHomeHide(realGenre) || extraNamed(realGenre, HOME_HIDE_EXTRA)) {
+      throw new Error('real genre migrated');
+    }
+    const poisoned = {
+      id: 'top',
+      type: 'movie',
+      name: 'Popular',
+      extra: [{ name: HOME_HIDE_EXTRA, isRequired: true, options: [] }, { name: 'search' }],
+    };
+    if (
+      !repairHomeHide(poisoned) ||
+      extraNamed(poisoned, HOME_HIDE_EXTRA).isRequired === true ||
+      !stockDiscoverKeeps(poisoned) ||
+      isHomeVisible(poisoned)
+    ) {
+      throw new Error('stored home hide stayed required');
+    }
+    const settled = {
+      id: 'top',
+      type: 'movie',
+      name: 'Popular',
+      extra: [{ name: HOME_HIDE_EXTRA, isRequired: false, options: [], optionsLimit: 1 }],
+    };
+    const settledJson = JSON.stringify(settled);
+    if (repairHomeHide(settled) || JSON.stringify(settled) !== settledJson) {
+      throw new Error('settled home hide was rewritten');
+    }
+    stripDummyExtras(settled);
+    if (JSON.stringify(settled) !== settledJson) throw new Error('strip rewritten settled home hide');
+    publishHomeHidden([
+      {
+        manifest: {
+          id: 'com.example',
+          catalogs: [{ id: 'top', type: 'movie', extra: [{ name: HOME_HIDE_EXTRA, isRequired: false }] }],
+        },
+      },
+    ]);
+    const boardRow = { id: 'top', type: 'movie', addon: { manifest: { id: 'com.example', name: 'Example' } } };
+    if (!window.__mystremioCatalogHiddenFromHome(boardRow)) throw new Error('board row stayed visible');
+    if (window.__mystremioCatalogHiddenFromHome({ id: 'top', type: 'movie', addon: { manifest: { id: 'com.other' } } })) {
+      throw new Error('other addon row hidden');
+    }
+    if (window.__mystremioCatalogHiddenFromHome({ request: { base: 'https://example.test', path: { id: 'top', type: 'movie' } } })) {
+      throw new Error('request path still matched');
+    }
+    const discoverOff = {
+      id: 'top',
+      type: 'movie',
+      name: 'Popular',
+      extra: [
+        { name: 'search', isRequired: true },
+        { name: HOME_HIDE_EXTRA, isRequired: true, options: [] },
+        { name: 'genre', isRequired: true, options: ['Action'] },
+      ],
+    };
+    setHomeVisible(discoverOff, true);
+    if (extraNamed(discoverOff, 'search').isRequired !== true || extraNamed(discoverOff, 'genre').isRequired === true) {
+      throw new Error('show home cleared discover hide');
+    }
+    if (extraNamed(discoverOff, HOME_HIDE_EXTRA)) throw new Error('show home left sentinel');
     const searchOn = { id: 'top', type: 'movie', name: 'Popular', extra: [{ name: 'search' }] };
     if (!setDiscoverVisible(searchOn, false) || isDiscoverVisible(searchOn) || isHomeVisible(searchOn)) {
       throw new Error('discover hide failed');
@@ -465,10 +624,20 @@
       throw new Error('show home unhid search catalog');
     }
     const plain = { id: 'plain', type: 'movie', name: 'Plain', extra: [] };
-    catalogShowsSearchToggle(
-      { transportUrl: 'https://example.test/manifest.json', manifest: { catalogs: [plain], resources: ['stream'] } },
-      plain
-    );
+    const movies = { id: 'movies', type: 'movie', name: 'Movies', extra: [{ name: 'search' }] };
+    const addon = {
+      transportUrl: 'https://example.test/manifest.json',
+      manifest: { id: 'com.example', catalogs: [plain, movies], resources: ['catalog'] },
+    };
+    if (catalogShowsSearchToggle(addon, plain)) throw new Error('plain catalog showed search');
+    if (!catalogShowsSearchToggle(addon, movies)) throw new Error('searchable catalog hid search');
+    const moviesHidden = { id: 'movies', type: 'movie', name: 'Movies', extra: [] };
+    remoteManifestByTransport.set(addonTransport(addon), { catalogs: [plain, movies] });
+    if (!catalogShowsSearchToggle(addon, moviesHidden)) throw new Error('search toggle vanished after hide');
+    if (catalogShowsSearchToggle(addon, plain)) throw new Error('plain catalog showed search from remote');
+    remoteManifestByTransport.delete(addonTransport(addon));
+    const namedSearch = { id: 'movie-search', type: 'movie', name: 'Search', extra: [] };
+    if (!catalogShowsSearchToggle(addon, namedSearch)) throw new Error('search catalog hid toggle');
   }
 
   function isCinemeta(addon) {
@@ -1078,6 +1247,7 @@
   function markDirty(nextAddons) {
     draft = cloneAddons(nextAddons);
     dirty = collectionSignature(draft) !== collectionSignature(liveAddons || []);
+    publishHomeHidden(draft);
     paintSyncButton();
     paintMetadataChip();
     refreshListPreserveScroll();
@@ -1099,6 +1269,7 @@
     if (!dirty) {
       const changed = collectionSignature(nextLive) !== collectionSignature(draft || []);
       draft = cloneAddons(nextLive);
+      publishHomeHidden(draft);
       paintSyncButton();
       paintMetadataChip();
       if (changed) refreshListPreserveScroll();
@@ -1811,7 +1982,9 @@
       rememberOriginalMetaResources(nextAddons);
       void hydrateOriginalMetaResources(current);
       void hydrateOriginalMetaResources(nextAddons);
-      const cleaned = stripDummyExtrasFromAddons(cloneAddons(nextAddons));
+      const prepared = cloneAddons(nextAddons);
+      repairHomeHides(prepared);
+      const cleaned = stripDummyExtrasFromAddons(prepared);
       pinSearchOnlyCatalogs(cleaned);
       healPrefixMetaAddons(cleaned);
       const addons = toDescriptors(cleaned);
@@ -1849,6 +2022,7 @@
         writeDisabledAddonSearch(new Set());
       }
       writeBackup(cleaned);
+      publishHomeHidden(cleaned);
       if (!silent) showToast(t('Addons synced.', 'Addons synchronisiert.'));
       paintSyncButton();
       if (!silent || isInstalledAddonsRoute()) {
@@ -1935,10 +2109,6 @@
     renderSourceMenuOptions();
     paintMetadataChip();
     void persistAddons(workingAddons());
-  }
-
-  function chooseMetadataSource(value) {
-    toggleMetadataSource(value);
   }
 
   function ensureStyles() {
@@ -3146,6 +3316,8 @@
       rememberOriginalMetaResources(live);
       const preferred = cloneAddons(live);
       pinSearchOnlyCatalogs(preferred);
+      repairHomeHides(preferred);
+      publishHomeHidden(preferred);
       if (!hasExplicitMetadataSelection()) {
         if (collectionSignature(preferred) === collectionSignature(live)) return;
         const pinnedOk = await persistAddons(preferred, { silent: true });
@@ -3198,12 +3370,11 @@
             continue;
           }
         }
-        if (hasNamedExtra(catalog, HOME_HIDE_EXTRA, true) && isHomeVisible(catalog)) {
-          setHomeVisible(catalog, false);
-        }
+        repairHomeHide(catalog);
       }
       for (const catalog of getCatalogs(addon)) stripDummyExtras(catalog);
     }
+    publishHomeHidden(next);
     const afterMigrate = collectionSignature(next);
     healPrefixMetaAddons(next);
     if (visibilityChanged || afterMigrate !== before) markDirty(next);

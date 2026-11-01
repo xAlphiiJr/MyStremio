@@ -341,17 +341,33 @@ impl Preview {
         }
         self.drain();
         let at = format!("{seconds:.3}");
+        let deadline = Instant::now() + seek_wait(local);
         self.argv(&["seek", &at, "absolute"])?;
         self.wait_for(
             libmpv2_sys::mpv_event_id_MPV_EVENT_PLAYBACK_RESTART,
-            Instant::now() + seek_wait(local),
+            deadline,
             !local,
         )?;
-        let _ = unsafe { libmpv2_sys::mpv_wait_event(self.mpv.ctx.as_ptr(), 0.05) };
         let mut rgb = self.render_rgb()?;
+        // shortcut: an all-black first seek is stepped once, upgrade if a black intro must stay on that frame
         if rgb.iter().all(|byte| *byte == 0) {
-            let _ = unsafe { libmpv2_sys::mpv_wait_event(self.mpv.ctx.as_ptr(), 0.15) };
-            rgb = self.render_rgb()?;
+            let _ = unsafe { libmpv2_sys::mpv_render_context_update(self.render) };
+            self.argv(&["frame-step"])?;
+            loop {
+                if !local && queued_is_local() {
+                    return Err("stale".into());
+                }
+                let flags = unsafe { libmpv2_sys::mpv_render_context_update(self.render) };
+                if flags & u64::from(libmpv2_sys::mpv_render_update_flag_MPV_RENDER_UPDATE_FRAME) != 0
+                {
+                    rgb = self.render_rgb()?;
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    return Err("timeout".into());
+                }
+                let _ = unsafe { libmpv2_sys::mpv_wait_event(self.mpv.ctx.as_ptr(), 0.05) };
+            }
         }
         // shortcut: software RGB skips the player's bt.2390 tone map, so HDR stills won't match.
         Ok(Frame {
@@ -611,6 +627,36 @@ mod tests {
     #[test]
     fn sw_preview_context_opens() {
         drop(super::Preview::open().expect("sw context"));
+    }
+
+    #[test]
+    fn first_still_is_not_black() {
+        let path = std::env::temp_dir().join("mystremio-seek-preview-gray.y4m");
+        std::fs::write(&path, gray_y4m()).expect("y4m");
+        let mut preview = super::Preview::open().expect("sw context");
+        let frame = preview
+            .frame_at(&path.to_string_lossy(), 0.0, true)
+            .expect("first still");
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            frame.rgb.bytes().any(|byte| byte != b'A'),
+            "first still is black"
+        );
+    }
+
+    fn gray_y4m() -> Vec<u8> {
+        let (w, h) = (192, 108);
+        let y = w * h;
+        let c = (w / 2) * (h / 2);
+        let mut plane = Vec::with_capacity(y + c * 2);
+        plane.extend(std::iter::repeat(180).take(y));
+        plane.extend(std::iter::repeat(128).take(c * 2));
+        let mut buf = format!("YUV4MPEG2 W{w} H{h} F15:1 Ip A1:1 C420\n").into_bytes();
+        for _ in 0..4 {
+            buf.extend_from_slice(b"FRAME\n");
+            buf.extend_from_slice(&plane);
+        }
+        buf
     }
 
     #[test]

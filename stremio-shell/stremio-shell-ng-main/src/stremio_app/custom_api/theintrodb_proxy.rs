@@ -3,7 +3,8 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYP
 use serde_json::{json, Value};
 use std::time::Duration;
 
-const THEINTRODB_API_BASE: &str = "https://api.theintrodb.org/v3";
+/// Writes live on v4. Frozen v3 only still serves GET /media.
+const THEINTRODB_API_BASE: &str = "https://api.theintrodb.org/v4";
 const USER_AGENT_VALUE: &str = "MyStremio Intro Skip Plugin";
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(25);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);

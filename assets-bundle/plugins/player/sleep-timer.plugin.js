@@ -130,6 +130,7 @@
   let streamHandler = null;
   let applyingSettings = false;
   let settingsWired = false;
+  let unwatchSettings = null;
   let lastWrittenRunning = false;
 
   /**
@@ -379,7 +380,7 @@
     const api = getSettingsApi();
     if (!api?.onSettingsSaved || settingsWired) return;
     settingsWired = true;
-    api.onSettingsSaved(PLUGIN_ID, async (payload) => {
+    unwatchSettings = api.onSettingsSaved(PLUGIN_ID, async (payload) => {
       if (applyingSettings) return;
       applyingSettings = true;
       try {
@@ -1744,18 +1745,45 @@
     streamHandler = () => onStreamStarted();
     document.addEventListener('stremio-custom-stream-started', streamHandler);
   }
-  document.addEventListener('stremio-custom-bootstrap-ready', bootAfterSettings);
-  bootAfterSettings();
-  document.addEventListener('stremio-custom-playback-stopped', () => {
+  function onPlaybackStopped() {
     if (armed && prefs.trigger === 'episode') cancelTimer('playback-stopped');
     removePlayerUi();
-  });
-  window.addEventListener('resize', () => {
+  }
+
+  function onWindowResize() {
     if (panelOpen) positionPanel();
     positionBadge();
-  });
+  }
+
+  // Soft unload stays for leaving the player; that path must not clear the ready flag.
+  function disableForSettings() {
+    if (typeof unwatchSettings === 'function') unwatchSettings();
+    unwatchSettings = null;
+    settingsWired = false;
+    cancelTimer('disabled');
+    unload();
+    unbindPanelHandlers();
+    if (routeHandler) {
+      document.removeEventListener('stremio-custom-route-change', routeHandler);
+      routeHandler = null;
+    }
+    if (streamHandler) {
+      document.removeEventListener('stremio-custom-stream-started', streamHandler);
+      streamHandler = null;
+    }
+    document.removeEventListener('stremio-custom-bootstrap-ready', bootAfterSettings);
+    document.removeEventListener('stremio-custom-playback-stopped', onPlaybackStopped);
+    window.removeEventListener('resize', onWindowResize);
+    window.__stremioSleepTimerPluginReady = '';
+  }
+
+  document.addEventListener('stremio-custom-bootstrap-ready', bootAfterSettings);
+  bootAfterSettings();
+  document.addEventListener('stremio-custom-playback-stopped', onPlaybackStopped);
+  window.addEventListener('resize', onWindowResize);
 
   window.__stremioSleepTimerUnload = unload;
+  window.__stremioSleepTimerDisable = disableForSettings;
   window.__stremioSleepTimerEnsure = ensureButton;
   window.__stremioSleepTimerPluginReady = PLUGIN_VERSION;
 

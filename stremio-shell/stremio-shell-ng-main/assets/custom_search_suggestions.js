@@ -244,6 +244,25 @@
         max-width:min(420px, 46vw)!important;min-width:0!important;
         padding:0 6px 0 14px!important;justify-content:flex-start!important;
       }
+      /* Addon filter reuses the title-search class. Keep it in the row; the nav pill is separate. */
+      html.mystremio-search-docked [class*="addons-container"] .search-bar-container-asfq1,
+      html.mystremio-search-docked:not(.mystremio-search-typing):not(.mystremio-search-has-query) [class*="addons-container"] .search-bar-container-asfq1,
+      html.mystremio-search-typing [class*="addons-container"] .search-bar-container-asfq1,
+      html.mystremio-search-has-query [class*="addons-container"] .search-bar-container-asfq1,
+      html.mystremio-search-unfocused [class*="addons-container"] .search-bar-container-asfq1{
+        position:relative!important;top:auto!important;right:auto!important;bottom:auto!important;left:auto!important;
+        transform:none!important;width:18rem!important;min-width:12rem!important;max-width:22rem!important;
+        height:auto!important;z-index:auto!important;justify-content:flex-start!important;padding:0 8px!important;
+      }
+      html.mystremio-search-docked:not(.mystremio-search-typing):not(.mystremio-search-has-query) [class*="addons-container"] .search-bar-container-asfq1 [class*="search-input"],
+      html.mystremio-search-docked:not(.mystremio-search-typing):not(.mystremio-search-has-query) [class*="addons-container"] .search-bar-container-asfq1 [class*="placeholder"],
+      html.mystremio-search-typing [class*="addons-container"] .search-bar-container-asfq1 [class*="search-input"],
+      html.mystremio-search-typing [class*="addons-container"] .search-bar-container-asfq1 [class*="placeholder"]{
+        display:flex!important;opacity:1!important;width:auto!important;flex:1 1 auto!important;visibility:visible!important;
+      }
+      html:not(.mystremio-title-search) nav[class*="horizontal-nav-bar"] .search-bar-container-asfq1{
+        display:none!important;
+      }
     `;
     document.documentElement.appendChild(style);
   }
@@ -308,10 +327,17 @@
    * @returns {boolean}
    */
   function isAddonSearchContext(el) {
-    if (isInstalledAddonsRoute()) return true;
     if (!(el instanceof Element)) return false;
     if (el instanceof HTMLInputElement && el.dataset.msAmSearch === '1') return true;
-    return Boolean(el.closest('[class*="addons"]'));
+    return Boolean(el.closest('[class*="addons-container"] [class*="search-bar"]'));
+  }
+
+  function titleSearchBar() {
+    return (
+      [...document.querySelectorAll('.search-bar-container-asfq1')].find(
+        (bar) => !bar.closest('[class*="addons-container"]')
+      ) || null
+    );
   }
 
   /**
@@ -477,7 +503,7 @@
 
   function collapseNativeSearchBars() {
     nativeSearchBars().forEach((bar) => {
-      if (bar.closest('[class*="addons"]')) return;
+      if (bar.closest('[class*="addons-container"]')) return;
       applyCollapsedBarStyles(bar);
     });
     hideNativeSearchMenus();
@@ -515,14 +541,14 @@
     if (query) {
       applyQueryBarWidth(query);
       nativeSearchBars().forEach((bar) => {
-        if (bar.closest('[class*="addons"]')) return;
+        if (bar.closest('[class*="addons-container"]')) return;
         bar.removeAttribute('data-mystremio-search-collapsed');
         releaseCollapsedBarInlineStyles(bar);
       });
       return;
     }
     nativeSearchBars().forEach((bar) => {
-      if (bar.closest('[class*="addons"]')) return;
+      if (bar.closest('[class*="addons-container"]')) return;
       bar.setAttribute('data-mystremio-search-collapsed', '1');
       let hovered = false;
       try {
@@ -1596,7 +1622,7 @@
       if (el instanceof HTMLInputElement && !isAddonSearchContext(el)) bindInput(el);
     });
     if (document.documentElement.classList.contains('mystremio-search-typing') && !isSearchRoute()) {
-      const bar = document.querySelector('.search-bar-container-asfq1');
+      const bar = titleSearchBar();
       if (bar && !bar.querySelector('input.mystremio-dock-search')) {
         const input = armDockSearch(bar);
         if (document.activeElement !== input) input.focus();
@@ -1651,7 +1677,7 @@
     if (query) {
       applyQueryBarWidth(query);
       nativeSearchBars().forEach((bar) => {
-        if (bar.closest('[class*="addons"]')) return;
+        if (bar.closest('[class*="addons-container"]')) return;
         bar.removeAttribute('data-mystremio-search-collapsed');
         releaseCollapsedBarInlineStyles(bar);
       });
