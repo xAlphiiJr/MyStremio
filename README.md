@@ -116,9 +116,9 @@ In the Stremio settings you will find the **MyStremio** section. These include s
 
 - **API Keys** are managed centrally under Settings → MyStremio → API Keys (one key for all installed plugins that need it).
 - **Plugins** can be managed directly from settings, including quick access to the plugins folder. There are MyStremio exclusive plugins and communtiy made plugins built into to installer. The following plugins from [REVENGE977's/stremio-enhanced](https://github.com/REVENGE977/stremio-enhanced) are tested and work with MyStremio: Enhanced Title Bar by Fxy, EnhancedCovers by Fxy, SlashtoSearch by REVENGE977. A few of other plugins are slightly tuned to fit into MyStremio including: Dynamic Hero by Fxy, Context Menu Fix by MrBlu03 and Data Enrichment by MrBlu03.
-- **Preload** settings determine how much of the video gets buffered ahead. You can chose from buffering only the next 10 seconds or the entire video. This currently works for torrent/debrid streams and is not designed for usenet or http. That doesn't mean it won't work on those, I just can't test it as I'm not using usenet/http.
-- **Library** json can be importet or exportet to keep your custom library entries safe or import them on another device. Updating the app won't remove your library entries, but if you decide to uninstall MyStremio and reinstall it in the future you will need the json to get your custom library back.
-- **Discord** Rich Presence by [REVENGE977](https://github.com/REVENGE977/) enhances the native Discord integration and shows additional info.
+- **Preload** settings determine how much of the video gets buffered ahead. You can chose from buffering only the next 10 seconds or the entire fiole. 
+- **Library** CSV can be importet or exportet to keep your custom library entries safe or import them on another device. Updating the app won't remove your library entries, but if you decide to uninstall MyStremio and reinstall it in the future you will need the CSV to get your custom library back. Since 2.5.0 you can also import/export your whole library as CSV.
+- **Discord** Rich Presence by [REVENGE977](https://github.com/REVENGE977/) enhances the native Discord integration and shows additional info including the poster of the title you are currently watching
 
 ---
 
@@ -188,9 +188,8 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 ## 🛠️ Patch Notes
 
 ### 2.5.3
-- **Search** — The movie and series search in the navigation bar now stays on the Board. Discover and Library have their own fields, labeled Search Discover and Search Library, which stay open and filter the titles on that page instead of opening a results page. Opening a title and going back keeps the query. On Library the search follows the selected sort and loads further pages, so a match is not missed just because it is not on the first screen
-- **Addon Manager** — Fixed an issue where the search field did not appear on the addons page
-- **Addon Manager** — Hiding a catalog from the board keeps it in Discover
+- **Search** — The movie and series search in the navigation bar are now Board only. Discover and Library have their own fields, labeled Search Discover and Search Library, which filter the titles on that page instead of opening a results page
+- **Addon Manager** — Fixed an issue where hiding a catalog from the board also disabled it in Discover
 - **Seek Preview** — Removed the plugin's own hover timestamp. Preview frames now use the Hover Timestamps plugin, so they can be shown with or without a time label
 - **Intro Skip** — Fixed timestamp submission to TheIntroDB after the submit endpoint moved to API v4
 
