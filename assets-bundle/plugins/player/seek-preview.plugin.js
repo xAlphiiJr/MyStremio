@@ -1,7 +1,7 @@
 /**
  * @name Seek Preview
  * @description Show a nearby frame when hovering the player seek bar
- * @version 1.0.8
+ * @version 1.0.9
  * @author MyStremio
  * @category player
  */
@@ -10,7 +10,7 @@
 (function () {
   'use strict';
 
-  const PLUGIN_VERSION = '1.0.8';
+  const PLUGIN_VERSION = '1.0.9';
   const PLUGIN_REF = 'player/seek-preview.plugin.js';
   const HOVER_TS_REF = 'player/hover-timestamps.plugin.js';
   const STYLE_ID = 'stremio-seek-preview-styles';
@@ -143,7 +143,10 @@
   }
 
   function previewAllowed(path) {
-    return Boolean(String(path || '').trim());
+    const value = String(path || '').trim();
+    if (!value) return false;
+    const lower = value.toLowerCase();
+    return !lower.includes('127.0.0.1:1147') && !lower.includes('localhost:1147');
   }
 
   function bucketOf(seconds) {

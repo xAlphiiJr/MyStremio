@@ -39,7 +39,7 @@ WizardStyle=modern
 LanguageDetectionMethod=uilanguage
 ShowLanguageDialog=auto
 CloseApplications=yes
-CloseApplicationsFilter={#MyAppExeName},stremio-runtime.exe,node.exe
+CloseApplicationsFilter={#MyAppExeName},stremio-runtime.exe
 RestartApplications=no
 WizardImageFile={#SourcePath}..\images\windows-installer.bmp
 WizardSmallImageFile={#SourcePath}..\images\windows-installer-header.bmp
@@ -71,10 +71,29 @@ begin
   end;
 end;
 
+// shortcut: unsigned mystremio-shell trips Defender Bearfoos.A!ml; drop when Authenticode-signed
+procedure ProtectFromDefender;
+var
+  ResultCode: Integer;
+  AppDir, UpdatesDir, Cmd: string;
+begin
+  AppDir := ExpandConstant('{app}');
+  UpdatesDir := ExpandConstant('{userappdata}\MyStremio\updates');
+  Cmd :=
+    '-NoProfile -ExecutionPolicy Bypass -Command "' +
+    'New-Item -ItemType Directory -Force -Path ''' + UpdatesDir + ''' | Out-Null; ' +
+    'Add-MpPreference -ExclusionPath ''' + AppDir + '''; ' +
+    'Add-MpPreference -ExclusionPath ''' + UpdatesDir + '''; ' +
+    'Add-MpPreference -ExclusionProcess ''{#MyAppExeName}''"';
+  ShellExec('runas', 'powershell.exe', Cmd, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
 begin
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('defenderexclude') then
+    ProtectFromDefender;
   if (CurStep = ssDone) and WizardIsTaskSelected('runapp') then
     ExecAsOriginalUser(ExpandConstant('{app}\{#MyAppExeName}'), '', '', SW_SHOW, ewNoWait, ResultCode);
 end;
@@ -93,11 +112,14 @@ Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 [CustomMessages]
 english.RemoveDataFolder=Remove all MyStremio data and configuration from AppData?
 german.RemoveDataFolder=Alle MyStremio-Daten und Einstellungen aus AppData entfernen?
+english.DefenderExclude=Allow a Windows Defender exclusion (optional; stops a known false Trojan quarantine). Needs one admin prompt.
+german.DefenderExclude=Windows-Defender-Ausschluss erlauben (optional; verhindert bekannten Fehlalarm/Quarantäne). Einmal Admin-Bestätigung.
 
 [Tasks]
 Name: "runapp"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"
 Name: "assoctorrent"; Description: "Associate {#MyAppName} with .torrent files"
+Name: "defenderexclude"; Description: "{cm:DefenderExclude}"; Flags: unchecked
 
 [Files]
 Source: "{#ReleaseDir}{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion

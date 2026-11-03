@@ -35,6 +35,14 @@ use crate::stremio_app::{
 /// The resume handler must not show the window again before quit.
 static QUIT_AFTER_SLEEP: AtomicBool = AtomicBool::new(false);
 
+/// Installer starts only after this process is gone, and it is not silent.
+pub(crate) fn updater_wait_script(pid: u32, installer: &str) -> String {
+    let path = installer.replace('\'', "''");
+    format!(
+        "while (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 200 }}; Start-Process -LiteralPath '{path}' -ArgumentList '/TASKS=runapp'"
+    )
+}
+
 use super::stremio_server::StremioServer;
 
 #[derive(Default, NwgUi)]
@@ -72,6 +80,7 @@ pub struct MainWindow {
         OnWindowMinimize: [Self::transmit_window_state_change],
         OnWindowMaximize: [Self::on_window_state_changed],
         OnWindowFocus: [Self::on_window_focus],
+        OnResize: [Self::on_resize],
         OnResizeEnd: [Self::save_window_settings],
     )]
     pub window: nwg::Window,
@@ -576,13 +585,10 @@ impl MainWindow {
                             Some(file_path) => {
                                 println!("Running the setup at {file_path:?}");
 
-                                let command = Command::new(file_path)
-                                    .args([
-                                        "/SILENT",
-                                        "/NOCANCEL",
-                                        "/FORCECLOSEAPPLICATIONS",
-                                        "/TASKS=runapp",
-                                    ])
+                                let script =
+                                    updater_wait_script(process::id(), &file_path.to_string_lossy());
+                                let command = Command::new("powershell.exe")
+                                    .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
                                     .creation_flags(CREATE_BREAKAWAY_FROM_JOB)
                                     .stdin(process::Stdio::null())
                                     .stdout(process::Stdio::null())
@@ -622,17 +628,45 @@ impl MainWindow {
         data.set_min_size(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT);
     }
     fn on_paint(&self) {
+        // Splash only. Never put_bounds from paint — each put can white-flash WebView2
+        // and SPA route paints would re-trigger it on every transition.
+        if self.splash_screen.visible() {
+            if let Some(hwnd) = self.window.handle.hwnd() {
+                self.splash_screen.cover_client(hwnd);
+            }
+        }
+    }
+    fn on_resize(&self) {
         if let Some(hwnd) = self.window.handle.hwnd() {
             if self.splash_screen.visible() {
                 self.splash_screen.cover_client(hwnd);
                 return;
             }
             self.webview.fit_to_window(Some(hwnd));
+            // Style/size changes can reset the NC theme to legacy — re-assert modern dark.
+            if let Ok(style) = self.saved_window_style.try_borrow() {
+                if !style.full_screen {
+                    style.set_title_bar_color(hwnd);
+                }
+            }
         }
+    }
+    /// Fit WebView2 while paint is still locked, then unlock. Gaps never paint white.
+    fn finish_chrome_with_webview(&self, hwnd: winapi::shared::windef::HWND) {
+        if let Ok(style) = self.saved_window_style.try_borrow() {
+            style.set_dark_window_background(hwnd);
+        }
+        self.webview.force_fit_to_window(Some(hwnd));
+        if let Some(controller) = self.webview.controller.get() {
+            controller.notify_parent_window_position_changed().ok();
+        }
+        WindowStyle::finish_chrome_transition(hwnd);
     }
     fn on_window_state_changed(&self) {
         self.save_window_settings();
         self.transmit_window_state_change();
+        // Bounds: OnResize. Do not force_fit here — maximize-after-FS would
+        // re-put WebView2 bounds over a punched video and flash a dark sheet.
     }
     fn on_window_focus(&self) {
         self.transmit_window_state_change();
@@ -654,28 +688,33 @@ impl MainWindow {
         }
     }
     fn on_toggle_fullscreen_notice(&self) {
-        // Opaque only while the poster is up. Forcing it over a playing video
-        // leaves a black sheet when the resize makes mpv buffer.
         if !self.webview.is_background_transparent() {
             self.webview.set_background_transparent(false);
         }
         if let Some(hwnd) = self.window.handle.hwnd() {
+            let mut changed = false;
             if let Ok(mut saved_style) = self.saved_window_style.try_borrow_mut() {
                 // Coalesce to the latest explicit target. Never toggle on empty notice —
                 // a second notice after take() used to invert FS and cancel the click.
                 let target = self.requested_fullscreen.lock().unwrap().take();
                 if let Some(target) = target {
-                    saved_style.set_full_screen(hwnd, target);
+                    changed = saved_style.set_full_screen(hwnd, target);
                     self.tray.tray_topmost.set_enabled(!saved_style.full_screen);
                     self.tray.tray_topmost.set_checked(
                         (saved_style.ex_style as u32 & WS_EX_TOPMOST) == WS_EX_TOPMOST,
                     );
                 }
             }
-            // Client area changes when chrome is stripped — keep WebView bounds in sync.
-            self.webview.fit_to_window(Some(hwnd));
-            if let Some(controller) = self.webview.controller.get() {
-                controller.notify_parent_window_position_changed().ok();
+            if changed {
+                self.webview.force_fit_to_window(Some(hwnd));
+                if let Some(controller) = self.webview.controller.get() {
+                    controller.notify_parent_window_position_changed().ok();
+                }
+                if let Ok(style) = self.saved_window_style.try_borrow() {
+                    if !style.full_screen {
+                        style.set_title_bar_color(hwnd);
+                    }
+                }
             }
         }
         self.webview.execute_script(
@@ -691,18 +730,18 @@ impl MainWindow {
      * video cannot flash framed borders during player load.
      */
     fn on_toggle_borderless_notice(&self) {
-        self.webview.set_background_transparent(false);
+        if !self.webview.is_background_transparent() {
+            self.webview.set_background_transparent(false);
+        }
         if let Some(hwnd) = self.window.handle.hwnd() {
+            let mut paint_locked = false;
             if let Ok(mut saved_style) = self.saved_window_style.try_borrow_mut() {
                 if let Some(enabled) = self.requested_borderless.lock().unwrap().take() {
-                    saved_style.set_borderless(hwnd, enabled);
+                    paint_locked = saved_style.set_borderless(hwnd, enabled);
                 }
             }
-            // Critical: removing caption grows the client rect; without this, a white
-            // ring of HWND background remains around the (still smaller) WebView2.
-            self.webview.fit_to_window(Some(hwnd));
-            if let Some(controller) = self.webview.controller.get() {
-                controller.notify_parent_window_position_changed().ok();
+            if paint_locked {
+                self.finish_chrome_with_webview(hwnd);
             }
         }
         self.webview.execute_script(
@@ -721,7 +760,7 @@ impl MainWindow {
                 Some("min") => style.minimize_window(hwnd),
                 Some("max") => {
                     style.toggle_maximize_window(hwnd);
-                    self.webview.fit_to_window(Some(hwnd));
+                    self.webview.force_fit_to_window(Some(hwnd));
                 }
                 _ => {}
             }
@@ -868,8 +907,6 @@ impl MainWindow {
         if QUIT_AFTER_SLEEP.load(Ordering::Relaxed) {
             return;
         }
-        self.server
-            .recover_after_resume(self.streaming_server_ready_notice.sender());
         self.webview.wake_after_resume();
         if let Some(hwnd) = self.window.handle.hwnd() {
             self.webview.fit_to_window(Some(hwnd));
@@ -910,8 +947,6 @@ impl MainWindow {
             saved_style.set_active(hwnd);
         }
         self.tray.tray_show_hide.set_checked(self.window.visible());
-        self.server
-            .recover_after_resume(self.streaming_server_ready_notice.sender());
         self.wake_webview_after_show();
         self.transmit_window_state_change();
         self.transmit_window_visibility_change();
@@ -939,5 +974,20 @@ impl MainWindow {
         self.close_pip(false);
         self.save_window_settings();
         nwg::stop_thread_dispatch();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::updater_wait_script;
+
+    #[test]
+    fn updater_does_not_force_close() {
+        let script = updater_wait_script(42, r"C:\Users\a\MyStremioSetup.exe");
+        assert!(!script.contains("/SILENT"));
+        assert!(!script.contains("/NOCANCEL"));
+        assert!(!script.contains("/FORCECLOSEAPPLICATIONS"));
+        assert!(script.contains("Get-Process -Id 42"));
+        assert!(script.contains("/TASKS=runapp"));
     }
 }

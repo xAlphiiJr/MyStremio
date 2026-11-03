@@ -84,6 +84,8 @@ pub struct WebView {
     pub deferred_visible: Rc<Cell<bool>>,
     /// Last applied DefaultBackgroundColor alpha. True means MPV is showing through.
     background_transparent: Cell<bool>,
+    /// Last `put_bounds` client rect — skip no-op puts (they white-flash the surface).
+    last_bounds: Cell<Option<(i32, i32, i32, i32)>>,
     pub channel: ipc::Channel,
     notice: nwg::Notice,
     compute: RefCell<Option<thread::JoinHandle<()>>>,
@@ -97,7 +99,11 @@ impl WebView {
                 let mut rect = mem::zeroed();
                 GetClientRect(hwnd, &mut rect);
                 if let Some(controller) = self.controller.get() {
-                    controller.put_bounds(rect).ok();
+                    let key = (rect.left, rect.top, rect.right, rect.bottom);
+                    if self.last_bounds.get() != Some(key) {
+                        controller.put_bounds(rect).ok();
+                        self.last_bounds.set(Some(key));
+                    }
                     apply_ui_scale(controller, hwnd);
                 }
             }
@@ -121,8 +127,12 @@ impl WebView {
 
     /// Opaque dark background for board/boot; transparent for MPV punch-through.
     ///
-    /// WebView2 only accepts alpha 0 or 255.
+    /// WebView2 only accepts alpha 0 or 255. Skip no-op puts — each call can
+    /// white-flash the compositor even when the color is unchanged.
     pub fn set_background_transparent(&self, transparent: bool) {
+        if self.background_transparent.get() == transparent && self.controller.get().is_some() {
+            return;
+        }
         let Some(controller) = self.controller.get() else {
             return;
         };
@@ -168,6 +178,14 @@ impl WebView {
                 apply_ui_scale(controller, hwnd);
             }
         }
+    }
+
+    /// Force bounds re-sync after chrome changes even when the client rect
+    /// matched the previous put (caption strip can keep the same outer size
+    /// while the WebView child is still one frame behind).
+    pub fn force_fit_to_window(&self, hwnd: Option<HWND>) {
+        self.last_bounds.set(None);
+        self.fit_to_window(hwnd);
     }
 }
 

@@ -61,9 +61,14 @@ pub fn bucket_index(seconds: f64) -> Option<i64> {
     Some((seconds / BUCKET_SECS).floor() as i64)
 }
 
+fn is_engine_stream(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.contains("127.0.0.1:1147") || lower.contains("localhost:1147")
+}
+
 pub fn preview_allowed(path: &str) -> bool {
     let path = path.trim();
-    !path.is_empty() && !path.contains('\0')
+    !path.is_empty() && !path.contains('\0') && !is_engine_stream(path)
 }
 
 pub fn enqueue(message: Value, tx: Sender<String>) {
@@ -610,7 +615,8 @@ mod tests {
 
     #[test]
     fn preview_rejects_empty_paths() {
-        assert!(preview_allowed("http://127.0.0.1:11470/hash/0"));
+        assert!(!preview_allowed("http://127.0.0.1:11470/hash/0"));
+        assert!(!preview_allowed("http://127.0.0.1:11473/hash/0"));
         assert!(preview_allowed(r"D:\Movies\film.mkv"));
         assert!(!preview_allowed(""));
         assert!(!preview_allowed("http://127.0.0.1:11470/\0"));

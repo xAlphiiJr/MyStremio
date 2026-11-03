@@ -11,11 +11,15 @@ use winapi::um::winuser::{
     SetWindowPos, ShowWindow, UpdateWindow, GCLP_HBRBACKGROUND, GWL_EXSTYLE, GWL_STYLE,
     HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, MONITORINFO, MONITOR_DEFAULTTONEAREST, RDW_ALLCHILDREN,
     RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW, SM_CXSCREEN, SM_CYSCREEN,
-    SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SW_HIDE, SW_MINIMIZE, SW_RESTORE, SW_SHOWMAXIMIZED, SW_SHOWNORMAL, WINDOWPLACEMENT,
-    WM_SETREDRAW, WS_CAPTION, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME, WS_EX_STATICEDGE,
-    WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_OVERLAPPEDWINDOW, WS_THICKFRAME, WS_VISIBLE,
+    SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOREDRAW, SWP_NOSIZE, SWP_NOZORDER,
+    SWP_SHOWWINDOW, SW_HIDE, SW_MINIMIZE, SW_RESTORE, SW_SHOWMAXIMIZED, SW_SHOWNORMAL,
+    WINDOWPLACEMENT, WM_SETREDRAW, WS_CAPTION, WS_EX_CLIENTEDGE, WS_EX_DLGMODALFRAME,
+    WS_EX_STATICEDGE, WS_EX_TOPMOST, WS_EX_WINDOWEDGE, WS_MAXIMIZE, WS_OVERLAPPEDWINDOW,
+    WS_THICKFRAME, WS_VISIBLE,
 };
+
+/// SetWindowPos during a chrome transition — FRAMECHANGED without painting yet.
+const SWP_CHROME: u32 = (SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOREDRAW) as u32;
 
 /// Same chrome bits stock stremio-shell-ng clears for fullscreen (proven on Windows).
 const STOCK_CHROME_STYLE_BITS: i32 = (WS_CAPTION | WS_THICKFRAME) as i32;
@@ -25,14 +29,12 @@ const MONITOR_COVER_TOLERANCE_PX: i32 = 4;
 const CHROME_EXSTYLE_BITS: i32 =
     (WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE) as i32;
 
+/// Win10/11 dark NC + Win11 caption/border colors (never COLOR_NONE).
+const DWMWA_USE_IMMERSIVE_DARK_MODE: DWORD = 20;
 const DWMWA_WINDOW_CORNER_PREFERENCE: DWORD = 33;
 const DWMWA_BORDER_COLOR: DWORD = 34;
 const DWMWA_CAPTION_COLOR: DWORD = 35;
 const DWMWA_TEXT_COLOR: DWORD = 36;
-/// Hide the Win11 1px window stroke (DwmSetWindowAttribute).
-const DWMWA_COLOR_NONE: DWORD = 0xFFFFFFFE;
-/// Put the modern frame back. A custom COLORREF does not, once COLOR_NONE latched the legacy one.
-const DWMWA_COLOR_DEFAULT: DWORD = 0xFFFFFFFF;
 const DWMWCP_DONOTROUND: DWORD = 1;
 const PIP_WIDTH: i32 = 480;
 const PIP_HEIGHT: i32 = 270;
@@ -218,6 +220,22 @@ impl WindowStyle {
     }
 
     /**
+     * End a chrome/FS transition: unlock paint after the caller has fitted WebView2.
+     * Must pair every successful `set_full_screen` / `set_borderless` that returned true.
+     */
+    pub fn finish_chrome_transition(hwnd: HWND) {
+        unsafe {
+            SendMessageW(hwnd, WM_SETREDRAW, 1, 0);
+            RedrawWindow(
+                hwnd,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
+            );
+        }
+    }
+
+    /**
      * Force a synchronous paint of the host client (dark brush) before first show.
      *
      * @param hwnd Target window.
@@ -271,54 +289,23 @@ impl WindowStyle {
         }
     }
 
-    /**
-     * Tint DWM caption/border to the Glass background color.
-     *
-     * @param hwnd Target window.
-     */
+    /// Force Win11-style dark caption (keeps min/max/close). Call before and after
+    /// any style change that repaints the non-client area.
     pub fn set_title_bar_color(&self, hwnd: HWND) {
-        self.apply_dwm_chrome_colors(hwnd, false);
-    }
-
-    /// COLOR_NONE left set across a frame restore latches the Windows 7 basic border.
-    fn reset_dwm_legacy_frame(&self, hwnd: HWND) {
-        let border = DWMWA_COLOR_DEFAULT;
-        let corner = 0u32;
+        let dark: i32 = 1;
+        let corner = DWMWCP_DONOTROUND;
         unsafe {
             DwmSetWindowAttribute(
                 hwnd,
-                DWMWA_BORDER_COLOR,
-                &border as *const _ as *const c_void,
-                mem::size_of_val(&border) as DWORD,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                &dark as *const _ as *const c_void,
+                mem::size_of_val(&dark) as DWORD,
             );
-            DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_WINDOW_CORNER_PREFERENCE,
-                &corner as *const _ as *const c_void,
-                mem::size_of_val(&corner) as DWORD,
-            );
-        }
-    }
-
-    fn apply_dwm_chrome_colors(&self, hwnd: HWND, hide_border: bool) {
-        let border = if hide_border {
-            DWMWA_COLOR_NONE
-        } else {
-            STREMIO_CAPTION_COLOR
-        };
-        let corner = if hide_border { DWMWCP_DONOTROUND } else { 0u32 };
-        unsafe {
             DwmSetWindowAttribute(
                 hwnd,
                 DWMWA_BORDER_COLOR,
-                &border as *const _ as *const c_void,
-                mem::size_of_val(&border) as DWORD,
-            );
-            DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_WINDOW_CORNER_PREFERENCE,
-                &corner as *const _ as *const c_void,
-                mem::size_of_val(&corner) as DWORD,
+                &STREMIO_CAPTION_COLOR as *const _ as *const c_void,
+                mem::size_of_val(&STREMIO_CAPTION_COLOR) as DWORD,
             );
             DwmSetWindowAttribute(
                 hwnd,
@@ -332,25 +319,27 @@ impl WindowStyle {
                 &WHITE_TEXT_COLOR as *const _ as *const c_void,
                 mem::size_of_val(&WHITE_TEXT_COLOR) as DWORD,
             );
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                &corner as *const _ as *const c_void,
+                mem::size_of_val(&corner) as DWORD,
+            );
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
+            );
         }
     }
 
     fn hwnd_has_caption(hwnd: HWND) -> bool {
         let style = unsafe { GetWindowLongA(hwnd, GWL_STYLE) } as u32;
         (style & WS_CAPTION) == WS_CAPTION
-    }
-
-    /**
-     * Maximized windows keep DWM caption buttons even after style bit clears.
-     * Restore first — same practical requirement original Stremio avoids by
-     * always going monitor-sized fullscreen from a normal placement.
-     */
-    fn unmaximize_if_needed(hwnd: HWND) {
-        if unsafe { IsZoomed(hwnd) } != 0 {
-            unsafe {
-                ShowWindow(hwnd, SW_RESTORE);
-            }
-        }
     }
 
     /**
@@ -495,7 +484,7 @@ impl WindowStyle {
                         work.top,
                         work.right - work.left,
                         work.bottom - work.top,
-                        SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
+                        SWP_CHROME,
                     );
                 }
             }
@@ -529,6 +518,7 @@ impl WindowStyle {
      * locked around the style change so non-client chrome never paints mid-transition.
      */
     fn apply_borderless_styles(&self, hwnd: HWND) {
+        self.set_dark_window_background(hwnd);
         let mut outer = unsafe { mem::zeroed() };
         unsafe {
             GetWindowRect(hwnd, &mut outer);
@@ -565,20 +555,17 @@ impl WindowStyle {
                 outer.top,
                 outer.right - outer.left,
                 outer.bottom - outer.top,
-                SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
-            );
-            SendMessageW(hwnd, WM_SETREDRAW, 1, 0);
-            RedrawWindow(
-                hwnd,
-                std::ptr::null(),
-                std::ptr::null_mut(),
-                RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
+                SWP_CHROME,
             );
         }
+        self.set_title_bar_color(hwnd);
+        // Caller fits WebView2, then `finish_chrome_transition`.
     }
 
     fn apply_framed_styles(&self, hwnd: HWND) {
-        self.reset_dwm_legacy_frame(hwnd);
+        self.set_dark_window_background(hwnd);
+        // DWM colors before caption bits — otherwise one legacy Aero NC paint sticks.
+        self.set_title_bar_color(hwnd);
         let style = if self.style != 0 {
             (self.style | WS_OVERLAPPEDWINDOW as i32 | WS_VISIBLE as i32) & !(WS_MAXIMIZE as i32)
         } else {
@@ -593,8 +580,6 @@ impl WindowStyle {
             unsafe { GetWindowLongA(hwnd, GWL_EXSTYLE) }
         };
         unsafe {
-            // Paint only after the dark caption is set. A frame restore with the
-            // default border draws the Windows 7 basic window.
             SendMessageW(hwnd, WM_SETREDRAW, 0, 0);
             SetWindowLongA(hwnd, GWL_STYLE, style);
             SetWindowLongA(hwnd, GWL_EXSTYLE, ex_style);
@@ -605,19 +590,11 @@ impl WindowStyle {
                 0,
                 0,
                 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
+                SWP_CHROME | SWP_NOMOVE | SWP_NOSIZE,
             );
         }
-        self.apply_dwm_chrome_colors(hwnd, false);
-        unsafe {
-            SendMessageW(hwnd, WM_SETREDRAW, 1, 0);
-            RedrawWindow(
-                hwnd,
-                std::ptr::null(),
-                std::ptr::null_mut(),
-                RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
-            );
-        }
+        self.set_title_bar_color(hwnd);
+        // Caller fits WebView2, then `finish_chrome_transition`.
     }
 
     fn sync_mode_flags(&mut self) {
@@ -631,17 +608,17 @@ impl WindowStyle {
      * When fullscreen is active, only the preference is updated; exit-fullscreen
      * restores Borderless if the preference is still set.
      *
-     * @param hwnd Target window.
-     * @param enabled `true` to prefer borderless chrome, `false` for framed.
+     * @returns `true` when paint is locked — caller must fit WebView2 then
+     *          `finish_chrome_transition`.
      */
-    pub fn set_borderless(&mut self, hwnd: HWND, enabled: bool) {
+    pub fn set_borderless(&mut self, hwnd: HWND, enabled: bool) -> bool {
         self.borderless = enabled;
 
         if self.mode == WindowMode::Fullscreen {
             // Preference only; chrome stays off until fullscreen exits.
             // Still latch maximize if the user was filling the work area.
             self.latch_maximized_session_state(hwnd);
-            return;
+            return false;
         }
 
         if enabled {
@@ -653,7 +630,7 @@ impl WindowStyle {
                     self.restore_maximized_footprint(hwnd, true);
                 }
                 self.sync_mode_flags();
-                return;
+                return false;
             }
             self.capture_framed_styles_if_needed(hwnd);
             self.apply_borderless_styles(hwnd);
@@ -661,281 +638,57 @@ impl WindowStyle {
                 self.restore_maximized_footprint(hwnd, true);
             }
             self.mode = WindowMode::Borderless;
-            self.apply_dwm_chrome_colors(hwnd, true);
-        } else {
-            // Even if already framed, honor a pending maximize restore from the session.
-            if self.mode == WindowMode::Framed && Self::hwnd_has_caption(hwnd) {
-                if self.was_maximized_before_borderless {
-                    self.restore_maximized_footprint(hwnd, false);
-                    self.was_maximized_before_borderless = false;
-                }
-                self.sync_mode_flags();
-                return;
-            }
-            self.capture_framed_styles_if_needed(hwnd);
-            self.apply_framed_styles(hwnd);
+            self.sync_mode_flags();
+            return true;
+        }
+
+        // Already framed: still re-assert modern caption (MPV/stream start can reset NC theme).
+        if self.mode == WindowMode::Framed && Self::hwnd_has_caption(hwnd) {
+            self.set_title_bar_color(hwnd);
             if self.was_maximized_before_borderless {
                 self.restore_maximized_footprint(hwnd, false);
                 self.was_maximized_before_borderless = false;
             }
-            self.mode = WindowMode::Framed;
-            self.apply_dwm_chrome_colors(hwnd, false);
+            self.sync_mode_flags();
+            return false;
         }
+        self.capture_framed_styles_if_needed(hwnd);
+        self.apply_framed_styles(hwnd);
+        if self.was_maximized_before_borderless {
+            self.restore_maximized_footprint(hwnd, false);
+            self.was_maximized_before_borderless = false;
+        }
+        self.mode = WindowMode::Framed;
         self.sync_mode_flags();
+        true
     }
 
     /**
-     * Enter or leave monitor fullscreen — same approach as stock stremio-shell-ng
-     * (`WS_CAPTION|WS_THICKFRAME` clear + monitor `SetWindowPos`), plus:
-     * - `SW_RESTORE` if maximized (otherwise caption buttons stick on Win11)
-     * - restore to Borderless when the player session is still active
+     * Fullscreen exactly as stock stremio-shell-ng: save/restore style bits, no DWM
+     * border tricks, no placement reconstruction. That overengineering caused the Win7 frame.
      *
-     * @param hwnd Target window.
-     * @param full_screen Desired fullscreen state.
+     * @returns `true` when geometry changed — caller should fit WebView2.
      */
-    pub fn set_full_screen(&mut self, hwnd: HWND, full_screen: bool) {
-        if full_screen {
-            // Skip only when already in FS mode AND geometry truly covers the monitor.
-            if self.mode == WindowMode::Fullscreen
-                && !Self::hwnd_has_caption(hwnd)
-                && unsafe { IsZoomed(hwnd) } == 0
-                && Self::hwnd_covers_monitor(hwnd)
-            {
-                self.sync_mode_flags();
-                return;
-            }
+    pub fn set_full_screen(&mut self, hwnd: HWND, full_screen: bool) -> bool {
+        if self.full_screen == full_screen {
+            return false;
+        }
 
-            // Latch before unmaximize / placement capture — IsZoomed becomes false after.
-            self.latch_maximized_session_state(hwnd);
-
-            Self::unmaximize_if_needed(hwnd);
-
-            unsafe {
-                let mut placement: WINDOWPLACEMENT = mem::zeroed();
-                placement.length = mem::size_of::<WINDOWPLACEMENT>() as u32;
-                if GetWindowPlacement(hwnd, &mut placement) != 0 {
-                    // Clamp saved restore rect so exit FS cannot reintroduce overhang.
-                    placement.rcNormalPosition =
-                        Self::clamp_rect_to_work_area(hwnd, placement.rcNormalPosition);
-                    self.fs_placement = placement;
-                    self.has_fs_placement = true;
-                    self.pos = (
-                        placement.rcNormalPosition.left,
-                        placement.rcNormalPosition.top,
-                    );
-                    self.size = (
-                        placement.rcNormalPosition.right - placement.rcNormalPosition.left,
-                        placement.rcNormalPosition.bottom - placement.rcNormalPosition.top,
-                    );
-                } else {
-                    let mut rect = mem::zeroed();
-                    GetWindowRect(hwnd, &mut rect);
-                    rect = Self::clamp_rect_to_work_area(hwnd, rect);
-                    self.pos = (rect.left, rect.top);
-                    self.size = (rect.right - rect.left, rect.bottom - rect.top);
-                }
-
-                // Capture framed styles before stripping (stock: always save current).
-                if Self::hwnd_has_caption(hwnd) || self.style == 0 {
-                    self.style = GetWindowLongA(hwnd, GWL_STYLE) & !(WS_MAXIMIZE as i32);
-                    if (self.style as u32 & WS_CAPTION) != WS_CAPTION {
-                        self.style |= WS_OVERLAPPEDWINDOW as i32;
-                    }
-                    self.ex_style = GetWindowLongA(hwnd, GWL_EXSTYLE);
-                }
-
-                // Stock shell-ng mask — this is what works in original Stremio.
-                let live = GetWindowLongA(hwnd, GWL_STYLE);
-                SetWindowLongA(
-                    hwnd,
-                    GWL_STYLE,
-                    (live & !STOCK_CHROME_STYLE_BITS & !(WS_MAXIMIZE as i32)) | WS_VISIBLE as i32,
-                );
-                SetWindowLongA(
-                    hwnd,
-                    GWL_EXSTYLE,
-                    GetWindowLongA(hwnd, GWL_EXSTYLE) & !CHROME_EXSTYLE_BITS,
-                );
-
-                let Some(monitor_rect) = Self::monitor_full_area(hwnd) else {
-                    eprintln!("GetMonitorInfoA failed");
-                    // Styles already stripped — restore chrome so we do not leave a half state.
-                    let undo_style = if self.style != 0 {
-                        (self.style | WS_OVERLAPPEDWINDOW as i32) & !(WS_MAXIMIZE as i32)
-                    } else {
-                        live | WS_OVERLAPPEDWINDOW as i32
-                    };
-                    SetWindowLongA(hwnd, GWL_STYLE, undo_style);
-                    SetWindowLongA(hwnd, GWL_EXSTYLE, self.ex_style);
-                    SetWindowPos(
-                        hwnd,
-                        std::ptr::null_mut(),
-                        0,
-                        0,
-                        0,
-                        0,
-                        SWP_NOMOVE
-                            | SWP_NOSIZE
-                            | SWP_NOZORDER
-                            | SWP_NOOWNERZORDER
-                            | SWP_FRAMECHANGED,
-                    );
-                    return;
-                };
-
-                SetWindowPos(
-                    hwnd,
-                    HWND_NOTOPMOST,
-                    monitor_rect.left,
-                    monitor_rect.top,
-                    monitor_rect.right - monitor_rect.left,
-                    monitor_rect.bottom - monitor_rect.top,
-                    SWP_FRAMECHANGED,
-                );
-                InvalidateRect(hwnd, std::ptr::null(), 1);
-            }
-
-            self.mode = WindowMode::Fullscreen;
-            self.sync_mode_flags();
-            self.apply_dwm_chrome_colors(hwnd, true);
-
-            // Reconcile if caption bits somehow remained.
-            if Self::hwnd_has_caption(hwnd) {
-                unsafe {
-                    let style = GetWindowLongA(hwnd, GWL_STYLE);
-                    SetWindowLongA(
-                        hwnd,
-                        GWL_STYLE,
-                        (style & !STOCK_CHROME_STYLE_BITS) | WS_VISIBLE as i32,
-                    );
-                    SetWindowPos(
-                        hwnd,
-                        HWND_NOTOPMOST,
-                        0,
-                        0,
-                        0,
-                        0,
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
-                    );
-                }
-            }
-        } else {
-            if self.mode != WindowMode::Fullscreen
-                && Self::hwnd_has_caption(hwnd)
-                && !self.borderless
-            {
-                self.mode = WindowMode::Framed;
-                self.sync_mode_flags();
-                return;
-            }
-
-            if self.style == 0 {
-                let current = unsafe { GetWindowLongA(hwnd, GWL_STYLE) };
-                self.style = (current | WS_OVERLAPPEDWINDOW as i32) & !(WS_MAXIMIZE as i32);
-                self.ex_style = unsafe { GetWindowLongA(hwnd, GWL_EXSTYLE) };
-            }
-
-            // Before caption/placement. SW_RESTORE while COLOR_NONE is still set draws the Win7 frame.
-            self.reset_dwm_legacy_frame(hwnd);
-
+        if !full_screen {
+            let topmost = if self.ex_style as u32 & WS_EX_TOPMOST == WS_EX_TOPMOST {
+                HWND_TOPMOST
+            } else {
+                HWND_NOTOPMOST
+            };
+            // Lock paint: set Win11 caption colors, then restore caption+controls together.
+            self.set_title_bar_color(hwnd);
             unsafe {
                 SendMessageW(hwnd, WM_SETREDRAW, 0, 0);
-                if self.borderless {
-                    SetWindowLongA(
-                        hwnd,
-                        GWL_STYLE,
-                        (self.style & !STOCK_CHROME_STYLE_BITS & !(WS_MAXIMIZE as i32))
-                            | WS_VISIBLE as i32,
-                    );
-                    SetWindowLongA(hwnd, GWL_EXSTYLE, self.ex_style & !CHROME_EXSTYLE_BITS);
-                } else {
-                    SetWindowLongA(
-                        hwnd,
-                        GWL_STYLE,
-                        (self.style | WS_OVERLAPPEDWINDOW as i32) & !(WS_MAXIMIZE as i32),
-                    );
-                    SetWindowLongA(hwnd, GWL_EXSTYLE, self.ex_style);
-                }
-
-                // Maximized session: footprint is applied after this block.
-                // SW_RESTORE while the border color was COLOR_NONE draws the Win7 frame.
-                // rcNormalPosition is workspace coordinates — SetWindowPlacement, not SetWindowPos.
-                if !self.was_maximized_before_borderless {
-                    if self.has_fs_placement {
-                        let mut placement = self.fs_placement;
-                        placement.showCmd = SW_SHOWNORMAL as u32;
-                        placement.rcNormalPosition =
-                            Self::clamp_rect_to_work_area(hwnd, placement.rcNormalPosition);
-                        SetWindowPlacement(hwnd, &placement);
-                    } else {
-                        let topmost = if self.ex_style as u32 & WS_EX_TOPMOST == WS_EX_TOPMOST {
-                            HWND_TOPMOST
-                        } else {
-                            HWND_NOTOPMOST
-                        };
-                        let restore = Self::clamp_rect_to_work_area(
-                            hwnd,
-                            RECT {
-                                left: self.pos.0,
-                                top: self.pos.1,
-                                right: self.pos.0 + self.size.0,
-                                bottom: self.pos.1 + self.size.1,
-                            },
-                        );
-                        SetWindowPos(
-                            hwnd,
-                            topmost,
-                            restore.left,
-                            restore.top,
-                            restore.right - restore.left,
-                            restore.bottom - restore.top,
-                            SWP_FRAMECHANGED,
-                        );
-                    }
-
-                    let mut live_rect = mem::zeroed();
-                    if GetWindowRect(hwnd, &mut live_rect) != 0 {
-                        let clamped = Self::clamp_rect_to_work_area(hwnd, live_rect);
-                        if clamped.left != live_rect.left
-                            || clamped.top != live_rect.top
-                            || clamped.right != live_rect.right
-                            || clamped.bottom != live_rect.bottom
-                        {
-                            SetWindowPos(
-                                hwnd,
-                                std::ptr::null_mut(),
-                                clamped.left,
-                                clamped.top,
-                                clamped.right - clamped.left,
-                                clamped.bottom - clamped.top,
-                                SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
-                            );
-                        }
-                    }
-                }
-
-                SetWindowPos(
-                    hwnd,
-                    std::ptr::null_mut(),
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
-                );
+                SetWindowLongA(hwnd, GWL_STYLE, self.style);
+                SetWindowLongA(hwnd, GWL_EXSTYLE, self.ex_style);
             }
-
-            if self.was_maximized_before_borderless {
-                self.restore_maximized_footprint(hwnd, self.borderless);
-            }
-
-            self.mode = if self.borderless {
-                WindowMode::Borderless
-            } else {
-                WindowMode::Framed
-            };
-            self.sync_mode_flags();
-            self.apply_dwm_chrome_colors(hwnd, self.borderless);
+            self.show_window_at(hwnd, topmost);
+            self.set_title_bar_color(hwnd);
             unsafe {
                 SendMessageW(hwnd, WM_SETREDRAW, 1, 0);
                 RedrawWindow(
@@ -945,7 +698,55 @@ impl WindowStyle {
                     RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
                 );
             }
+            self.full_screen = false;
+            self.mode = WindowMode::Framed;
+            self.borderless = false;
+            return true;
         }
+
+        self.set_dark_window_background(hwnd);
+        unsafe {
+            let mut rect = mem::zeroed();
+            GetWindowRect(hwnd, &mut rect);
+            self.pos = (rect.left, rect.top);
+            self.size = (rect.right - rect.left, rect.bottom - rect.top);
+            self.style = GetWindowLongA(hwnd, GWL_STYLE);
+            self.ex_style = GetWindowLongA(hwnd, GWL_EXSTYLE);
+
+            let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            let mut monitor_info: MONITORINFO = mem::zeroed();
+            monitor_info.cbSize = mem::size_of_val(&monitor_info) as u32;
+            if GetMonitorInfoA(monitor, &mut monitor_info) == 0 {
+                eprintln!("GetMonitorInfoA failed");
+                return false;
+            }
+            SetWindowLongA(
+                hwnd,
+                GWL_STYLE,
+                self.style & !(WS_CAPTION as i32 | WS_THICKFRAME as i32),
+            );
+            SetWindowLongA(
+                hwnd,
+                GWL_EXSTYLE,
+                self.ex_style
+                    & !(WS_EX_DLGMODALFRAME as i32
+                        | WS_EX_WINDOWEDGE as i32
+                        | WS_EX_CLIENTEDGE as i32
+                        | WS_EX_STATICEDGE as i32),
+            );
+            SetWindowPos(
+                hwnd,
+                HWND_NOTOPMOST,
+                monitor_info.rcMonitor.left,
+                monitor_info.rcMonitor.top,
+                monitor_info.rcMonitor.right - monitor_info.rcMonitor.left,
+                monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top,
+                SWP_FRAMECHANGED,
+            );
+        }
+        self.full_screen = true;
+        self.mode = WindowMode::Fullscreen;
+        true
     }
 
     pub fn toggle_topmost(&mut self, hwnd: HWND) {

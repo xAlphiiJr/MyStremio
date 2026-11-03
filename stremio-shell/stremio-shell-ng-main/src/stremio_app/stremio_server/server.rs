@@ -7,22 +7,21 @@ use std::{
     io::Read,
     net::TcpStream,
     ops::Deref,
-    os::windows::process::CommandExt,
+    os::windows::{io::AsRawHandle, process::CommandExt},
     path,
     process::{Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
 };
 use winapi::um::{
     handleapi::CloseHandle,
-    processthreadsapi::{GetCurrentProcess, OpenProcess, TerminateProcess},
+    processthreadsapi::{OpenProcess, TerminateProcess},
     winbase::{CreateJobObjectA, CREATE_NO_WINDOW},
     winnt::{
         JobObjectExtendedLimitInformation, JOBOBJECT_BASIC_LIMIT_INFORMATION,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
-        JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        PROCESS_TERMINATE,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, PROCESS_TERMINATE,
     },
 };
 
@@ -38,11 +37,6 @@ pub struct StremioServer {
     ready_rx: Arc<Mutex<Option<flume::Receiver<String>>>>,
     server_pid: Arc<Mutex<Option<u32>>>,
     webui_pid: Arc<Mutex<Option<u32>>>,
-    /// Skip the crash modal and auto-restart when we killed the process on purpose.
-    quiet_restart: Arc<AtomicBool>,
-    recovering: Arc<AtomicBool>,
-    pending_retry: Arc<AtomicBool>,
-    last_resume: Arc<Mutex<Option<Instant>>>,
 }
 
 fn terminate_pid(pid: u32) {
@@ -57,10 +51,6 @@ fn terminate_pid(pid: u32) {
         TerminateProcess(handle, 1);
         CloseHandle(handle);
     }
-}
-
-fn take_pid(slot: &Arc<Mutex<Option<u32>>>) -> Option<u32> {
-    slot.lock().ok().and_then(|mut guard| guard.take())
 }
 
 fn store_pid(slot: &Arc<Mutex<Option<u32>>>, pid: u32) {
@@ -102,6 +92,47 @@ fn listening_pids(netstat: &str, port: u16) -> Vec<u32> {
     pids
 }
 
+/// One job for this process. Children die when the shell exits. The shell is not a member,
+/// so a runtime exception cannot close the window.
+fn assign_runtime_job(child: &std::process::Child) {
+    static JOB: OnceLock<usize> = OnceLock::new();
+    let job = *JOB.get_or_init(|| unsafe {
+        let job = CreateJobObjectA(std::ptr::null_mut(), std::ptr::null_mut());
+        if job.is_null() {
+            return 0;
+        }
+        let jeli = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+            BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION {
+                LimitFlags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+                ..std::mem::zeroed()
+            },
+            ..std::mem::zeroed()
+        };
+        winapi::um::jobapi2::SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &jeli as *const _ as *mut _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        job as usize
+    });
+    if job == 0 {
+        return;
+    }
+    let ok = unsafe {
+        winapi::um::jobapi2::AssignProcessToJobObject(
+            job as winapi::shared::ntdef::HANDLE,
+            child.as_raw_handle() as winapi::shared::ntdef::HANDLE,
+        )
+    };
+    if ok == 0 {
+        eprintln!(
+            "runtime job assign failed: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+}
+
 fn engine_listener_pids() -> Vec<u32> {
     let Ok(output) = Command::new("netstat")
         .args(["-ano", "-p", "tcp"])
@@ -130,25 +161,6 @@ fn spawn_server_thread(
     }
 
     thread::spawn(move || {
-        unsafe {
-            let job_main_process = CreateJobObjectA(std::ptr::null_mut(), std::ptr::null_mut());
-            let jeli = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
-                BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION {
-                    LimitFlags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-                        | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
-                        | JOB_OBJECT_LIMIT_BREAKAWAY_OK,
-                    ..std::mem::zeroed()
-                },
-                ..std::mem::zeroed()
-            };
-            winapi::um::jobapi2::SetInformationJobObject(
-                job_main_process,
-                JobObjectExtendedLimitInformation,
-                &jeli as *const _ as *mut _,
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            );
-            winapi::um::jobapi2::AssignProcessToJobObject(job_main_process, GetCurrentProcess());
-        }
         let mut path = env::current_exe()
             .and_then(fs::canonicalize)
             .expect("Cannot get the current executable path");
@@ -177,6 +189,7 @@ fn spawn_server_thread(
                 .spawn()
             {
                 Ok(child) => {
+                    assign_runtime_job(&child);
                     store_pid(&webui_pid, child.id());
                     std::mem::forget(child);
                 }
@@ -235,6 +248,7 @@ fn spawn_server_thread(
 
             match server_command.spawn() {
                 Ok(mut child) => {
+                    assign_runtime_job(&child);
                     store_pid(&server_pid, child.id());
                     let http_ready = Arc::new(AtomicBool::new(false));
                     let stop_poll = Arc::new(AtomicBool::new(false));
@@ -396,85 +410,6 @@ impl StremioServer {
     }
 
     /**
-     * After sleep/resume: probe EngineFS, respawn if sockets are dead, then notify UI.
-     *
-     * `ready` is signaled when the probe succeeds or a respawn attempt finishes.
-     */
-    pub fn recover_after_resume(&self, ready: nwg::NoticeSender) {
-        if self.development {
-            ready.notice();
-            return;
-        }
-        if let Ok(mut last) = self.last_resume.lock() {
-            if let Some(prev) = *last {
-                if prev.elapsed() < Duration::from_secs(2) {
-                    return;
-                }
-            }
-            *last = Some(Instant::now());
-        }
-        if self.recovering.swap(true, Ordering::SeqCst) {
-            self.pending_retry.store(true, Ordering::SeqCst);
-            return;
-        }
-        let logs = self.logs.clone();
-        let crash_sender = self.crash_notice.sender();
-        let ready_rx = self.ready_rx.clone();
-        let server_pid = self.server_pid.clone();
-        let webui_pid = self.webui_pid.clone();
-        let quiet = self.quiet_restart.clone();
-        let recovering = self.recovering.clone();
-        let pending_retry = self.pending_retry.clone();
-        let last_resume = self.last_resume.clone();
-
-        thread::spawn(move || loop {
-            thread::sleep(Duration::from_millis(800));
-            if !StremioServer::is_engine_reachable() {
-                quiet.store(true, Ordering::SeqCst);
-                if let Some(pid) = take_pid(&server_pid) {
-                    terminate_pid(pid);
-                }
-                if let Some(pid) = take_pid(&webui_pid) {
-                    terminate_pid(pid);
-                }
-                thread::sleep(Duration::from_millis(400));
-
-                if !StremioServer::is_engine_reachable() {
-                    spawn_server_thread(
-                        logs.clone(),
-                        crash_sender,
-                        ready_rx.clone(),
-                        server_pid.clone(),
-                        webui_pid.clone(),
-                    );
-                }
-
-                for _ in 0..50 {
-                    if StremioServer::is_engine_reachable() {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(200));
-                }
-            }
-            ready.notice();
-            thread::sleep(Duration::from_secs(3));
-            quiet.store(false, Ordering::SeqCst);
-            recovering.store(false, Ordering::SeqCst);
-            if pending_retry.swap(false, Ordering::SeqCst) {
-                if let Ok(mut last) = last_resume.lock() {
-                    *last = None;
-                }
-                if recovering.swap(true, Ordering::SeqCst) {
-                    pending_retry.store(true, Ordering::SeqCst);
-                    break;
-                }
-                continue;
-            }
-            break;
-        });
-    }
-
-    /**
      * Block until EngineFS reports ready, or until `timeout` elapses.
      *
      * Intended to run after the main window is shown so startup does not feel frozen.
@@ -526,9 +461,6 @@ impl PartialUi for StremioServer {
     ) {
         use nwg::Event as E;
         if evt == E::OnNotice && handle == self.crash_notice.handle {
-            if self.quiet_restart.load(Ordering::SeqCst) {
-                return;
-            }
             nwg::modal_error_message(
                 self.parent,
                 "Stremio server crash log",

@@ -39,6 +39,7 @@
   let shellBorderlessEnabled = false;
 
   let artwork = { background: null, logo: null, imdbId: null };
+  let bufferingLogoFailed = false;
 
   /**
    * Ask the native shell to strip or restore window chrome (caption/frame).
@@ -101,6 +102,70 @@
     return Boolean(src && /stremio_symbol|\/logo\.png/i.test(src));
   }
 
+  function fallbackLogoSrc() {
+    try {
+      return new URL('images/stremio_symbol.png', document.baseURI).href;
+    } catch (_) {
+      return 'images/stremio_symbol.png';
+    }
+  }
+
+  /**
+   * Buffering paints two imgs (progress fill + dimmed copy). If one falls back to
+   * MyStremio while the other still shows the stream logo, both stack — keep one src.
+   * @returns {{ src: string, lock: boolean }}
+   */
+  function pickBufferingLogoSrc(srcs, preferred, failed, fallback) {
+    if (failed) return { src: fallback, lock: true };
+    let sawFallback = false;
+    let sawStream = false;
+    for (const src of srcs) {
+      if (!isUsableImageSrc(src)) continue;
+      if (isStremioDefaultLogo(src)) sawFallback = true;
+      else sawStream = true;
+    }
+    if (sawFallback && sawStream) return { src: fallback, lock: true };
+    if (isUsableImageSrc(preferred) && !isStremioDefaultLogo(preferred)) {
+      return { src: preferred, lock: false };
+    }
+    for (const src of srcs) {
+      if (isUsableImageSrc(src) && !isStremioDefaultLogo(src)) {
+        return { src: src, lock: false };
+      }
+    }
+    return { src: fallback, lock: false };
+  }
+
+  function onBufferingLogoError() {
+    bufferingLogoFailed = true;
+    const root = playerRoot();
+    if (root) syncBufferingLogos(root);
+  }
+
+  function syncBufferingLogos(root) {
+    // shortcut: DOM src sync can fight React Image state; patch Buffering in main.js if flicker returns
+    const imgs = root.querySelectorAll('[class*="buffering"] img[class*="logo"]');
+    if (!imgs.length) return;
+
+    const srcs = [];
+    for (const img of imgs) srcs.push(img.getAttribute('src') || img.src || '');
+    const picked = pickBufferingLogoSrc(
+      srcs,
+      artwork.logo,
+      bufferingLogoFailed,
+      fallbackLogoSrc()
+    );
+    if (picked.lock) bufferingLogoFailed = true;
+    const target = picked.src;
+
+    for (const img of imgs) {
+      if ((img.getAttribute('src') || '') !== target) img.setAttribute('src', target);
+      if (img.dataset.mystremioBufLogo === '1') continue;
+      img.dataset.mystremioBufLogo = '1';
+      img.addEventListener('error', onBufferingLogoError);
+    }
+  }
+
   function enrichArtwork(background, logo, idHint) {
     const hub = metahubFromId(idHint || background || '');
     let bg = background || null;
@@ -148,7 +213,12 @@
       html.${SESSION_CLASS} [class*="player-container"] [class*="buffering-layer"] {
         pointer-events: none !important;
       }
-      html.${SESSION_CLASS}.${PUNCHED_CLASS} [class*="player-container"] [class*="background-layer"] {
+      /* Once video is up, never show poster/logo again — FS resize briefly buffers and
+         would flash the MyStremio icon through the punch hole. */
+      html.${SESSION_CLASS}.${MPV_VISIBLE_CLASS} [class*="player-container"] [class*="background-layer"],
+      html.${SESSION_CLASS}.${MPV_VISIBLE_CLASS} [class*="player-container"] [class*="buffering-layer"],
+      html.${SESSION_CLASS}.${PUNCHED_CLASS} [class*="player-container"] [class*="background-layer"],
+      html.${SESSION_CLASS}.${PUNCHED_CLASS} [class*="player-container"] [class*="buffering-layer"] {
         display: none !important;
         visibility: hidden !important;
         pointer-events: none !important;
@@ -253,6 +323,8 @@
     const root = playerRoot();
     if (!root) return;
     root.querySelector('.mystremio-load-title')?.remove();
+    syncBufferingLogos(root);
+
     const layer = root.querySelector('[class*="background-layer"]');
     if (!layer) return;
 
@@ -506,15 +578,17 @@
     pendingSession = false;
 
     if (phase === Phase.VIDEO) {
-      setShellBorderless(false);
+      // Refresh Win11 caption theme only — keep min/max/close.
+      setShellBorderless(false, true);
       scheduleViewportPunch();
       return;
     }
 
     clearMaxTimer();
+    bufferingLogoFailed = false;
 
     injectSessionStyles();
-    setShellBorderless(false);
+    setShellBorderless(false, true);
     setPhase(Phase.LOADING);
     startPoll();
 
@@ -544,7 +618,8 @@
     setPhase(Phase.IDLE);
     pendingSession = false;
     artwork = { background: null, logo: null, imdbId: null };
-    setShellBorderless(false);
+    bufferingLogoFailed = false;
+    setShellBorderless(false, true);
     window.StremioCustomPlayback?.onPlayerSessionEnd?.();
     ensureOpaqueReconcile();
   }
@@ -638,6 +713,19 @@
   ensureTopSeamFix();
   showBootLoadingMaskUntilReady();
   if (shouldEnterPlayerSession()) onPlayerEnter();
+
+  (function selfCheckPickBufferingLogo() {
+    const fb = 'images/stremio_symbol.png';
+    const mixed = pickBufferingLogoSrc(
+      ['https://cdn.example/title-logo.png', fb],
+      null,
+      false,
+      fb
+    );
+    if (mixed.src !== fb || !mixed.lock) {
+      console.error('[StremioCustom] buffering logo sync self-check failed', mixed);
+    }
+  })();
 
   console.info('[StremioCustom] Player session manager ready.');
 })();
