@@ -187,6 +187,12 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 
 ## 🛠️ Patch Notes
 
+### 2.5.4
+- **Installer** — Added option to exclude mystremio-shell.exe from MS Defender to avoid MyStremio getting quarantined
+- **UI** — Page/-state changes reduced visual artifacts
+- **UI** — Fixed loading screen icon overlap
+- **Player** — Optimized player loading and stream buffering in combination with the new seek preview plugin
+
 ### 2.5.3
 - **Search** — The movie and series search in the navigation bar are now board only. Discover and Library have their own fields, labeled Search Discover and Search Library, which filter the titles on that page instead of opening a results page
 - **Addon Manager** — Fixed an issue where hiding a catalog from the board also disabled it in discover
@@ -201,7 +207,7 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 - **PiP** — NEW player plugin allows to open the stream in a small resizable always on top window with minimal UI
 
 ### 2.5.1
-- **Sleep Timer** — Fixed issue where it would start a ghost process when selecting sleep + close triggering MS Defender for some users
+- **Sleep Timer** — Fixed issue where it would start a second ghost process when selecting sleep + close
 - **UI** — Page/-state changes reduced visual artifacts
 - **Player** — Better caching behavior at stream start
 - **Shell** — Decreased system load and stuttering issues
@@ -301,6 +307,7 @@ The repo includes a prebuilt `stremio-shell/stremio-shell-ng-main/webui/` bundle
 ## ⚠️ Important Info
 - MyStremio is built with the help of AI
 - English is the only fully supported language
+- Since Version 2.5.0 MyStremio triggers a false alarm on MS Defender which quarantines the suspected files, unfortunately I can't do anything about that without paying for a license (x100€/year). I decided to add an option into the installer to exclude MyStremio (mystremio-shell.exe) from MS Defender to bypass this for now. I already submitted my project to MS to get it checked and stop the false trojan claims, I do not have high hopes though.. I'm really sorry for the inconvenience, unfortunately this seems to happen to many small github projects with .exe files in it :|
 
 ## 🙏 Credits
 
