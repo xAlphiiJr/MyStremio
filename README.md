@@ -163,6 +163,10 @@ This plugin displays a preview frame when hovering the seek bar.
 
 This plugin allows to open the stream in a small resizable always on top window with minimal UI.
 
+#### 🪟 Screensaver
+
+Enable and set a custom idle time after which a screensaver appears while you're away. The slides show the same titles as the dynamic hero banner.
+
 ---
 
 
