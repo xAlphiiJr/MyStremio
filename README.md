@@ -197,7 +197,7 @@ MyStremio also adds **On/Off toggles** on the Addons page: Disabled addons stay 
 - **Watch now** — The loading screen is now its own fullscreen screen
 - **Seek Preview** — No more stale frame from the previous stream, and faster previews thanks to a longer-lived preview player, non-blocking seeks and a bigger frame cache
 - **UI** — Smoother start: the splash screen stays until all plugins are loaded and the board fades in smoothly
-- **Fullscreen** — No more Windows 7 style frame or white bar, and the taskbar is now hidden correctly
+- **Fullscreen** — No more Windows 7 style frame or white bar
 
 ### 2.5.4
 - **Installer** — Added option to exclude mystremio-shell.exe from MS Defender to avoid MyStremio getting quarantined
