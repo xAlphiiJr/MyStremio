@@ -4,6 +4,8 @@ mod imdb_suggest;
 mod introdb_proxy;
 mod paths;
 mod ratings_proxy;
+// Android has no second libmpv for hover stills.
+#[cfg(not(target_os = "android"))]
 mod seek_preview;
 mod storage;
 mod theintrodb_proxy;
@@ -123,6 +125,7 @@ pub fn is_slow_http_method(method: &str) -> bool {
     is_disk_method(method) || is_ratings_method(method)
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn enqueue_seek_preview(message: Value, tx: flume::Sender<String>) {
     seek_preview::enqueue(message, tx);
 }

@@ -43,6 +43,29 @@ pub(crate) fn updater_wait_script(pid: u32, installer: &str) -> String {
     )
 }
 
+/// Runs the downloaded installer once this process exits. Returns false if it could not start.
+fn start_installer(file_path: &Path) -> bool {
+    println!("Running the setup at {file_path:?}");
+    let script = updater_wait_script(process::id(), &file_path.to_string_lossy());
+    let command = Command::new("powershell.exe")
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+        .creation_flags(CREATE_BREAKAWAY_FROM_JOB)
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .spawn();
+    match command {
+        Ok(process) => {
+            println!("Updater started. (PID {:?})", process.id());
+            true
+        }
+        Err(err) => {
+            eprintln!("Updater couldn't be started: {err}");
+            false
+        }
+    }
+}
+
 use super::stremio_server::StremioServer;
 
 #[derive(Default, NwgUi)]
@@ -583,30 +606,59 @@ impl MainWindow {
                             autoupdater_setup_mutex.lock().unwrap().clone();
                         match autoupdater_setup_file {
                             Some(file_path) => {
-                                println!("Running the setup at {file_path:?}");
-
-                                let script =
-                                    updater_wait_script(process::id(), &file_path.to_string_lossy());
-                                let command = Command::new("powershell.exe")
-                                    .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
-                                    .creation_flags(CREATE_BREAKAWAY_FROM_JOB)
-                                    .stdin(process::Stdio::null())
-                                    .stdout(process::Stdio::null())
-                                    .stderr(process::Stdio::null())
-                                    .spawn();
-
-                                match command {
-                                    Ok(process) => {
-                                        println!("Updater started. (PID {:?})", process.id());
-                                        quit_sender.notice();
-                                    }
-                                    Err(err) => eprintln!("Updater couldn't be started: {err}"),
-                                };
+                                if start_installer(&file_path) {
+                                    quit_sender.notice();
+                                }
                             }
                             _ => {
                                 println!("Cannot obtain the setup file path");
                             }
                         }
+                    }
+                    Some("mystremio-update-now") => {
+                        // Settings "Update now": check GitHub right away and install
+                        // without the updater banner.
+                        let web_tx = web_tx_web.clone();
+                        let setup_file = autoupdater_setup_mutex.clone();
+                        thread::spawn(move || {
+                            let status = |s: &str| {
+                                web_tx.send(RPCResponse::update_status(s)).ok();
+                            };
+                            let ready = setup_file.lock().unwrap().clone();
+                            let file = match ready {
+                                Some(file) => Some(file),
+                                None => {
+                                    let current_version = env!("CARGO_PKG_VERSION")
+                                        .parse()
+                                        .expect("Should always be valid");
+                                    match updater::Updater::new(
+                                        current_version,
+                                        false,
+                                        release_candidate,
+                                    )
+                                    .check_for_update()
+                                    {
+                                        Ok(update) => update.map(|update| update.file),
+                                        Err(e) => {
+                                            eprintln!("Failed to fetch updates: {e}");
+                                            status("error");
+                                            return;
+                                        }
+                                    }
+                                }
+                            };
+                            match file {
+                                None => status("latest"),
+                                Some(file) => {
+                                    status("installing");
+                                    if start_installer(&file) {
+                                        quit_sender.notice();
+                                    } else {
+                                        status("error");
+                                    }
+                                }
+                            }
+                        });
                     }
                     Some(player_command) if player_command.starts_with("mpv-") => {
                         let resp_json = serde_json::to_string(
@@ -643,12 +695,6 @@ impl MainWindow {
                 return;
             }
             self.webview.fit_to_window(Some(hwnd));
-            // Style/size changes can reset the NC theme to legacy — re-assert modern dark.
-            if let Ok(style) = self.saved_window_style.try_borrow() {
-                if !style.full_screen {
-                    style.set_title_bar_color(hwnd);
-                }
-            }
         }
     }
     /// Fit WebView2 while paint is still locked, then unlock. Gaps never paint white.
@@ -709,11 +755,6 @@ impl MainWindow {
                 self.webview.force_fit_to_window(Some(hwnd));
                 if let Some(controller) = self.webview.controller.get() {
                     controller.notify_parent_window_position_changed().ok();
-                }
-                if let Ok(style) = self.saved_window_style.try_borrow() {
-                    if !style.full_screen {
-                        style.set_title_bar_color(hwnd);
-                    }
                 }
             }
         }

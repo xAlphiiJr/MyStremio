@@ -79,9 +79,26 @@
    * Extracts an IMDb id from the current player route hash.
    * @returns {string|null}
    */
+  /**
+   * The player route with its ids readable: stremio-web encodes them ("tmdb%3A39340%3A2%3A5").
+   * @returns {string}
+   */
+  function routeText() {
+    const route = location.hash || location.href || '';
+    try {
+      return decodeURIComponent(route);
+    } catch (_) {
+      return route;
+    }
+  }
+
   function extractImdbFromRoute() {
-    const match = (location.hash || location.href).match(/tt\d{7,8}/i);
-    return match ? match[0].toLowerCase() : null;
+    const route = routeText();
+    const match = route.match(/tt\d{7,8}/i);
+    if (match) return match[0].toLowerCase();
+    // Addons with TMDB ids (route "tmdb:39340:2:5") carry no IMDb id; the TMDB id is used as it is.
+    const tmdb = route.match(/tmdb:\d+/i);
+    return tmdb ? tmdb[0].toLowerCase() : null;
   }
 
   /**
@@ -117,7 +134,7 @@
    * @returns {{season:number, episode:number}|null}
    */
   function parseEpisodeFromRoute() {
-    const hash = location.hash || location.href || '';
+    const hash = routeText();
     const tmdb = hash.match(/tmdb:(\d+):(\d{1,3}):(\d{1,4})(?:\b|$)/i);
     if (tmdb) {
       const season = Number(tmdb[2]);
@@ -246,21 +263,27 @@
       : `${imdbId}:${apiKey.slice(0, 6)}`;
     if (castCache.has(cacheKey)) return castCache.get(cacheKey);
 
-    const findResponse = await fetch(
-      `https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${encodeURIComponent(apiKey)}&external_source=imdb_id`
-    );
-    if (!findResponse.ok) throw new Error('TMDB find request failed');
-
-    const findData = await findResponse.json();
+    const routeTmdbId = imdbId.startsWith('tmdb:') ? Number(imdbId.slice(5)) : null;
+    let findData = {};
+    if (!routeTmdbId) {
+      const findResponse = await fetch(
+        `https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${encodeURIComponent(apiKey)}&external_source=imdb_id`
+      );
+      if (!findResponse.ok) throw new Error('TMDB find request failed');
+      findData = await findResponse.json();
+    }
     let tmdbId = null;
     let mediaType = 'movie';
     const prefersSeries =
       Boolean(episode) ||
-      /tt\d{7,8}:\d+:\d+/i.test(location.hash || location.href) ||
-      /tmdb:\d+:\d+:\d+/i.test(location.hash || location.href) ||
-      /kitsu:\d+:\d+/i.test(location.hash || location.href);
+      /tt\d{7,8}:\d+:\d+/i.test(routeText()) ||
+      /tmdb:\d+:\d+:\d+/i.test(routeText()) ||
+      /kitsu:\d+:\d+/i.test(routeText());
 
-    if (prefersSeries && findData.tv_results?.[0]) {
+    if (routeTmdbId) {
+      tmdbId = routeTmdbId;
+      mediaType = prefersSeries ? 'tv' : 'movie';
+    } else if (prefersSeries && findData.tv_results?.[0]) {
       tmdbId = findData.tv_results[0].id;
       mediaType = 'tv';
     } else if (findData.movie_results?.[0]) {

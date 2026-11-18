@@ -2296,7 +2296,8 @@
       }
       invoke('apply-ui-scale', {}, 3000).catch(() => {});
 
-      // Critical path: theme only. First-paint plugins run in parallel without blocking reveal.
+      // Critical path: theme + every enabled plugin, so nothing pops in after reveal.
+      // The 2.5s deadline above still bounds the splash.
       const firstPaint = loadFirstPaintPluginsFast().catch((error) => {
         console.warn('[StremioCustom] First-paint plugins failed:', error);
       });
@@ -2306,11 +2307,15 @@
       settleBoardRouteBeforePlugins();
       lastPlaybackActive = effectivePlaybackActive();
 
+      await firstPaint;
+      await ensurePluginsLoadedForRoute('fullBoard').catch((error) => {
+        console.warn('[StremioCustom] Plugin load before reveal failed:', error);
+      });
+      // Two frames so plugin DOM changes are painted under the seal first.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
       clearTimeout(revealDeadline);
-      markUiReady('theme');
-      // Let first-paint continue; deferred load covers anything still pending.
-      void firstPaint.then(() => scheduleDeferredPluginLoad());
-      scheduleDeferredPluginLoad();
+      markUiReady('plugins');
 
       // Non-critical: hydrate, migrations, deferred full board — after UI is up.
       await hydrateUserPreferences().catch((error) => {

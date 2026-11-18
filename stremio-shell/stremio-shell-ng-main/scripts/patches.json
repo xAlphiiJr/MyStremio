@@ -121,6 +121,15 @@
       }
     },
     {
+      "id": "about-update",
+      "script": "patch-webui-about-update.py",
+      "args": ["${mainJs}"],
+      "verify": {
+        "file": "${mainJs}",
+        "mustContain": ["__mystremioAboutUpdate", "mystremio-update-now"]
+      }
+    },
+    {
       "id": "service-worker-revision",
       "script": "patch-webui-sw-revision.py",
       "args": ["${webui}", "${mainJs}"]

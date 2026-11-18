@@ -1689,13 +1689,18 @@
     button.style.height = '0px';
     button.style.marginTop = '0px';
     let size = 0;
+    const title = headline.querySelector('.meta-hover-panel-title');
+    const lineHeight = title ? parseFloat(getComputedStyle(title).lineHeight) : 0;
     for (let i = 0; i < 4; i++) {
       const ink = playInk(headline);
       if (!ink || ink.height <= 0) return;
-      const next = Math.min(Math.round(ink.height * 1.06), limit);
+      // A title that wraps must not grow the button: it keeps the size it has beside a one-line title.
+      const lines = lineHeight > 0 ? Math.max(1, Math.round(title.getBoundingClientRect().height / lineHeight)) : 1;
+      const one = ink.height - (lines - 1) * lineHeight;
+      const next = Math.min(Math.round(one * 1.06), limit);
       if (next === size) break;
       size = next;
-      const shift = ink.top - headline.getBoundingClientRect().top - (size - ink.height) / 2;
+      const shift = ink.top - headline.getBoundingClientRect().top - (size - one) / 2;
       button.style.marginTop = Math.round(shift) + 'px';
       button.style.width = size + 'px';
       button.style.height = size + 'px';

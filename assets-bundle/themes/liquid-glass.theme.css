@@ -4381,3 +4381,67 @@ html body #app [class*="updater-banner"] [class*="close"] svg {
     fill: currentColor !important;
     opacity: 1 !important;
 }
+
+/* =========================== Design pass: reference lines and one design language ===========================
+   The same choices as on the phone (mobile.css) and the TV (MyStremio-webOS app.css): white is the one accent
+   and marks the main action, icons are line icons instead of characters, and what belongs to one page stands
+   on one left edge. Method: unslop by Damir Sokolovsky (@heydamir), CC BY 4.0. */
+
+/* Board: logo, hero text, row titles and the first poster on the line x = 28 px. */
+#app [class*="horizontal-nav-bar-container"] [class*="logo-container"] {
+    justify-content: flex-start !important;
+    padding-left: 28px !important;
+    box-sizing: border-box !important;
+}
+#app [class*="board-row"] > [class*="meta-items-container"] {
+    padding-left: 0 !important;
+}
+
+/* Title page: the Data Enrichment sections start where the logo, the summary and the buttons start. */
+.data-enrichment-container .enhanced-section-header,
+.data-enrichment-container .enhanced-scroll-container {
+    padding-left: 0 !important;
+}
+
+/* The main action is white, everything else stays glass. */
+.hero-overlay-button-watch,
+#app [class*="install-button-container"] {
+    background: #fff !important;
+    color: rgb(20, 20, 20) !important;
+    font-weight: 600 !important;
+}
+.hero-overlay-button-watch:hover,
+#app [class*="install-button-container"]:hover {
+    background: rgba(255, 255, 255, 0.86) !important;
+}
+#app [class*="install-button-container"] [class*="label"],
+#app [class*="install-button-container"] [class*="icon"] {
+    color: rgb(20, 20, 20) !important;
+    fill: rgb(20, 20, 20) !important;
+}
+
+/* Line icons in place of the characters "▶" and "ⓘ". */
+.hero-overlay-button-watch .play-icon,
+.hero-overlay-button .info-icon {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    font-size: 0 !important;
+    background: currentColor;
+    -webkit-mask: center / contain no-repeat;
+    mask: center / contain no-repeat;
+}
+.hero-overlay-button-watch .play-icon {
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M8 5v14l11-7z'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M8 5v14l11-7z'/></svg>");
+}
+.hero-overlay-button .info-icon {
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'><circle cx='12' cy='12' r='9'/><path d='M12 11v6M12 7.5v.5'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'><circle cx='12' cy='12' r='9'/><path d='M12 11v6M12 7.5v.5'/></svg>");
+}
+
+/* The slogan is already in quotation marks; hierarchy comes from size and colour, not from bold italics. */
+.detail-slogan {
+    font-style: normal !important;
+    font-weight: 500 !important;
+}

@@ -14,11 +14,12 @@ use std::time::{Duration, Instant};
 const BUCKET_SECS: f64 = 3.0;
 const PREVIEW_W: i32 = 192;
 const PREVIEW_H: i32 = 108;
-const CACHE_MAX: usize = 24;
+const CACHE_MAX: usize = 96;
 const OPEN_TIMEOUT: Duration = Duration::from_secs(8);
 const SEEK_TIMEOUT: Duration = Duration::from_secs(8);
 const CACHED_SEEK: Duration = Duration::from_secs(4);
-const IDLE_CLOSE: Duration = Duration::from_secs(20);
+// Reopening the stream (connect + probe) is the slowest step, so keep the player warm between hovers.
+const IDLE_CLOSE: Duration = Duration::from_secs(120);
 
 struct Job {
     id: Value,
@@ -341,7 +342,7 @@ impl Preview {
             self.path = path.to_string();
             self.opening = None;
         }
-        if yields_to_local(local, queued_is_local()) {
+        if yields_to(local, job_waiting()) {
             return Err("stale".into());
         }
         self.drain();
@@ -359,7 +360,7 @@ impl Preview {
             let _ = unsafe { libmpv2_sys::mpv_render_context_update(self.render) };
             self.argv(&["frame-step"])?;
             loop {
-                if !local && queued_is_local() {
+                if !local && job_waiting() {
                     return Err("stale".into());
                 }
                 let flags = unsafe { libmpv2_sys::mpv_render_context_update(self.render) };
@@ -411,7 +412,7 @@ impl Preview {
 
     fn wait_for(&self, want: u32, deadline: Instant, yield_cold: bool) -> Result<(), String> {
         loop {
-            if yield_cold && queued_is_local() {
+            if yield_cold && job_waiting() {
                 return Err("stale".into());
             }
             let left = deadline.saturating_duration_since(Instant::now());
@@ -559,17 +560,17 @@ fn seek_wait(local: bool) -> Duration {
     if local { CACHED_SEEK } else { SEEK_TIMEOUT }
 }
 
-fn yields_to_local(current_local: bool, queued_local: bool) -> bool {
-    !current_local && queued_local
+/// A slow cold seek gives way to whatever the user hovers next; a buffered seek is quick enough to finish.
+fn yields_to(current_local: bool, queued: bool) -> bool {
+    !current_local && queued
 }
 
 fn keep_queued(queued_local: bool, next_local: bool) -> bool {
     queued_local && !next_local
 }
 
-fn queued_is_local() -> bool {
-    let slot = queue().job.lock().unwrap_or_else(|err| err.into_inner());
-    slot.as_ref().is_some_and(|job| job.local)
+fn job_waiting() -> bool {
+    queue().job.lock().unwrap_or_else(|err| err.into_inner()).is_some()
 }
 
 fn displace<T>(slot: &mut Option<T>, next: T) -> Option<T> {
@@ -580,14 +581,14 @@ fn displace<T>(slot: &mut Option<T>, next: T) -> Option<T> {
 mod tests {
     use super::{
         already_opening, base64, bucket_index, displace, keep_queued, preview_allowed, reuse_player,
-        seek_wait, yields_to_local,
+        seek_wait, yields_to,
     };
 
     #[test]
     fn local_seek_goes_first() {
-        assert!(yields_to_local(false, true));
-        assert!(!yields_to_local(false, false));
-        assert!(!yields_to_local(true, true));
+        assert!(yields_to(false, true));
+        assert!(!yields_to(false, false));
+        assert!(!yields_to(true, true));
         assert!(keep_queued(true, false));
         assert!(!keep_queued(false, true));
         assert!(!keep_queued(true, true));

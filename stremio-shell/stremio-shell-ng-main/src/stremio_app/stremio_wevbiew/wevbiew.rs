@@ -22,7 +22,8 @@ use winapi::shared::guiddef::GUID;
 use winapi::shared::windef::HWND;
 use winapi::um::winuser::{
     GetClientRect, RegisterPowerSettingNotification, DEVICE_NOTIFY_WINDOW_HANDLE, VK_F7,
-    WM_APPCOMMAND, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_POWERBROADCAST, WM_SETFOCUS,
+    WM_APPCOMMAND, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_NCCALCSIZE, WM_POWERBROADCAST,
+    WM_SETFOCUS,
 };
 
 const APPCOMMAND_MEDIA_NEXTTRACK: u32 = 11;
@@ -551,6 +552,13 @@ impl PartialUi for WebView {
         let handler_id = 0x10000;
         let controller_clone = data.controller.clone();
         nwg::bind_raw_event_handler(&parent, handler_id, move |hwnd, msg, w, l| {
+            // Fullscreen: client area = whole window, styles untouched (no legacy frame).
+            if msg == WM_NCCALCSIZE
+                && crate::stremio_app::window_helper::FULL_SCREEN
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                return Some(0);
+            }
             if msg == WM_SETFOCUS {
                 controller_clone.get().and_then(|controller| {
                     controller

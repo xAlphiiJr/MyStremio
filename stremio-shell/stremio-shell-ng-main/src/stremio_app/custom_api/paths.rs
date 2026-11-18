@@ -272,6 +272,10 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> std::io::Result<()> {
 }
 
 pub fn bundled_root() -> PathBuf {
+    // The Android shell unpacks the bundle to app storage; an APK has no exe folder.
+    if let Some(root) = env::var_os("MYSTREMIO_BUNDLED_ROOT") {
+        return PathBuf::from(root);
+    }
     env::current_exe()
         .ok()
         .and_then(|mut path| {

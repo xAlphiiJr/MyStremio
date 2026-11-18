@@ -18,6 +18,7 @@
   const PUNCHED_CLASS = 'mystremio-mpv-punched';
   const APP_LOADING_MASK_ID = 'stremio-custom-app-loading-mask';
   const APP_LOADING_STYLE_ID = 'stremio-custom-app-loading-style';
+  const TOP_SEAM_FIX_STYLE_ID = 'stremio-custom-top-seam-fix-style';
 
   const Phase = { IDLE: 'idle', LOADING: 'loading', VIDEO: 'video' };
 

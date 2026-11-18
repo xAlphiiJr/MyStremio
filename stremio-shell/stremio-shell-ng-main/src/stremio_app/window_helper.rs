@@ -1,9 +1,14 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{cmp, mem};
 use winapi::ctypes::c_void;
 use winapi::shared::minwindef::DWORD;
 use winapi::shared::windef::{HWND, RECT};
+use winapi::um::combaseapi::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL};
 use winapi::um::dwmapi::DwmSetWindowAttribute;
+use winapi::um::objbase::COINIT_APARTMENTTHREADED;
+use winapi::um::shobjidl_core::{CLSID_TaskbarList, ITaskbarList2};
 use winapi::um::wingdi::CreateSolidBrush;
+use winapi::Interface;
 use winapi::um::winuser::{
     GetForegroundWindow, GetMonitorInfoA, GetSystemMetrics, GetWindowLongA, GetWindowPlacement,
     GetWindowRect, InvalidateRect, IsIconic, IsZoomed, MonitorFromWindow, RedrawWindow,
@@ -36,6 +41,10 @@ const DWMWA_BORDER_COLOR: DWORD = 34;
 const DWMWA_CAPTION_COLOR: DWORD = 35;
 const DWMWA_TEXT_COLOR: DWORD = 36;
 const DWMWCP_DONOTROUND: DWORD = 1;
+const DWMWA_COLOR_NONE: DWORD = 0xFFFF_FFFE;
+
+/// Read by the main window's WM_NCCALCSIZE handler: no frame while fullscreen.
+pub static FULL_SCREEN: AtomicBool = AtomicBool::new(false);
 const PIP_WIDTH: i32 = 480;
 const PIP_HEIGHT: i32 = 270;
 const PIP_MARGIN: i32 = 16;
@@ -664,8 +673,12 @@ impl WindowStyle {
     }
 
     /**
-     * Fullscreen exactly as stock stremio-shell-ng: save/restore style bits, no DWM
-     * border tricks, no placement reconstruction. That overengineering caused the Win7 frame.
+     * Fullscreen without touching window styles.
+     *
+     * Toggling WS_CAPTION / WS_THICKFRAME makes DWM hand the non-client area to
+     * uxtheme (WM_DWMNCRENDERINGCHANGED), which paints the legacy Windows 7 frame
+     * for a few frames. Instead the styles stay and `WM_NCCALCSIZE` reports a
+     * zero-size frame while `FULL_SCREEN` is set (handler in the WebView partial).
      *
      * @returns `true` when geometry changed — caller should fit WebView2.
      */
@@ -680,31 +693,35 @@ impl WindowStyle {
             } else {
                 HWND_NOTOPMOST
             };
-            // Lock paint: set Win11 caption colors, then restore caption+controls together.
-            self.set_title_bar_color(hwnd);
+            FULL_SCREEN.store(false, Ordering::Relaxed);
+            Self::mark_taskbar_fullscreen(hwnd, false);
             unsafe {
-                SendMessageW(hwnd, WM_SETREDRAW, 0, 0);
-                SetWindowLongA(hwnd, GWL_STYLE, self.style);
-                SetWindowLongA(hwnd, GWL_EXSTYLE, self.ex_style);
-            }
-            self.show_window_at(hwnd, topmost);
-            self.set_title_bar_color(hwnd);
-            unsafe {
-                SendMessageW(hwnd, WM_SETREDRAW, 1, 0);
-                RedrawWindow(
+                DwmSetWindowAttribute(
                     hwnd,
-                    std::ptr::null(),
-                    std::ptr::null_mut(),
-                    RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
+                    DWMWA_BORDER_COLOR,
+                    &STREMIO_CAPTION_COLOR as *const _ as *const c_void,
+                    mem::size_of_val(&STREMIO_CAPTION_COLOR) as DWORD,
                 );
             }
+            // SWP_FRAMECHANGED re-runs WM_NCCALCSIZE, bringing the frame back.
+            // Give back WS_MAXIMIZE if it was cleared on enter (only that bit differs).
+            unsafe {
+                let current = GetWindowLongA(hwnd, GWL_STYLE);
+                SetWindowLongA(hwnd, GWL_STYLE, current | (self.style & WS_MAXIMIZE as i32));
+            }
+            self.show_window_at(hwnd, topmost);
+            // Paint newly exposed host area now, before DWM composes the new geometry.
+            unsafe { UpdateWindow(hwnd) };
             self.full_screen = false;
             self.mode = WindowMode::Framed;
             self.borderless = false;
             return true;
         }
 
-        self.set_dark_window_background(hwnd);
+        let Some(monitor) = Self::monitor_full_area(hwnd) else {
+            eprintln!("GetMonitorInfoA failed");
+            return false;
+        };
         unsafe {
             let mut rect = mem::zeroed();
             GetWindowRect(hwnd, &mut rect);
@@ -713,40 +730,57 @@ impl WindowStyle {
             self.style = GetWindowLongA(hwnd, GWL_STYLE);
             self.ex_style = GetWindowLongA(hwnd, GWL_EXSTYLE);
 
-            let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-            let mut monitor_info: MONITORINFO = mem::zeroed();
-            monitor_info.cbSize = mem::size_of_val(&monitor_info) as u32;
-            if GetMonitorInfoA(monitor, &mut monitor_info) == 0 {
-                eprintln!("GetMonitorInfoA failed");
-                return false;
+            // No 1px DWM border over the video; restored on exit.
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_BORDER_COLOR,
+                &DWMWA_COLOR_NONE as *const _ as *const c_void,
+                mem::size_of_val(&DWMWA_COLOR_NONE) as DWORD,
+            );
+            FULL_SCREEN.store(true, Ordering::Relaxed);
+            // A maximized window gets re-fitted to the work area on SWP_FRAMECHANGED.
+            if self.style & WS_MAXIMIZE as i32 != 0 {
+                SetWindowLongA(hwnd, GWL_STYLE, self.style & !(WS_MAXIMIZE as i32));
             }
-            SetWindowLongA(
-                hwnd,
-                GWL_STYLE,
-                self.style & !(WS_CAPTION as i32 | WS_THICKFRAME as i32),
-            );
-            SetWindowLongA(
-                hwnd,
-                GWL_EXSTYLE,
-                self.ex_style
-                    & !(WS_EX_DLGMODALFRAME as i32
-                        | WS_EX_WINDOWEDGE as i32
-                        | WS_EX_CLIENTEDGE as i32
-                        | WS_EX_STATICEDGE as i32),
-            );
             SetWindowPos(
                 hwnd,
                 HWND_NOTOPMOST,
-                monitor_info.rcMonitor.left,
-                monitor_info.rcMonitor.top,
-                monitor_info.rcMonitor.right - monitor_info.rcMonitor.left,
-                monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top,
+                monitor.left,
+                monitor.top,
+                monitor.right - monitor.left,
+                monitor.bottom - monitor.top,
                 SWP_FRAMECHANGED,
             );
         }
+        // Styles are untouched, so tell the shell explicitly (taskbar goes behind).
+        Self::mark_taskbar_fullscreen(hwnd, true);
+        unsafe { UpdateWindow(hwnd) };
         self.full_screen = true;
         self.mode = WindowMode::Fullscreen;
         true
+    }
+
+    /// Official fullscreen hint for the taskbar (same call Chromium and mpv make).
+    fn mark_taskbar_fullscreen(hwnd: HWND, full_screen: bool) {
+        unsafe {
+            // No-op when COM is already initialized on this thread.
+            CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED);
+            let mut list: *mut ITaskbarList2 = std::ptr::null_mut();
+            let hr = CoCreateInstance(
+                &CLSID_TaskbarList,
+                std::ptr::null_mut(),
+                CLSCTX_ALL,
+                &ITaskbarList2::uuidof(),
+                &mut list as *mut _ as *mut _,
+            );
+            if hr < 0 || list.is_null() {
+                eprintln!("ITaskbarList2 unavailable: {hr:#x}");
+                return;
+            }
+            (*list).HrInit();
+            (*list).MarkFullscreenWindow(hwnd, full_screen as i32);
+            (*list).Release();
+        }
     }
 
     pub fn toggle_topmost(&mut self, hwnd: HWND) {

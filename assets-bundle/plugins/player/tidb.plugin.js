@@ -2964,6 +2964,8 @@
 				this.episodeId === episodeId &&
 				(this._activeStreamPath || "") === fetchPath;
 
+			// Set once the stream is known (inside the try below); applyIncoming caches under it.
+			let fileKey = null;
 			const applyIncoming = (incoming, replacePresent) => {
 				if (!stillThis() || !incoming) return;
 				this.segments = replacePresent
@@ -3021,7 +3023,7 @@
 					const stream =
 						(this._lastStateContext && this._lastStateContext.stream) ||
 						null;
-					const fileKey = streamFileCacheKey(stream, video);
+					fileKey = streamFileCacheKey(stream, video);
 					const cachedFileSegments =
 						fileKey && !/^ih:[^:]+$/i.test(fileKey) ? readFileSegmentCache(fileKey) : null;
 					if (cachedFileSegments && stillThis()) {

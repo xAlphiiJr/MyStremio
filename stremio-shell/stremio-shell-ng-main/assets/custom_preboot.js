@@ -167,8 +167,16 @@
       if (!document.getElementById('stremio-custom-active-theme')) return;
       window.__stremioCustomBootSealRetired = true;
       document.documentElement.classList.remove('mystremio-booting');
-      document.getElementById('mystremio-boot-seal')?.remove();
       document.getElementById('mystremio-boot-seal-style')?.remove();
+      // Fade the app in instead of cutting from the dark seal to the board.
+      const seal = document.getElementById('mystremio-boot-seal');
+      if (seal) {
+        seal.style.transition = 'opacity 300ms ease';
+        seal.style.pointerEvents = 'none';
+        void seal.offsetWidth;
+        seal.style.opacity = '0';
+        setTimeout(() => seal.remove(), 350);
+      }
       window.__stremioCustomBootSealActive = false;
     } catch (_) {}
   };

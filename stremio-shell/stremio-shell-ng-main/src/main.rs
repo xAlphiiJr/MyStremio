@@ -68,6 +68,9 @@ fn main() {
     // Per-monitor DPI v2 is declared in the application manifest (build.rs).
     // Do not call the deprecated System-DPI helper here; it would override PMv2.
     nwg::enable_visual_styles();
+    // A busy UI thread (server wait, MPV calls) must never be swapped for the
+    // classic-framed "Not Responding" ghost window.
+    unsafe { winapi::um::winuser::DisableProcessWindowsGhosting() };
 
     // Must be set before WebView2 Environment/Controller creation. Microsoft docs:
     // API-only DefaultBackgroundColor can still white-flash; the env var applies first.

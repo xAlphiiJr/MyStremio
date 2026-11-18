@@ -1,7 +1,7 @@
 /**
  * @name Seek Preview
  * @description Show a nearby frame when hovering the player seek bar
- * @version 1.0.9
+ * @version 1.0.10
  * @author MyStremio
  * @category player
  */
@@ -10,7 +10,7 @@
 (function () {
   'use strict';
 
-  const PLUGIN_VERSION = '1.0.9';
+  const PLUGIN_VERSION = '1.0.10';
   const PLUGIN_REF = 'player/seek-preview.plugin.js';
   const HOVER_TS_REF = 'player/hover-timestamps.plugin.js';
   const STYLE_ID = 'stremio-seek-preview-styles';
@@ -19,7 +19,7 @@
   const FAST_POLL_MS = 200;
   const SLOW_POLL_MS = 2000;
   const DEBOUNCE_MS = 180;
-  const FRAME_CACHE_MAX = 24;
+  const FRAME_CACHE_MAX = 96;
 
   if (window.__stremioSeekPreviewVersion !== PLUGIN_VERSION) {
     window.__stremioSeekPreviewReady = false;
@@ -220,6 +220,8 @@
     if (!card) return;
     card.classList.remove('is-loading');
     card.style.display = 'none';
+    // Next show starts blank instead of flashing the last frame (old hover or old stream).
+    card.querySelector('canvas')?.getContext('2d')?.clearRect(0, 0, 192, 108);
   }
 
   function isOnPlayerPage() {
@@ -382,6 +384,8 @@
     if (next !== streamPath) {
       streamPath = next;
       frames.clear();
+      requestGen += 1;
+      hideFrame();
     }
     if (isOnPlayerPage()) start();
   });

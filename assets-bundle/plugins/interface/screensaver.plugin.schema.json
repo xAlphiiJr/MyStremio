@@ -1,0 +1,10 @@
+[
+  {
+    "key": "minutes",
+    "type": "input",
+    "inputType": "number",
+    "label": "Idle time (minutes)",
+    "description": "Start the screensaver after this many minutes without input. Starts in the player only while it is paused.",
+    "defaultValue": "5"
+  }
+]

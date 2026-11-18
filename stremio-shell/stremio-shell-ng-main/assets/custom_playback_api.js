@@ -334,6 +334,7 @@
       duration: resolveDuration(),
       timeFresh: lastMpvTimeAt > 0 && Date.now() - lastMpvTimeAt < 4000,
       buffering: mpvPausedForCache,
+      paused: mpvPause && !uiShowsPlaying(),
       cacheAhead: mpvCacheAheadSec,
       cacheObserved: mpvCacheAheadReported,
       playbackAdvanced,

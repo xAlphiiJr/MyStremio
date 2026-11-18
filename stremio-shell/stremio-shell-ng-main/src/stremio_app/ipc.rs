@@ -105,6 +105,9 @@ impl RPCResponse {
     pub fn update_available() -> String {
         Self::response_message(Some(json!(["autoupdater-show-notif"])))
     }
+    pub fn update_status(status: &str) -> String {
+        Self::response_message(Some(json!(["mystremio-update-status", status])))
+    }
     pub fn media_key(action: &str) -> String {
         Self::response_message(Some(json!(["media-key", action])))
     }

@@ -12,4 +12,5 @@ pub const WHITELISTED_HOSTS: &[&str] = &[
     "adex.network",
     "amazon.com",
     "forms.gle",
+    "github.com",
 ];
